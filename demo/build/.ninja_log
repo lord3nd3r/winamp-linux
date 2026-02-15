@@ -1,0 +1,16 @@
+# ninja log v6
+1	29	1771189355898041502	winamp_demo_autogen/timestamp	de5286f193624c76
+1	29	1771189355898041502	winamp_demo_autogen/mocs_compilation.cpp	de5286f193624c76
+1	29	1771189355898041502	/home/ender/winamp/demo/build/winamp_demo_autogen/timestamp	de5286f193624c76
+1	29	1771189355898041502	/home/ender/winamp/demo/build/winamp_demo_autogen/mocs_compilation.cpp	de5286f193624c76
+30	38	1771189355907858185	CMakeFiles/winamp_demo.dir/winamp_demo_autogen/mocs_compilation.cpp.o	f2a4a1bfb5dafeca
+2	29	1771189390005777634	winamp_demo_autogen/timestamp	de5286f193624c76
+2	29	1771189390005777634	winamp_demo_autogen/mocs_compilation.cpp	de5286f193624c76
+2	29	1771189390005777634	/home/ender/winamp/demo/build/winamp_demo_autogen/timestamp	de5286f193624c76
+2	29	1771189390005777634	/home/ender/winamp/demo/build/winamp_demo_autogen/mocs_compilation.cpp	de5286f193624c76
+2	30	1771189470511235592	winamp_demo_autogen/timestamp	de5286f193624c76
+2	30	1771189470511235592	winamp_demo_autogen/mocs_compilation.cpp	de5286f193624c76
+2	30	1771189470511235592	/home/ender/winamp/demo/build/winamp_demo_autogen/timestamp	de5286f193624c76
+2	30	1771189470511235592	/home/ender/winamp/demo/build/winamp_demo_autogen/mocs_compilation.cpp	de5286f193624c76
+30	1896	1771189470539237839	CMakeFiles/winamp_demo.dir/winamp_complete.cpp.o	d67e819a6862f5b9
+1897	2275	1771189472406871239	winamp_demo	2efbe35d155d5e6a
