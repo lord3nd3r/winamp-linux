@@ -260,8 +260,10 @@ EqualizerWindow::EqualizerWindow(WinampWindow *parent) : QWidget(nullptr), mainW
 // Main Winamp Window
 class WinampWindow : public QWidget {
 public:
-    WinampWindow(QWidget *parent = nullptr) : QWidget(parent), dragPosition(0,0), isDragging(false), volume(50),
-                 hoveredButton(-1), pressedButton(-1) {
+    WinampWindow(QWidget *parent = nullptr) : QWidget(parent), dragPosition(0,0), isDragging(false), 
+                 volume(200), hoveredButton(-1), pressedButton(-1),
+                 shuffleOn(false), repeatOn(false), eqBtnOn(true), plBtnOn(true),
+                 isDraggingVolume(false), isDraggingPos(false), scrollOffset(0) {
         setFixedSize(275, 116);
         setWindowTitle("Winamp 5.666 for Linux");
         setWindowFlags(Qt::FramelessWindowHint);
@@ -272,16 +274,22 @@ public:
         player = new QMediaPlayer(this);
         audioOutput = new QAudioOutput(this);
         player->setAudioOutput(audioOutput);
-        audioOutput->setVolume(0.5);
+        audioOutput->setVolume(volume / 255.0f);
         
-        // Update timer
+        // Update timer (50ms = 20fps like original)
         timer = new QTimer(this);
         connect(timer, &QTimer::timeout, this, &WinampWindow::updateDisplay);
         timer->start(50);
         
-        connect(player, &QMediaPlayer::positionChanged, this, [this](qint64 pos) {
+        // Scroll timer for song title
+        scrollTimer = new QTimer(this);
+        connect(scrollTimer, &QTimer::timeout, this, [this]() {
+            scrollOffset++;
             update();
         });
+        scrollTimer->start(150);
+        
+        connect(player, &QMediaPlayer::positionChanged, this, [this](qint64) { update(); });
         
         // Create playlist and EQ windows
         playlistWindow = new PlaylistWindow(this);
@@ -302,111 +310,253 @@ protected:
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing, false);
         
-        // Use authentic MAIN.BMP if loaded
-        if (!WinampBitmaps::instance().main.isNull()) {
-            p.drawPixmap(0, 0, WinampBitmaps::instance().main, 0, 0, 275, 116);
+        auto &bmp = WinampBitmaps::instance();
+        
+        if (bmp.main.isNull()) {
+            drawFallbackUI(p);
+            return;
+        }
+        
+        // === 1. Main background ===
+        p.drawPixmap(0, 0, bmp.main, 0, 0, 275, 116);
+        
+        // === 2. Title bar from titlebar.bmp ===
+        if (!bmp.titlebar.isNull()) {
+            // Active/inactive title bar: src starts at x=27
+            int srcY = isActiveWindow() ? 0 : 15;
+            p.drawPixmap(0, 0, 275, 14, bmp.titlebar, 27, srcY, 275, 14);
             
-            // Draw authentic LED time display using numbers.bmp
-            if (!WinampBitmaps::instance().numbers.isNull()) {
-                qint64 pos = player->position();
-                int secs = (pos / 1000) % 60;
-                int mins = (pos / 1000) / 60;
-                
-                // Each number in numbers.bmp is 9x13 pixels
-                // Numbers are arranged horizontally: 0-9, then minus sign
-                int digitWidth = 9;
-                int digitHeight = 13;
-                int displayX = 48;  // Position in MAIN.BMP where time displays
-                int displayY = 26;
-                
-                // Draw minutes (1 digit)
-                int minsDigit = mins % 10;
-                p.drawPixmap(displayX, displayY, WinampBitmaps::instance().numbers, 
-                            minsDigit * digitWidth, 0, digitWidth, digitHeight);
-                
-                // Draw seconds (2 digits)
-                int secsTens = (secs / 10) % 10;
-                int secsOnes = secs % 10;
-                p.drawPixmap(displayX + 15, displayY, WinampBitmaps::instance().numbers,
-                            secsTens * digitWidth, 0, digitWidth, digitHeight);
-                p.drawPixmap(displayX + 23, displayY, WinampBitmaps::instance().numbers,
-                            secsOnes * digitWidth, 0, digitWidth, digitHeight);
+            // Title bar buttons from titlebar.bmp
+            // Menu icon: dest(6,3), src(0, state*9), 9x9
+            p.drawPixmap(6, 3, bmp.titlebar, 0, 0, 9, 9);
+            // Minimize: dest(244,3), src(9, state*9), 9x9
+            p.drawPixmap(244, 3, bmp.titlebar, 9, 0, 9, 9);
+            // Shade: dest(254,3), src(0, 18), 9x9
+            p.drawPixmap(254, 3, bmp.titlebar, 0, 18, 9, 9);
+            // Close: dest(264,3), src(18, state*9), 9x9
+            p.drawPixmap(264, 3, bmp.titlebar, 18, 0, 9, 9);
+        }
+        
+        // === 3. Time display from numbers.bmp ===
+        if (!bmp.numbers.isNull()) {
+            qint64 pos = player->position();
+            int totalSecs = pos / 1000;
+            int mins = totalSecs / 60;
+            int secs = totalSecs % 60;
+            
+            // Digit positions from original: 36, 48, 60, 78, 90 at y=26
+            int dw = 9, dh = 13;
+            int dy = 26;
+            
+            // Minutes tens digit (or blank if < 10)
+            int minTens = (mins / 10) % 10;
+            int srcX = (mins >= 10) ? (minTens * dw) : 90; // 90 = blank
+            p.drawPixmap(36, dy, bmp.numbers, srcX, 0, dw, dh);
+            
+            // Minutes ones
+            p.drawPixmap(48, dy, bmp.numbers, (mins % 10) * dw, 0, dw, dh);
+            
+            // Seconds tens
+            p.drawPixmap(60, dy, bmp.numbers, ((secs / 10) % 10) * dw, 0, dw, dh);
+            
+            // Seconds ones
+            p.drawPixmap(78, dy, bmp.numbers, (secs % 10) * dw, 0, dw, dh);
+        }
+        
+        // === 4. Play/pause/stop indicator from PLAYPAUS.BMP ===
+        // Layout: play=0, pause=9, stop=18, blank=27 (each 9x9 at srcY=0)
+        if (!bmp.playpaus.isNull()) {
+            int srcX;
+            switch (player->playbackState()) {
+                case QMediaPlayer::PlayingState: srcX = 0; break;   // Play
+                case QMediaPlayer::PausedState:  srcX = 9; break;   // Pause
+                default:                         srcX = 18; break;  // Stop
             }
+            // Work indicator (3px) at dest(24,28), main icon at dest(26,28)
+            p.drawPixmap(26, 28, bmp.playpaus, srcX, 0, 9, 9);
+        }
+        
+        // === 5. Stereo/Mono from MONOSTER.BMP ===
+        // Layout: stereo active (0,0 29x12), stereo dim (0,12), mono active (29,0 28x12), mono dim (29,12)
+        if (!bmp.monoster.isNull()) {
+            bool playing = (player->playbackState() == QMediaPlayer::PlayingState);
+            // Stereo indicator at dest(239,41) - always show, lit when playing
+            p.drawPixmap(239, 41, bmp.monoster, 0, playing ? 0 : 12, 29, 12);
+            // Mono indicator at dest(212,41) - always dimmed (we assume stereo)
+            p.drawPixmap(212, 41, bmp.monoster, 29, 12, 28, 12);
+        }
+        
+        // === 6. Transport buttons from CBUTTONS.BMP ===
+        // Layout: 136x36, buttons at srcX: prev=0, play=23, pause=46, stop=69, next=92 (each 23x18)
+        // Eject at srcX=114, size 22x16
+        // Row 0 (y=0)=normal, Row 1 (y=18)=pressed
+        if (!bmp.cbuttons.isNull()) {
+            auto drawBtn = [&](int id, int srcX, int destX, int destY, int w, int h, int pressedY) {
+                int sy = (pressedButton == id) ? pressedY : 0;
+                p.drawPixmap(destX, destY, bmp.cbuttons, srcX, sy, w, h);
+            };
             
-            // Draw play/pause indicator from PLAYPAUS.BMP
-            if (!WinampBitmaps::instance().playpaus.isNull()) {
-                int state = (player->playbackState() == QMediaPlayer::PlayingState) ? 0 : 1;
-                p.drawPixmap(24, 28, WinampBitmaps::instance().playpaus, state * 9, 0, 9, 9);
-            }
+            drawBtn(0,  0,  16, 88, 23, 18, 18);  // Previous
+            drawBtn(1, 23,  39, 88, 23, 18, 18);  // Play
+            drawBtn(2, 46,  62, 88, 23, 18, 18);  // Pause
+            drawBtn(3, 69,  85, 88, 23, 18, 18);  // Stop
+            drawBtn(4, 92, 108, 88, 22, 18, 18);  // Next (22px wide!)
+            drawBtn(5, 114, 136, 89, 22, 16, 16); // Eject (22x16, pressed row at y=16)
+        }
+        
+        // === 7. Position/seek bar from POSBAR.BMP ===
+        // Layout: background (0,0 248x10), slider normal (248,0 29x10), slider pressed (278,0 29x10)
+        if (!bmp.posbar.isNull()) {
+            // Draw bar background at dest(16,72)
+            p.drawPixmap(16, 72, bmp.posbar, 0, 0, 248, 10);
             
-            // Draw stereo/mono indicator from MONOSTER.BMP
-            if (!WinampBitmaps::instance().monoster.isNull() && 
-                player->playbackState() == QMediaPlayer::PlayingState) {
-                // 0 = stereo, 1 = mono
-                p.drawPixmap(212, 41, WinampBitmaps::instance().monoster, 0, 0, 29, 12);
-            }
-            
-            // Draw interactive buttons from CBUTTONS.BMP
-            if (!WinampBitmaps::instance().cbuttons.isNull()) {
-                drawButton(p, 0, 16, 88, 23, 18);  // Previous
-                drawButton(p, 1, 39, 88, 23, 18);  // Play
-                drawButton(p, 2, 62, 88, 23, 18);  // Pause
-                drawButton(p, 3, 85, 88, 23, 18);  // Stop
-                drawButton(p, 4, 108, 88, 23, 18); // Next
-                drawButton(p, 5, 136, 88, 22, 18); // Eject/Open
-            }
-            
-            // Draw progress bar from POSBAR.BMP
-            if (!WinampBitmaps::instance().posbar.isNull() && player->duration() > 0) {
+            if (player->duration() > 0) {
+                // Slider position: range is 0 to (248-29)=219 pixels
                 qint64 pos = player->position();
                 qint64 dur = player->duration();
-                int progress = (int)((double)pos / dur * 248);
-                
-                // Draw progress bar background and fill
-                for (int i = 0; i < 248; i++) {
-                    int srcX = (i < progress) ? 0 : 248;
-                    p.drawPixmap(16 + i, 72, WinampBitmaps::instance().posbar, srcX, 0, 1, 10);
-                }
+                int sliderX = (int)((double)pos / dur * 219);
+                int sliderSrcX = isDraggingPos ? 278 : 248;
+                p.drawPixmap(16 + sliderX, 72, bmp.posbar, sliderSrcX, 0, 29, 10);
             }
+        }
+        
+        // === 8. Volume bar from volume.bmp ===
+        // Layout: 68x433. 28 frames of 68x15 backgrounds (0-27), slider at y=422 (14x11)
+        if (!bmp.volume.isNull()) {
+            // Select background frame based on volume level (0-255 -> 0-27)
+            int frame = (volume * 27) / 255;
+            int srcY = frame * 15;
+            p.drawPixmap(107, 57, bmp.volume, 0, srcY, 68, 13);
             
-            // Draw volume slider from volume.bmp
-            if (!WinampBitmaps::instance().volume.isNull()) {
-                // Volume bar is 68 pixels wide
-                int volWidth = (volume * 68) / 100;
-                p.drawPixmap(107, 58, WinampBitmaps::instance().volume, 0, 0, volWidth, 13);
-            }
+            // Draw slider knob
+            int sliderX = (volume * 51) / 255;  // Range: 0-51 pixels
+            int knobSrcX = isDraggingVolume ? 0 : 15;
+            p.drawPixmap(107 + sliderX, 58, bmp.volume, knobSrcX, 422, 14, 11);
+        }
+        
+        // === 9. Shuffle/Repeat from SHUFREP.BMP ===
+        if (!bmp.shufrep.isNull()) {
+            // Shuffle: dest(164,89), 47x15, src x=28, y = (on?30:0) + (pressed?15:0)
+            int shufY = (shuffleOn ? 30 : 0);
+            p.drawPixmap(164, 89, bmp.shufrep, 28, shufY, 47, 15);
             
-        } else {
-            // Fallback to painted version if bitmaps not loaded
-            drawFallbackUI(p);
+            // Repeat: dest(210,89), 28x15, src x=0, y = (on?30:0) + (pressed?15:0)
+            int repY = (repeatOn ? 30 : 0);
+            p.drawPixmap(210, 89, bmp.shufrep, 0, repY, 28, 15);
+            
+            // EQ button: dest(219,58), 23x12, src x=(pressed?46:0), y=(on?73:61)
+            p.drawPixmap(219, 58, bmp.shufrep, eqBtnOn ? 0 : 46, eqBtnOn ? 73 : 61, 23, 12);
+            
+            // PL button: dest(242,58), 23x12, src x=(pressed?69:23), y=(on?73:61)
+            p.drawPixmap(242, 58, bmp.shufrep, plBtnOn ? 23 : 69, plBtnOn ? 73 : 61, 23, 12);
+        }
+        
+        // === 10. Song title text from text.bmp ===
+        if (!bmp.text.isNull() && !currentFile.isEmpty()) {
+            drawSongTitle(p);
+        }
+        
+        // === 11. Bitrate/sample rate display ===
+        if (!bmp.text.isNull() && player->playbackState() != QMediaPlayer::StoppedState) {
+            drawBitrateInfo(p);
+        }
+        
+        // === 12. Simple visualization ===
+        drawVisualization(p);
+    }
+    
+    void drawSongTitle(QPainter &p) {
+        auto &bmp = WinampBitmaps::instance();
+        QFileInfo fi(currentFile);
+        QString title = fi.completeBaseName().toUpper();
+        
+        // Clip to song title area (111,27) to (265,33), 154px wide
+        p.setClipRect(111, 27, 154, 6);
+        
+        int charW = 5, charH = 6;
+        int totalWidth = title.length() * charW;
+        int offset = -(scrollOffset % (totalWidth + 100));
+        
+        for (int i = 0; i < title.length(); i++) {
+            int dx = 111 + offset + i * charW;
+            if (dx > 265) break;
+            if (dx + charW < 111) continue;
+            
+            QChar ch = title[i];
+            int srcX, srcY;
+            getTextCharPos(ch, srcX, srcY);
+            p.drawPixmap(dx, 27, bmp.text, srcX, srcY, charW, charH);
+        }
+        
+        p.setClipping(false);
+    }
+    
+    void getTextCharPos(QChar ch, int &srcX, int &srcY) {
+        char c = ch.toLatin1();
+        if (c >= 'A' && c <= 'Z') {
+            srcX = (c - 'A') * 5;
+            srcY = 0;
+        } else if (c >= '0' && c <= '9') {
+            srcX = (c - '0') * 5;
+            srcY = 6;
+        } else if (c == '-') { srcX = 60; srcY = 6; }
+        else if (c == '.') { srcX = 50; srcY = 6; }
+        else if (c == ':') { srcX = 55; srcY = 6; }
+        else if (c == '(') { srcX = 65; srcY = 6; }
+        else if (c == ')') { srcX = 70; srcY = 6; }
+        else if (c == '\'') { srcX = 80; srcY = 6; }
+        else if (c == '!') { srcX = 85; srcY = 6; }
+        else if (c == '_') { srcX = 90; srcY = 6; }
+        else if (c == '+') { srcX = 95; srcY = 6; }
+        else { srcX = 100; srcY = 12; } // blank/space
+    }
+    
+    void drawBitrateInfo(QPainter &p) {
+        auto &bmp = WinampBitmaps::instance();
+        // Bitrate at (111,43), sample rate at (156,43) using text.bmp
+        QString br = "128"; // Default
+        QString sr = "44";
+        
+        int charW = 5, charH = 6;
+        
+        // Draw bitrate
+        for (int i = 0; i < br.length() && i < 3; i++) {
+            int sx, sy;
+            getTextCharPos(br[i], sx, sy);
+            p.drawPixmap(111 + i * charW, 43, bmp.text, sx, sy, charW, charH);
+        }
+        
+        // Draw "KHZ" label area - sample rate  
+        for (int i = 0; i < sr.length() && i < 2; i++) {
+            int sx, sy;
+            getTextCharPos(sr[i], sx, sy);
+            p.drawPixmap(156 + i * charW, 43, bmp.text, sx, sy, charW, charH);
         }
     }
     
-    // Draw button from CBUTTONS.BMP with state
-    void drawButton(QPainter &p, int buttonId, int x, int y, int w, int h) {
-        // CBUTTONS.BMP layout: each button is 23x18 pixels
-        // Buttons arranged in rows: normal, pressed, selected states
-        int srcX = buttonId * 23;
-        int srcY = 0;  // Normal state
-        
-        if (pressedButton == buttonId) {
-            srcY = 18;  // Pressed state (second row)
-        } else if (hoveredButton == buttonId) {
-            srcY = 0;   // Normal state (could add hover if available)
+    void drawVisualization(QPainter &p) {
+        // Simple spectrum analyzer in viz area (24,43 76x16)
+        if (player->playbackState() == QMediaPlayer::PlayingState) {
+            for (int i = 0; i < 19; i++) {
+                int h = QRandomGenerator::global()->bounded(2, 14);
+                int x = 24 + i * 4;
+                
+                for (int j = 0; j < h; j++) {
+                    int y = 58 - j;
+                    int g = 80 + (j * 175 / 14);
+                    p.setPen(QColor(0, g, 0));
+                    p.drawLine(x, y, x + 2, y);
+                }
+            }
         }
-        
-        p.drawPixmap(x, y, WinampBitmaps::instance().cbuttons, srcX, srcY, w, h);
     }
     
     void drawFallbackUI(QPainter &p) {
-        // Same as previous painted version
         p.fillRect(rect(), QColor(66, 66, 99));
-        
         QLinearGradient titleGrad(0, 0, 0, 14);
         titleGrad.setColorAt(0, QColor(82, 90, 132));
         titleGrad.setColorAt(1, QColor(58, 66, 107));
         p.fillRect(0, 0, width(), 14, titleGrad);
-        
         p.setPen(QColor(0, 255, 0));
         p.setFont(QFont("Tahoma", 7, QFont::Bold));
         p.drawText(6, 10, "*** Winamp 5.666 ***");
@@ -418,20 +568,14 @@ protected:
         
         // Title bar
         if (y < 14) {
-            if (x > width() - 12) {
-                close();
-                return;
-            }
-            if (x > width() - 23) {
-                showMinimized();
-                return;
-            }
+            if (x >= 264 && x < 273) { close(); return; }           // Close
+            if (x >= 244 && x < 253) { showMinimized(); return; }   // Minimize
             isDragging = true;
             dragPosition = event->globalPosition().toPoint() - frameGeometry().topLeft();
             return;
         }
         
-        // Check for button press
+        // Transport buttons
         int btnId = getButtonAt(x, y);
         if (btnId >= 0) {
             pressedButton = btnId;
@@ -439,11 +583,52 @@ protected:
             return;
         }
         
-        // Volume slider area (107-175, y=58-71)
-        if (x >= 107 && x <= 175 && y >= 58 && y <= 71) {
-            volume = ((x - 107) * 100) / 68;
-            if (volume > 100) volume = 100;
-            audioOutput->setVolume((float)volume / 100.0f);
+        // Shuffle button: (164,89) to (211,104)
+        if (x >= 164 && x < 211 && y >= 89 && y < 104) {
+            shuffleOn = !shuffleOn;
+            update();
+            return;
+        }
+        
+        // Repeat button: (210,89) to (238,104)
+        if (x >= 210 && x < 238 && y >= 89 && y < 104) {
+            repeatOn = !repeatOn;
+            update();
+            return;
+        }
+        
+        // EQ button: (219,58) to (242,70)
+        if (x >= 219 && x < 242 && y >= 58 && y < 70) {
+            eqBtnOn = !eqBtnOn;
+            if (eqBtnOn) eqWindow->show(); else eqWindow->hide();
+            update();
+            return;
+        }
+        
+        // PL button: (242,58) to (265,70)
+        if (x >= 242 && x < 265 && y >= 58 && y < 70) {
+            plBtnOn = !plBtnOn;
+            if (plBtnOn) playlistWindow->show(); else playlistWindow->hide();
+            update();
+            return;
+        }
+        
+        // Volume slider: (107,57) to (175,70)
+        if (x >= 107 && x <= 175 && y >= 57 && y <= 70) {
+            isDraggingVolume = true;
+            volume = ((x - 107) * 255) / 68;
+            if (volume > 255) volume = 255;
+            if (volume < 0) volume = 0;
+            audioOutput->setVolume(volume / 255.0f);
+            update();
+            return;
+        }
+        
+        // Position bar: (16,72) to (264,82)
+        if (x >= 16 && x <= 264 && y >= 72 && y <= 82 && player->duration() > 0) {
+            isDraggingPos = true;
+            qint64 newPos = ((qint64)(x - 16) * player->duration()) / 248;
+            player->setPosition(newPos);
             update();
             return;
         }
@@ -458,20 +643,23 @@ protected:
         // Update hovered button
         int oldHover = hoveredButton;
         hoveredButton = getButtonAt(x, y);
+        if (oldHover != hoveredButton) update();
         
-        if (oldHover != hoveredButton) {
+        // Volume drag
+        if (isDraggingVolume) {
+            volume = ((x - 107) * 255) / 68;
+            if (volume > 255) volume = 255;
+            if (volume < 0) volume = 0;
+            audioOutput->setVolume(volume / 255.0f);
             update();
         }
         
-        // Handle volume drag
-        if (pressedButton == -1 && event->buttons() & Qt::LeftButton) {
-            if (x >= 107 && x <= 175 && y >= 58 && y <= 71) {
-                volume = ((x - 107) * 100) / 68;
-                if (volume > 100) volume = 100;
-                if (volume < 0) volume = 0;
-                audioOutput->setVolume((float)volume / 100.0f);
-                update();
-            }
+        // Position drag
+        if (isDraggingPos && player->duration() > 0) {
+            int clampX = qBound(16, (int)x, 264);
+            qint64 newPos = ((qint64)(clampX - 16) * player->duration()) / 248;
+            player->setPosition(newPos);
+            update();
         }
         
         if (isDragging) {
@@ -487,38 +675,25 @@ protected:
             int y = event->pos().y();
             int btnId = getButtonAt(x, y);
             
-            // Execute button action if released on same button
             if (btnId == pressedButton) {
                 switch (btnId) {
-                    case 0: // Previous
-                        player->setPosition(0);
+                    case 0: player->setPosition(0); break;          // Previous
+                    case 1:                                          // Play
+                        if (!currentFile.isEmpty()) player->play();
+                        else openFile();
                         break;
-                    case 1: // Play
-                        if (!currentFile.isEmpty()) {
-                            player->play();
-                        } else {
-                            openFile();
-                        }
-                        break;
-                    case 2: // Pause
-                        player->pause();
-                        break;
-                    case 3: // Stop
-                        player->stop();
-                        break;
-                    case 4: // Next
-                        // Could implement playlist next
-                        break;
-                    case 5: // Open/Eject
-                        openFile();
-                        break;
+                    case 2: player->pause(); break;                  // Pause
+                    case 3: player->stop(); break;                   // Stop
+                    case 4: break;                                   // Next
+                    case 5: openFile(); break;                       // Eject
                 }
             }
-            
             pressedButton = -1;
             update();
         }
         
+        isDraggingVolume = false;
+        isDraggingPos = false;
         isDragging = false;
     }
     
@@ -537,16 +712,15 @@ protected:
         update();
     }
 
-    // Helper to get button ID at coordinates
     int getButtonAt(int x, int y) {
         if (y >= 88 && y <= 106) {
-            if (x >= 16 && x < 40) return 0;   // Previous
-            if (x >= 39 && x < 62) return 1;   // Play
-            if (x >= 62 && x < 85) return 2;   // Pause
+            if (x >= 16 && x < 39)  return 0;  // Previous
+            if (x >= 39 && x < 62)  return 1;  // Play
+            if (x >= 62 && x < 85)  return 2;  // Pause
             if (x >= 85 && x < 108) return 3;  // Stop
-            if (x >= 108 && x < 131) return 4; // Next
-            if (x >= 136 && x < 159) return 5; // Open/Eject
+            if (x >= 108 && x < 130) return 4; // Next
         }
+        if (y >= 89 && y <= 105 && x >= 136 && x < 158) return 5; // Eject
         return -1;
     }
 
@@ -554,12 +728,16 @@ private:
     QMediaPlayer *player;
     QAudioOutput *audioOutput;
     QTimer *timer;
+    QTimer *scrollTimer;
     QString currentFile;
     QPoint dragPosition;
     bool isDragging;
-    int volume;
+    int volume;  // 0-255 like original
     int hoveredButton;
     int pressedButton;
+    bool shuffleOn, repeatOn, eqBtnOn, plBtnOn;
+    bool isDraggingVolume, isDraggingPos;
+    int scrollOffset;
     
     PlaylistWindow *playlistWindow;
     EqualizerWindow *eqWindow;
