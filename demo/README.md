@@ -1,14 +1,38 @@
 # Winamp for Linux - Qt6 Demo
 
-A faithful recreation of the classic Winamp interface using Qt6 for Linux.
+A faithful recreation of the classic Winamp interface using Qt6 for Linux, **now with authentic Windows Winamp bitmap assets!**
 
 ![Winamp Linux](https://img.shields.io/badge/Winamp-Linux-00FF00?style=for-the-badge&logo=linux&logoColor=white)
 ![Qt6](https://img.shields.io/badge/Qt6-6.9.2-41CD52?style=for-the-badge&logo=qt&logoColor=white)
 ![C++17](https://img.shields.io/badge/C++-17-00599C?style=for-the-badge&logo=cplusplus&logoColor=white)
+![Authentic](https://img.shields.io/badge/Assets-100%25_Authentic-FF6600?style=for-the-badge)
+
+## ✨ Now Using Original Winamp Graphics!
+
+The Linux version now loads the **actual bitmap assets** from the Windows Winamp source:
+- **MAIN.BMP** - Original main window background
+- **numbers.bmp** - Authentic LED number fonts  
+- **CBUTTONS.BMP** - Real control button graphics
+- **PLAYPAUS.BMP** - Play/pause indicators
+- **MONOSTER.BMP** - Stereo/mono displays
+- **titlebar.bmp** - Classic title bar
+- **Eqmain.bmp** - Equalizer window graphics
+- **Pledit.bmp** - Playlist window graphics
+
+No more approximations - this is the **real deal**! 🎨
 
 ## Features
 
-### 🎵 Main Player Window
+### � Authentic Visual Assets
+- **100% Original Graphics**: Loads actual Windows Winamp BMP files
+- **LED Number Display**: Real numbers.bmp with 9x13 pixel digits
+- **Main Window**: Authentic MAIN.BMP background (275x116px)
+- **Play/Pause Indicators**: Original PLAYPAUS.BMP states
+- **Stereo/Mono Display**: Genuine MONOSTER.BMP graphics
+- **Smart Path Resolution**: Multiple fallback paths for flexible deployment
+- **Graceful Degradation**: Falls back to painted graphics if bitmaps unavailable
+
+### �🎵 Main Player Window
 - **Classic 275x116px dimensions** matching original Winamp
 - **LED-style time display** with authentic green glow effect
 - **Dual visualizers**: Oscilloscope and spectrum analyzer

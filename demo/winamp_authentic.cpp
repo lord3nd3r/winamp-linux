@@ -260,11 +260,13 @@ EqualizerWindow::EqualizerWindow(WinampWindow *parent) : QWidget(nullptr), mainW
 // Main Winamp Window
 class WinampWindow : public QWidget {
 public:
-    WinampWindow(QWidget *parent = nullptr) : QWidget(parent), dragPosition(0,0), isDragging(false), volume(50) {
+    WinampWindow(QWidget *parent = nullptr) : QWidget(parent), dragPosition(0,0), isDragging(false), volume(50),
+                 hoveredButton(-1), pressedButton(-1) {
         setFixedSize(275, 116);
         setWindowTitle("Winamp 5.666 for Linux");
         setWindowFlags(Qt::FramelessWindowHint);
         setAttribute(Qt::WA_TranslucentBackground, false);
+        setMouseTracking(true);
         
         // Setup audio
         player = new QMediaPlayer(this);
@@ -344,10 +346,56 @@ protected:
                 p.drawPixmap(212, 41, WinampBitmaps::instance().monoster, 0, 0, 29, 12);
             }
             
+            // Draw interactive buttons from CBUTTONS.BMP
+            if (!WinampBitmaps::instance().cbuttons.isNull()) {
+                drawButton(p, 0, 16, 88, 23, 18);  // Previous
+                drawButton(p, 1, 39, 88, 23, 18);  // Play
+                drawButton(p, 2, 62, 88, 23, 18);  // Pause
+                drawButton(p, 3, 85, 88, 23, 18);  // Stop
+                drawButton(p, 4, 108, 88, 23, 18); // Next
+                drawButton(p, 5, 136, 88, 22, 18); // Eject/Open
+            }
+            
+            // Draw progress bar from POSBAR.BMP
+            if (!WinampBitmaps::instance().posbar.isNull() && player->duration() > 0) {
+                qint64 pos = player->position();
+                qint64 dur = player->duration();
+                int progress = (int)((double)pos / dur * 248);
+                
+                // Draw progress bar background and fill
+                for (int i = 0; i < 248; i++) {
+                    int srcX = (i < progress) ? 0 : 248;
+                    p.drawPixmap(16 + i, 72, WinampBitmaps::instance().posbar, srcX, 0, 1, 10);
+                }
+            }
+            
+            // Draw volume slider from volume.bmp
+            if (!WinampBitmaps::instance().volume.isNull()) {
+                // Volume bar is 68 pixels wide
+                int volWidth = (volume * 68) / 100;
+                p.drawPixmap(107, 58, WinampBitmaps::instance().volume, 0, 0, volWidth, 13);
+            }
+            
         } else {
             // Fallback to painted version if bitmaps not loaded
             drawFallbackUI(p);
         }
+    }
+    
+    // Draw button from CBUTTONS.BMP with state
+    void drawButton(QPainter &p, int buttonId, int x, int y, int w, int h) {
+        // CBUTTONS.BMP layout: each button is 23x18 pixels
+        // Buttons arranged in rows: normal, pressed, selected states
+        int srcX = buttonId * 23;
+        int srcY = 0;  // Normal state
+        
+        if (pressedButton == buttonId) {
+            srcY = 18;  // Pressed state (second row)
+        } else if (hoveredButton == buttonId) {
+            srcY = 0;   // Normal state (could add hover if available)
+        }
+        
+        p.drawPixmap(x, y, WinampBitmaps::instance().cbuttons, srcX, srcY, w, h);
     }
     
     void drawFallbackUI(QPainter &p) {
@@ -383,32 +431,49 @@ protected:
             return;
         }
         
-        // Control buttons (using MAIN.BMP coordinates)
-        // Play button: x=16-39, y=88-106
-        if (x >= 16 && x < 40 && y >= 88 && y <= 106) {
-            if (!currentFile.isEmpty()) {
-                player->play();
-            } else {
-                openFile();
-            }
+        // Check for button press
+        int btnId = getButtonAt(x, y);
+        if (btnId >= 0) {
+            pressedButton = btnId;
+            update();
+            return;
         }
-        // Pause: 39-62
-        else if (x >= 39 && x < 62 && y >= 88 && y <= 106) {
-            player->pause();
-        }
-        // Stop: 62-85
-        else if (x >= 62 && x < 85 && y >= 88 && y <= 106) {
-            player->stop();
-        }
-        // Open: 136-159
-        else if (x >= 136 && x < 159 && y >= 88 && y <= 106) {
-            openFile();
+        
+        // Volume slider area (107-175, y=58-71)
+        if (x >= 107 && x <= 175 && y >= 58 && y <= 71) {
+            volume = ((x - 107) * 100) / 68;
+            if (volume > 100) volume = 100;
+            audioOutput->setVolume((float)volume / 100.0f);
+            update();
+            return;
         }
         
         update();
     }
     
     void mouseMoveEvent(QMouseEvent *event) override {
+        int x = event->position().x();
+        int y = event->position().y();
+        
+        // Update hovered button
+        int oldHover = hoveredButton;
+        hoveredButton = getButtonAt(x, y);
+        
+        if (oldHover != hoveredButton) {
+            update();
+        }
+        
+        // Handle volume drag
+        if (pressedButton == -1 && event->buttons() & Qt::LeftButton) {
+            if (x >= 107 && x <= 175 && y >= 58 && y <= 71) {
+                volume = ((x - 107) * 100) / 68;
+                if (volume > 100) volume = 100;
+                if (volume < 0) volume = 0;
+                audioOutput->setVolume((float)volume / 100.0f);
+                update();
+            }
+        }
+        
         if (isDragging) {
             move(event->globalPosition().toPoint() - dragPosition);
             playlistWindow->followMain();
@@ -417,6 +482,43 @@ protected:
     }
     
     void mouseReleaseEvent(QMouseEvent *event) override {
+        if (pressedButton >= 0) {
+            int x = event->pos().x();
+            int y = event->pos().y();
+            int btnId = getButtonAt(x, y);
+            
+            // Execute button action if released on same button
+            if (btnId == pressedButton) {
+                switch (btnId) {
+                    case 0: // Previous
+                        player->setPosition(0);
+                        break;
+                    case 1: // Play
+                        if (!currentFile.isEmpty()) {
+                            player->play();
+                        } else {
+                            openFile();
+                        }
+                        break;
+                    case 2: // Pause
+                        player->pause();
+                        break;
+                    case 3: // Stop
+                        player->stop();
+                        break;
+                    case 4: // Next
+                        // Could implement playlist next
+                        break;
+                    case 5: // Open/Eject
+                        openFile();
+                        break;
+                }
+            }
+            
+            pressedButton = -1;
+            update();
+        }
+        
         isDragging = false;
     }
     
@@ -435,6 +537,19 @@ protected:
         update();
     }
 
+    // Helper to get button ID at coordinates
+    int getButtonAt(int x, int y) {
+        if (y >= 88 && y <= 106) {
+            if (x >= 16 && x < 40) return 0;   // Previous
+            if (x >= 39 && x < 62) return 1;   // Play
+            if (x >= 62 && x < 85) return 2;   // Pause
+            if (x >= 85 && x < 108) return 3;  // Stop
+            if (x >= 108 && x < 131) return 4; // Next
+            if (x >= 136 && x < 159) return 5; // Open/Eject
+        }
+        return -1;
+    }
+
 private:
     QMediaPlayer *player;
     QAudioOutput *audioOutput;
@@ -443,6 +558,8 @@ private:
     QPoint dragPosition;
     bool isDragging;
     int volume;
+    int hoveredButton;
+    int pressedButton;
     
     PlaylistWindow *playlistWindow;
     EqualizerWindow *eqWindow;
