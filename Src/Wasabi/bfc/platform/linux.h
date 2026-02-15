@@ -140,10 +140,11 @@ typedef Pixmap HICON;
 
 #endif // wnd
 
-typedef int LRESULT;
-typedef int LPARAM;
-typedef int WPARAM;
-typedef int RPARAM;
+// Message types - use 64-bit for pointer compatibility on x86_64
+typedef long LRESULT;
+typedef long LPARAM;
+typedef unsigned long WPARAM;
+typedef unsigned long RPARAM;
 typedef unsigned int TCHAR;
 typedef long long __int64;
 typedef long long LARGE_INTEGER;
