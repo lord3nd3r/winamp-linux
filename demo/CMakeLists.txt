@@ -8,7 +8,7 @@ set(CMAKE_AUTOMOC ON)
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Multimedia)
 
 add_executable(winamp_demo
-    winamp_complete.cpp
+    winamp_authentic.cpp
 )
 
 target_link_libraries(winamp_demo
