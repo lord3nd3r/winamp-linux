@@ -4328,6 +4328,8 @@ protected:
         QAction *visVuAct = visMenu->addAction("VU meter");
         visVuAct->setCheckable(true);
         visVuAct->setChecked(visMode == 3);
+        visMenu->addSeparator();
+        QAction *visMilkdropAct = visMenu->addAction("Milkdrop visualization...");
         
         menu.addSeparator();
         
@@ -4388,6 +4390,7 @@ protected:
         else if (sel == visSpecAct) { visMode = 1; update(); }
         else if (sel == visOscAct) { visMode = 2; update(); }
         else if (sel == visVuAct) { visMode = 3; update(); }
+        else if (sel == visMilkdropAct) openMilkdrop();
         else if (sel == aboutAct) onShowAbout();
         else if (sel == quitAct) close();
         // Recent files
