@@ -9,6 +9,8 @@
 #include <QAudioSink>
 #include <QAudioDevice>
 #include <QMediaDevices>
+#include <QVideoWidget>
+#include <QVideoSink>
 #include <QFileDialog>
 #include <QMouseEvent>
 #include <QTimer>
@@ -843,6 +845,7 @@ static void loadVisColors(const QString &skinPath) {
 
 // Forward declarations
 class WinampWindow;
+class VideoWindow;
 class MilkdropWindow;
 
 // Shared text.bmp character lookup (5x6 per char)
@@ -3655,6 +3658,117 @@ EqualizerWindow::EqualizerWindow(WinampWindow *parent) : QWidget(nullptr), mainW
 }
 
 // ============================================================
+// VideoWindow — Video playback window with skin support
+// ============================================================
+class VideoWindow : public QWidget {
+    Q_OBJECT
+    
+public:
+    VideoWindow(QWidget *parent = nullptr) : QWidget(parent) {
+        setWindowTitle("Winamp Video");
+        setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
+        setAttribute(Qt::WA_DeleteOnClose, false);  // Don't delete on close, just hide
+        resize(320, 240);
+        setMinimumSize(160, 120);
+        
+        // Create video widget for actual video rendering
+        videoWidget = new QVideoWidget(this);
+        videoWidget->setGeometry(0, 0, 320, 240);
+        videoWidget->setStyleSheet("background-color: black;");
+        
+        // Load logo bitmap
+        loadLogo();
+        
+        isDragging = false;
+    }
+    
+    QVideoWidget* getVideoWidget() { return videoWidget; }
+    
+    void setHasVideo(bool has) {
+        hasActiveVideo = has;
+        if (has) {
+            videoWidget->show();
+        } else {
+            videoWidget->hide();
+        }
+        update();
+    }
+    
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        
+        // If no video is playing, show the logo
+        if (!hasActiveVideo && !logoPixmap.isNull()) {
+            QRect r = rect();
+            int xp = (r.width() - logoPixmap.width()) / 2;
+            int yp = (r.height() - logoPixmap.height()) / 2;
+            p.fillRect(r, Qt::black);
+            p.drawPixmap(xp, yp, logoPixmap);
+        }
+    }
+    
+    void resizeEvent(QResizeEvent*) override {
+        // Resize video widget to fill the window
+        videoWidget->setGeometry(0, 0, width(), height());
+    }
+    
+    void mousePressEvent(QMouseEvent *event) override {
+        if (event->button() == Qt::LeftButton) {
+            isDragging = true;
+            dragStartPos = event->globalPosition().toPoint() - frameGeometry().topLeft();
+        } else if (event->button() == Qt::RightButton) {
+            // Could show context menu here
+        }
+    }
+    
+    void mouseMoveEvent(QMouseEvent *event) override {
+        if (isDragging) {
+            move(event->globalPosition().toPoint() - dragStartPos);
+        }
+    }
+    
+    void mouseReleaseEvent(QMouseEvent *event) override {
+        if (event->button() == Qt::LeftButton) {
+            isDragging = false;
+        }
+    }
+    
+    void mouseDoubleClickEvent(QMouseEvent*) override {
+        // Toggle fullscreen on double-click
+        if (isFullScreen()) {
+            showNormal();
+        } else {
+            showFullScreen();
+        }
+    }
+    
+private:
+    void loadLogo() {
+        // Try to load video_logo.bmp from skin
+        QStringList paths = {
+            "skins/default/video_logo.bmp",
+            "Src/Winamp/resource/video_logo.bmp"
+        };
+        
+        for (const QString &path : paths) {
+            if (QFile::exists(path)) {
+                logoPixmap = QPixmap(path);
+                if (!logoPixmap.isNull()) {
+                    break;
+                }
+            }
+        }
+    }
+    
+    QVideoWidget *videoWidget;
+    QPixmap logoPixmap;
+    bool hasActiveVideo = false;
+    bool isDragging = false;
+    QPoint dragStartPos;
+};
+
+// ============================================================
 // MilkdropWindow — projectM-powered Milkdrop visualization
 // ============================================================
 class MilkdropWindow : public QOpenGLWidget, protected QOpenGLFunctions {
@@ -4070,6 +4184,17 @@ public:
         
         connect(player, &QMediaPlayer::positionChanged, this, [this](qint64) { update(); });
         
+        // Auto-show video window when video content is detected
+        connect(player, &QMediaPlayer::hasVideoChanged, this, [this](bool hasVideo) {
+            if (hasVideo && videoWindow) {
+                videoWindow->setHasVideo(true);
+                videoWindow->show();
+                videoWindow->raise();
+            } else if (videoWindow) {
+                videoWindow->setHasVideo(false);
+            }
+        });
+        
         // Auto-advance to next track when current one ends
         connect(player, &QMediaPlayer::mediaStatusChanged, this, [this](QMediaPlayer::MediaStatus status) {
             if (status == QMediaPlayer::EndOfMedia) {
@@ -4193,6 +4318,11 @@ public:
         connect(playlistWindow, &PlaylistWindow::trackDoubleClicked, this, &WinampWindow::playTrack);
         eqWindow = new EqualizerWindow(this);
         
+        // Create video window (hidden by default)
+        videoWindow = new VideoWindow(this);
+        videoWindow->hide();
+        player->setVideoOutput(videoWindow->getVideoWidget());
+        
         // Position windows: EQ below main, playlist to the right of main
         playlistWindow->move(x() + width(), y());  // right of main
         eqWindow->move(x(), y() + height());
@@ -4208,6 +4338,7 @@ public:
     ~WinampWindow() {
         delete playlistWindow;
         delete eqWindow;
+        delete videoWindow;
     }
 
     void playFile(const QString &file) {
@@ -5209,6 +5340,9 @@ protected:
         QAction *plTogAct = winMenu->addAction("Playlist editor\tAlt+E");
         plTogAct->setCheckable(true);
         plTogAct->setChecked(plBtnOn);
+        QAction *vidTogAct = winMenu->addAction("Video window");
+        vidTogAct->setCheckable(true);
+        vidTogAct->setChecked(videoWindow && videoWindow->isVisible());
         winMenu->addSeparator();
         QAction *milkdropAct = winMenu->addAction("Milkdrop visualization");
         
@@ -5298,6 +5432,9 @@ protected:
             plBtnOn = sel->isChecked();
             if (plBtnOn) playlistWindow->show(); else playlistWindow->hide();
             update();
+        }
+        else if (sel == vidTogAct) {
+            if (sel->isChecked()) videoWindow->show(); else videoWindow->hide();
         }
         else if (sel == milkdropAct) openMilkdrop();
         else if (sel == visOffAct) { visMode = 0; update(); }
@@ -5926,6 +6063,7 @@ private:
     
     PlaylistWindow *playlistWindow;
     EqualizerWindow *eqWindow;
+    VideoWindow *videoWindow = nullptr;
     MilkdropWindow *milkdropWindow = nullptr;
     
     void openMilkdrop() {
