@@ -51,9 +51,10 @@ static QString extractSkinArchive(const QString &archivePath) {
     QString extractDir = cacheDirBase + "/" + skinName;
     QDir().mkpath(extractDir);
     
-    // Check if already extracted (MAIN.BMP or main.bmp exists)
+    // Check if already extracted (any .bmp file exists)
     QDir ed(extractDir);
-    if (ed.exists("MAIN.BMP") || ed.exists("main.bmp") || ed.exists("Main.bmp")) {
+    QStringList bmps = ed.entryList(QStringList() << "*.bmp" << "*.BMP", QDir::Files);
+    if (!bmps.isEmpty()) {
         return extractDir;
     }
     
@@ -560,16 +561,42 @@ signals:
     void skinChanged(const QString &skinPath);
 
 private:
+    QString defaultSkinPath;
+    
     void populateSkins() {
+        // Find the built-in default skin path
+        QString appDir = QCoreApplication::applicationDirPath();
+        QStringList defaultCandidates = {
+            appDir + "/../skins/default",
+            appDir + "/../../skins/default",
+            QDir::homePath() + "/.winamp/skins/default"
+        };
+        for (const QString &p : defaultCandidates) {
+            QDir d(p);
+            if (d.exists()) {
+                QStringList bmps = d.entryList(QStringList() << "*.bmp" << "*.BMP", QDir::Files);
+                if (!bmps.isEmpty()) {
+                    defaultSkinPath = d.absolutePath();
+                    break;
+                }
+            }
+        }
+        
+        // Always show "Winamp Default" as the first entry
+        skinListWidget->addItem("Winamp Default");
+        
         QDir skinsDir(QDir::homePath() + "/.winamp/skins");
         if (!skinsDir.exists()) {
             skinsDir.mkpath(".");
         }
-        // List directories (unzipped skins)
+        // List directories (unzipped skins), skip "default" since we already show it
         QStringList skinFolders = skinsDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
-        skinListWidget->addItems(skinFolders);
+        for (const QString &folder : skinFolders) {
+            if (folder.toLower() != "default")
+                skinListWidget->addItem(folder);
+        }
         
-        // List .wsz and .zip archives
+        // List .wsz and .zip archives (skip .wal — modern/Bento skins, not compatible)
         QStringList archiveFilters;
         archiveFilters << "*.wsz" << "*.WSZ" << "*.zip" << "*.ZIP";
         QStringList archiveFiles = skinsDir.entryList(archiveFilters, QDir::Files);
@@ -581,6 +608,15 @@ private:
 
     void onSkinSelected(QListWidgetItem *item) {
         QString skinName = item->text();
+        
+        // Handle "Winamp Default" entry
+        if (skinName == "Winamp Default") {
+            if (!defaultSkinPath.isEmpty()) {
+                emit skinChanged(defaultSkinPath);
+            }
+            return;
+        }
+        
         QString skinsBase = QDir::homePath() + "/.winamp/skins/";
         QString fullPath = skinsBase + skinName;
         
@@ -744,6 +780,7 @@ private:
     void showRemMenu(QPoint globalPos);
     void showSelMenu(QPoint globalPos);
     void showMiscMenu(QPoint globalPos);
+    void showListMenu(QPoint globalPos);
 
     QListWidget *listWidget;
     QList<QString> tracks;
@@ -1187,6 +1224,10 @@ void PlaylistWindow::mousePressEvent(QMouseEvent *event) {
             showMiscMenu(event->globalPosition().toPoint());
             event->accept();
             return;
+        } else if (x >= width() - 44 && x < width() - 44 + 22) {
+            showListMenu(event->globalPosition().toPoint());
+            event->accept();
+            return;
         }
     }
 
@@ -1457,6 +1498,62 @@ void PlaylistWindow::showMiscMenu(QPoint globalPos) {
     }
 }
 
+void PlaylistWindow::showListMenu(QPoint globalPos) {
+    QMenu menu;
+    menu.setStyleSheet(
+        "QMenu { background-color: #2b2d3d; color: #00ff00; border: 1px solid #555; font-size: 9pt; }"
+        "QMenu::item:selected { background-color: #0000c6; }"
+    );
+
+    QAction *newPl = menu.addAction("New playlist");
+    QAction *openPl = menu.addAction("Open playlist...");
+    QAction *savePl = menu.addAction("Save playlist...");
+
+    QAction *selected = menu.exec(globalPos);
+    if (selected == newPl) {
+        clearPlaylist();
+    } else if (selected == openPl) {
+        QString fileName = QFileDialog::getOpenFileName(this, "Open Playlist", "",
+            "Playlist Files (*.m3u *.m3u8 *.pls);;All Files (*)");
+        if (!fileName.isEmpty()) {
+            clearPlaylist();
+            QFile file(fileName);
+            if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                QTextStream in(&file);
+                QString basePath = QFileInfo(fileName).absolutePath();
+                while (!in.atEnd()) {
+                    QString line = in.readLine().trimmed();
+                    if (line.isEmpty() || line.startsWith('#'))
+                        continue;
+                    // Handle relative paths
+                    if (!QFileInfo(line).isAbsolute())
+                        line = basePath + "/" + line;
+                    if (QFile::exists(line))
+                        addTrack(line);
+                }
+                file.close();
+            }
+        }
+    } else if (selected == savePl) {
+        QString fileName = QFileDialog::getSaveFileName(this, "Save Playlist", "",
+            "M3U Playlist (*.m3u);;M3U8 Playlist (*.m3u8);;All Files (*)");
+        if (!fileName.isEmpty()) {
+            QFile file(fileName);
+            if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                QTextStream out(&file);
+                out << "#EXTM3U\n";
+                for (int i = 0; i < tracks.size(); i++) {
+                    qint64 durSec = (i < trackDurations.size()) ? trackDurations[i] / 1000 : -1;
+                    QString title = QFileInfo(tracks[i]).baseName();
+                    out << "#EXTINF:" << durSec << "," << title << "\n";
+                    out << tracks[i] << "\n";
+                }
+                file.close();
+            }
+        }
+    }
+}
+
 // Equalizer Window Constructor
 EqualizerWindow::EqualizerWindow(WinampWindow *parent) : QWidget(nullptr), mainWindow(parent) {
     setFixedSize(275, 116);
@@ -1615,6 +1712,22 @@ public slots:
 
     void onSkinChanged(const QString &skinPath) {
         WinampBitmaps::instance().loadAll(skinPath);
+        
+        // Load any missing bitmaps from fallback paths
+        QString appDir = QCoreApplication::applicationDirPath();
+        QStringList fallbacks = {
+            appDir + "/../skins/default",
+            appDir + "/../../skins/default",
+            QDir::homePath() + "/.winamp/skins/default",
+            appDir + "/../Src/Winamp/resource",
+            appDir + "/../../Src/Winamp/resource"
+        };
+        for (const QString &fb : fallbacks) {
+            QDir d(fb);
+            if (d.exists())
+                WinampBitmaps::instance().loadMissing(d.absolutePath());
+        }
+        
         // Force all windows to repaint with the new skin
         update();
         playlistWindow->update();
