@@ -3671,6 +3671,7 @@ public:
         resize(320, 240);
         setMinimumSize(160, 120);
         setFocusPolicy(Qt::StrongFocus);  // Accept keyboard focus for F/Escape keys
+        setMouseTracking(true);  // Enable cursor updates for resize edges
         
         // Create video widget for actual video rendering
         videoWidget = new QVideoWidget(this);
@@ -3681,7 +3682,9 @@ public:
         loadLogo();
         
         isDragging = false;
+        isResizing = false;
         wasFullscreen = false;
+        resizeEdge = NoEdge;
     }
     
     QVideoWidget* getVideoWidget() { return videoWidget; }
@@ -3740,6 +3743,17 @@ protected:
     
     void mousePressEvent(QMouseEvent *event) override {
         if (event->button() == Qt::LeftButton && !isFullScreen()) {
+            // Check for resize edges first
+            ResizeEdge edge = hitTestResize(event->pos());
+            if (edge != NoEdge) {
+                isResizing = true;
+                resizeEdge = edge;
+                resizeStartPos = event->globalPosition().toPoint();
+                resizeStartGeometry = geometry();
+                event->accept();
+                return;
+            }
+            // Otherwise, start dragging
             isDragging = true;
             dragStartPos = event->globalPosition().toPoint() - frameGeometry().topLeft();
         } else if (event->button() == Qt::RightButton) {
@@ -3748,14 +3762,57 @@ protected:
     }
     
     void mouseMoveEvent(QMouseEvent *event) override {
-        if (isDragging && !isFullScreen()) {
-            move(event->globalPosition().toPoint() - dragStartPos);
+        if (isFullScreen()) return;
+        
+        // Handle resizing
+        if (isResizing) {
+            QPoint delta = event->globalPosition().toPoint() - resizeStartPos;
+            QRect newGeom = resizeStartGeometry;
+            
+            // Adjust geometry based on resize edge
+            if (resizeEdge & LeftEdge) {
+                int newX = resizeStartGeometry.x() + delta.x();
+                int newWidth = resizeStartGeometry.width() - delta.x();
+                if (newWidth >= minimumWidth()) {
+                    newGeom.setX(newX);
+                    newGeom.setWidth(newWidth);
+                }
+            }
+            if (resizeEdge & RightEdge) {
+                newGeom.setWidth(qMax(minimumWidth(), resizeStartGeometry.width() + delta.x()));
+            }
+            if (resizeEdge & TopEdge) {
+                int newY = resizeStartGeometry.y() + delta.y();
+                int newHeight = resizeStartGeometry.height() - delta.y();
+                if (newHeight >= minimumHeight()) {
+                    newGeom.setY(newY);
+                    newGeom.setHeight(newHeight);
+                }
+            }
+            if (resizeEdge & BottomEdge) {
+                newGeom.setHeight(qMax(minimumHeight(), resizeStartGeometry.height() + delta.y()));
+            }
+            
+            setGeometry(newGeom);
+            return;
         }
+        
+        // Handle dragging
+        if (isDragging) {
+            move(event->globalPosition().toPoint() - dragStartPos);
+            return;
+        }
+        
+        // Update cursor for resize edges
+        ResizeEdge edge = hitTestResize(event->pos());
+        updateCursorForEdge(edge);
     }
     
     void mouseReleaseEvent(QMouseEvent *event) override {
         if (event->button() == Qt::LeftButton) {
             isDragging = false;
+            isResizing = false;
+            resizeEdge = NoEdge;
         }
     }
     
@@ -3764,6 +3821,59 @@ protected:
     }
     
 private:
+    // Resize edge detection (all 8 resize points: 4 corners + 4 edges)
+    enum ResizeEdge {
+        NoEdge = 0,
+        LeftEdge = 1,
+        RightEdge = 2,
+        TopEdge = 4,
+        BottomEdge = 8,
+        TopLeft = TopEdge | LeftEdge,
+        TopRight = TopEdge | RightEdge,
+        BottomLeft = BottomEdge | LeftEdge,
+        BottomRight = BottomEdge | RightEdge
+    };
+    
+    ResizeEdge hitTestResize(const QPoint &pos) {
+        const int margin = 8;  // 8px edge detection margin
+        bool atLeft = pos.x() < margin;
+        bool atRight = pos.x() >= width() - margin;
+        bool atTop = pos.y() < margin;
+        bool atBottom = pos.y() >= height() - margin;
+        
+        int edge = NoEdge;
+        if (atLeft) edge |= LeftEdge;
+        if (atRight) edge |= RightEdge;
+        if (atTop) edge |= TopEdge;
+        if (atBottom) edge |= BottomEdge;
+        
+        return static_cast<ResizeEdge>(edge);
+    }
+    
+    void updateCursorForEdge(ResizeEdge edge) {
+        switch (edge) {
+            case TopLeft:
+            case BottomRight:
+                setCursor(Qt::SizeFDiagCursor);
+                break;
+            case TopRight:
+            case BottomLeft:
+                setCursor(Qt::SizeBDiagCursor);
+                break;
+            case LeftEdge:
+            case RightEdge:
+                setCursor(Qt::SizeHorCursor);
+                break;
+            case TopEdge:
+            case BottomEdge:
+                setCursor(Qt::SizeVerCursor);
+                break;
+            default:
+                setCursor(Qt::ArrowCursor);
+                break;
+        }
+    }
+    
     void toggleFullscreen() {
         if (isFullScreen()) {
             exitFullscreen();
@@ -3805,8 +3915,12 @@ private:
     QPixmap logoPixmap;
     bool hasActiveVideo = false;
     bool isDragging = false;
+    bool isResizing = false;
     bool wasFullscreen = false;
+    ResizeEdge resizeEdge = NoEdge;
     QPoint dragStartPos;
+    QPoint resizeStartPos;
+    QRect resizeStartGeometry;
 };
 
 // ============================================================
