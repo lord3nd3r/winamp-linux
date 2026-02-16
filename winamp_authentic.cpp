@@ -3602,6 +3602,8 @@ void PlaylistWindow::showListMenu(QPoint globalPos) {
     QAction *newPl = menu.addAction("New playlist\tCtrl+N");
     QAction *openPl = menu.addAction("Open playlist...\tCtrl+O");
     QAction *savePl = menu.addAction("Save playlist...\tCtrl+S");
+    menu.addSeparator();
+    QAction *genPl = menu.addAction("Generate playlist...");
 
     QAction *selected = menu.exec(globalPos);
     if (selected == newPl) {
@@ -3643,6 +3645,108 @@ void PlaylistWindow::showListMenu(QPoint globalPos) {
                     out << tracks[i] << "\n";
                 }
                 file.close();
+            }
+        }
+    } else if (selected == genPl) {
+        // Show playlist generator dialog
+        QDialog dialog(this);
+        dialog.setWindowTitle("Playlist Generator");
+        dialog.setModal(true);
+        dialog.resize(350, 200);
+        dialog.setStyleSheet(
+            "QDialog { background-color: #2b2d3d; color: #00ff00; }"
+            "QLabel { color: #00ff00; }"
+            "QPushButton { background-color: #1a1c2a; color: #00ff00; border: 1px solid #555; padding: 5px 15px; }"
+            "QPushButton:hover { background-color: #0000c6; }"
+            "QSpinBox { background-color: #1a1c2a; color: #00ff00; border: 1px solid #555; }"
+            "QCheckBox { color: #00ff00; }"
+        );
+        
+        QVBoxLayout *layout = new QVBoxLayout(&dialog);
+        
+        // Number of tracks
+        QHBoxLayout *countLayout = new QHBoxLayout();
+        QLabel *countLabel = new QLabel("Number of tracks:");
+        QSpinBox *countSpin = new QSpinBox();
+        countSpin->setMinimum(1);
+        countSpin->setMaximum(1000);
+        countSpin->setValue(50);
+        countLayout->addWidget(countLabel);
+        countLayout->addWidget(countSpin);
+        countLayout->addStretch();
+        layout->addLayout(countLayout);
+        
+        // Replace or add option
+        QCheckBox *replaceCheck = new QCheckBox("Replace current playlist (otherwise add to current)");
+        replaceCheck->setChecked(false);
+        layout->addWidget(replaceCheck);
+        
+        layout->addStretch();
+        
+        // Buttons
+        QHBoxLayout *buttonLayout = new QHBoxLayout();
+        buttonLayout->addStretch();
+        QPushButton *okBtn = new QPushButton("Generate");
+        QPushButton *cancelBtn = new QPushButton("Cancel");
+        buttonLayout->addWidget(okBtn);
+        buttonLayout->addWidget(cancelBtn);
+        layout->addLayout(buttonLayout);
+        
+        connect(okBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
+        connect(cancelBtn, &QPushButton::clicked, &dialog, &QDialog::reject);
+        
+        if (dialog.exec() == QDialog::Accepted) {
+            int numTracks = countSpin->value();
+            bool replace = replaceCheck->isChecked();
+            
+            if (replace) {
+                clearPlaylist();
+            }
+            
+            // Scan music directory for all audio files
+            QStringList allFiles;
+            QString musicPath = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
+            if (musicPath.isEmpty() || !QDir(musicPath).exists()) {
+                musicPath = QDir::homePath();
+            }
+            
+            QStringList queue;
+            queue << musicPath;
+            QStringList filters;
+            filters << "*.mp3" << "*.flac" << "*.ogg" << "*.wav" << "*.m4a" 
+                   << "*.aac" << "*.wma" << "*.opus";
+            
+            while (!queue.isEmpty() && allFiles.size() < numTracks * 10) {
+                QString currentDir = queue.takeFirst();
+                QDir dir(currentDir);
+                
+                // Add audio files
+                QFileInfoList files = dir.entryInfoList(filters, QDir::Files);
+                for (const QFileInfo &file : files) {
+                    allFiles << file.absoluteFilePath();
+                }
+                
+                // Add subdirectories to queue
+                QFileInfoList subdirs = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+                for (const QFileInfo &subdir : subdirs) {
+                    queue << subdir.absoluteFilePath();
+                }
+            }
+            
+            if (allFiles.isEmpty()) {
+                QMessageBox::information(this, "Playlist Generator", 
+                    "No audio files found in " + musicPath);
+                return;
+            }
+            
+            // Randomly select tracks
+            std::random_device rd;
+            std::mt19937 g(rd());
+            std::shuffle(allFiles.begin(), allFiles.end(), g);
+            
+            int tracksToAdd = qMin(numTracks, allFiles.size());
+            for (int i = 0; i < tracksToAdd; i++) {
+                addTrack(allFiles[i]);
             }
         }
     }
