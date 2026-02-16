@@ -71,6 +71,7 @@
 #include <QTextEdit>
 #include <QSizeGrip>
 #include <QRegularExpression>
+#include <QXmlStreamReader>
 
 // D-Bus for MPRIS2 media player interface (Linux desktop integration)
 #ifdef QT_DBUS_LIB
@@ -1437,6 +1438,7 @@ public:
         // Skins category
         QTreeWidgetItem *skinsItem = addPage(nullptr, "Skins", createSkinsPage());
         addPage(skinsItem, "Classic Skins", createClassicSkinsPage());
+        addPage(skinsItem, "Modern Skins", createModernSkinsPage());
 
         // Playback category
         QTreeWidgetItem *playbackItem = addPage(nullptr, "Playback", createPlaybackPage());
@@ -1680,7 +1682,9 @@ private:
         QVBoxLayout *layout = new QVBoxLayout(page);
         layout->addWidget(new QLabel("<b>Skins</b>"));
         layout->addSpacing(10);
-        layout->addWidget(new QLabel("Select a skin category on the left.\nClassic skins (.wsz) are currently supported."));
+        layout->addWidget(new QLabel("Select a skin category on the left.\n\n"
+                                     "Classic skins (.wsz) use bitmap sprite sheets.\n"
+                                     "Modern skins (.wal) use XML-based layouts."));
         layout->addStretch();
         return page;
     }
@@ -1923,6 +1927,97 @@ private:
         }
     }
 
+    // ---- Modern Skins page ----
+    QListWidget *modernSkinListWidget = nullptr;
+
+    QWidget *createModernSkinsPage() {
+        QWidget *page = new QWidget();
+        QVBoxLayout *layout = new QVBoxLayout(page);
+        layout->addWidget(new QLabel("<b>Modern Skins (XML)</b>"));
+
+        modernSkinListWidget = new QListWidget(page);
+        populateModernSkins();
+        connect(modernSkinListWidget, &QListWidget::itemDoubleClicked, this, &PreferencesDialog::onModernSkinSelected);
+        layout->addWidget(modernSkinListWidget);
+
+        QHBoxLayout *btnRow = new QHBoxLayout();
+        QPushButton *openDirBtn = new QPushButton("Open Skins Folder", page);
+        connect(openDirBtn, &QPushButton::clicked, this, []() {
+            QString skinsDir = QDir::homePath() + "/.winamp/skins";
+            QDir().mkpath(skinsDir);
+            QDesktopServices::openUrl(QUrl::fromLocalFile(skinsDir));
+        });
+        btnRow->addWidget(openDirBtn);
+        btnRow->addStretch();
+        layout->addLayout(btnRow);
+        return page;
+    }
+
+    void populateModernSkins() {
+        if (!modernSkinListWidget) return;
+
+        // Scan built-in modern skins from source tree
+        QString appDir = QCoreApplication::applicationDirPath();
+        QStringList builtinDirs = {
+            appDir + "/../Src/resources/skins",
+            appDir + "/../../Src/resources/skins"
+        };
+        QSet<QString> addedNames;
+        for (const QString &base : builtinDirs) {
+            QDir dir(base);
+            if (!dir.exists()) continue;
+            QStringList folders = dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+            for (const QString &folder : folders) {
+                QString fullPath = dir.absoluteFilePath(folder);
+                if (QFile::exists(fullPath + "/skin.xml") && !addedNames.contains(folder)) {
+                    addedNames.insert(folder);
+                    modernSkinListWidget->addItem(folder);
+                    modernSkinListWidget->item(modernSkinListWidget->count() - 1)->setData(Qt::UserRole, fullPath);
+                }
+            }
+        }
+
+        // List modern skins in user's skins directory (directories with skin.xml)
+        QDir skinsDir(QDir::homePath() + "/.winamp/skins");
+        if (skinsDir.exists()) {
+            QStringList folders = skinsDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+            for (const QString &folder : folders) {
+                if (addedNames.contains(folder)) continue;
+                QString fullPath = skinsDir.absolutePath() + "/" + folder;
+                if (QFile::exists(fullPath + "/skin.xml")) {
+                    addedNames.insert(folder);
+                    modernSkinListWidget->addItem(folder);
+                    modernSkinListWidget->item(modernSkinListWidget->count() - 1)->setData(Qt::UserRole, fullPath);
+                }
+            }
+
+            // List .wal archives
+            QStringList walFiles = skinsDir.entryList(QStringList() << "*.wal" << "*.WAL", QDir::Files);
+            for (const QString &f : walFiles) {
+                modernSkinListWidget->addItem(f);
+                modernSkinListWidget->item(modernSkinListWidget->count() - 1)->setData(Qt::UserRole, skinsDir.absolutePath() + "/" + f);
+            }
+        }
+    }
+
+    void onModernSkinSelected(QListWidgetItem *item) {
+        QString skinPath = item->data(Qt::UserRole).toString();
+        if (skinPath.isEmpty()) return;
+
+        // If it's a .wal file, extract it first (ZIP archive)
+        if (skinPath.endsWith(".wal", Qt::CaseInsensitive)) {
+            QString extracted = extractSkinArchive(skinPath);
+            if (!extracted.isEmpty())
+                skinPath = extracted;
+            else
+                return;
+        }
+
+        if (QFile::exists(skinPath + "/skin.xml")) {
+            emit skinChanged(skinPath);
+        }
+    }
+
     void onSkinSelected(QListWidgetItem *item) {
         QString skinName = item->text();
         
@@ -2028,6 +2123,247 @@ public:
 private:
     WinampBitmaps() {}
 };
+
+// ============================================================
+// Modern Skin Engine — Winamp 5 XML-based skin support
+// Parses skin.xml with recursive <include>, loads bitmap sprite
+// sheets, provides getBitmap(id) for rendering. Supports the
+// full Wasabi skin XML format's <elements> section.
+// ============================================================
+
+struct ModernBitmapDef {
+    QString file;
+    int x = 0, y = 0, w = 0, h = 0;
+    QString gammagroup;
+};
+
+struct ModernBitmapFontDef {
+    QString bitmapId;  // references a <bitmap> id
+    int charWidth = 0, charHeight = 0;
+    int hSpacing = 0, vSpacing = 0;
+};
+
+class ModernSkinEngine {
+public:
+    bool loadSkin(const QString &dir) {
+        skinDir = dir;
+        bitmapDefs.clear();
+        loadedBitmaps.clear();
+        imageCache.clear();
+        bitmapFonts.clear();
+        skinName.clear();
+        valid = false;
+
+        QString skinXml = skinDir + "/skin.xml";
+        if (!QFile::exists(skinXml)) return false;
+
+        parseFile(skinXml);
+        loadAllBitmaps();
+        valid = !loadedBitmaps.isEmpty();
+        return valid;
+    }
+
+    QPixmap getBitmap(const QString &id) const {
+        return loadedBitmaps.value(id);
+    }
+
+    bool hasBitmap(const QString &id) const {
+        return loadedBitmaps.contains(id);
+    }
+
+    bool isValid() const { return valid; }
+    QString getSkinName() const { return skinName; }
+
+    // Draw text using a skin bitmap font (e.g. player.BIGNUM, player.songticker.font)
+    void drawBitmapText(QPainter &p, const QString &fontId, const QString &text,
+                        int x, int y, int maxWidth = -1) const {
+        auto it = bitmapFonts.constFind(fontId);
+        if (it == bitmapFonts.constEnd()) return;
+
+        const ModernBitmapFontDef &font = it.value();
+        QPixmap fontBitmap = getBitmap(font.bitmapId);
+        if (fontBitmap.isNull()) return;
+
+        int charsPerRow = fontBitmap.width() / qMax(1, font.charWidth);
+        int cx = x;
+
+        for (const QChar &ch : text) {
+            int charIndex = ch.unicode() - 32; // ASCII printable starts at space (32)
+            if (charIndex < 0 || charIndex >= 96) charIndex = 0; // fallback to space
+
+            int srcX = (charIndex % charsPerRow) * font.charWidth;
+            int srcY = (charIndex / charsPerRow) * font.charHeight;
+
+            if (maxWidth > 0 && (cx - x + font.charWidth) > maxWidth) break;
+
+            p.drawPixmap(cx, y, fontBitmap, srcX, srcY, font.charWidth, font.charHeight);
+            cx += font.charWidth + font.hSpacing;
+        }
+    }
+
+    int measureText(const QString &fontId, const QString &text) const {
+        auto it = bitmapFonts.constFind(fontId);
+        if (it == bitmapFonts.constEnd()) return text.length() * 8;
+        const ModernBitmapFontDef &font = it.value();
+        return text.length() * (font.charWidth + font.hSpacing);
+    }
+
+    int fontHeight(const QString &fontId) const {
+        auto it = bitmapFonts.constFind(fontId);
+        if (it == bitmapFonts.constEnd()) return 10;
+        return it.value().charHeight;
+    }
+
+private:
+    void parseFile(const QString &filePath) {
+        // Case-insensitive file open for Linux
+        QString resolved = resolveCasePath(filePath);
+        QFile file(resolved);
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return;
+
+        QXmlStreamReader xml(&file);
+        QString baseDir = QFileInfo(resolved).absolutePath();
+
+        while (!xml.atEnd()) {
+            xml.readNext();
+            if (xml.isStartElement()) {
+                if (xml.name() == u"include") {
+                    QString includeFile = xml.attributes().value("file").toString();
+                    if (!includeFile.isEmpty()) {
+                        // Resolve include path case-insensitively
+                        QString includePath = resolveCasePath(baseDir + "/" + includeFile);
+                        parseFile(includePath);
+                    }
+                } else if (xml.name() == u"skininfo") {
+                    while (!(xml.isEndElement() && xml.name() == u"skininfo") && !xml.atEnd()) {
+                        xml.readNext();
+                        if (xml.isStartElement() && xml.name() == u"name") {
+                            skinName = xml.readElementText();
+                        }
+                    }
+                } else if (xml.name() == u"bitmap") {
+                    parseBitmapElement(xml);
+                } else if (xml.name() == u"bitmapfont") {
+                    parseBitmapFontElement(xml);
+                }
+            }
+        }
+    }
+
+    void parseBitmapElement(QXmlStreamReader &xml) {
+        QXmlStreamAttributes attrs = xml.attributes();
+        QString id = attrs.value("id").toString();
+        if (id.isEmpty()) return;
+
+        ModernBitmapDef def;
+        def.file = attrs.value("file").toString();
+        def.x = attrs.value("x").toInt();
+        def.y = attrs.value("y").toInt();
+        def.w = attrs.value("w").toInt();
+        def.h = attrs.value("h").toInt();
+        def.gammagroup = attrs.value("gammagroup").toString();
+
+        bitmapDefs[id] = def;
+    }
+
+    void parseBitmapFontElement(QXmlStreamReader &xml) {
+        QXmlStreamAttributes attrs = xml.attributes();
+        QString id = attrs.value("id").toString();
+        if (id.isEmpty()) return;
+
+        ModernBitmapFontDef font;
+        font.bitmapId = attrs.value("file").toString(); // references a bitmap id
+        font.charWidth = attrs.value("charwidth").toInt();
+        font.charHeight = attrs.value("charheight").toInt();
+        font.hSpacing = attrs.value("hspacing").toInt();
+        font.vSpacing = attrs.value("vspacing").toInt();
+
+        bitmapFonts[id] = font;
+    }
+
+    // Case-insensitive file lookup for Linux (Winamp skins come from Windows with mixed case)
+    static QString resolveCasePath(const QString &fullPath) {
+        if (QFile::exists(fullPath)) return fullPath;
+
+        // Split into directory and filename parts, do case-insensitive match
+        QFileInfo fi(fullPath);
+        QString dirPath = fi.absolutePath();
+        QString fileName = fi.fileName();
+
+        // First resolve the directory case-insensitively
+        QDir dir(dirPath);
+        if (!dir.exists()) {
+            QFileInfo dirFi(dirPath);
+            QDir parentDir(dirFi.absolutePath());
+            QStringList dirs = parentDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+            for (const QString &d : dirs) {
+                if (d.compare(dirFi.fileName(), Qt::CaseInsensitive) == 0) {
+                    dir = QDir(parentDir.absolutePath() + "/" + d);
+                    break;
+                }
+            }
+        }
+
+        if (dir.exists()) {
+            QStringList entries = dir.entryList(QDir::Files);
+            for (const QString &entry : entries) {
+                if (entry.compare(fileName, Qt::CaseInsensitive) == 0)
+                    return dir.absolutePath() + "/" + entry;
+            }
+        }
+        return fullPath; // Return original path as fallback
+    }
+
+    QString resolveFilePath(const QString &relPath) const {
+        return resolveCasePath(skinDir + "/" + relPath);
+    }
+
+    void loadAllBitmaps() {
+        for (auto it = bitmapDefs.constBegin(); it != bitmapDefs.constEnd(); ++it) {
+            const ModernBitmapDef &def = it.value();
+            if (def.file.isEmpty()) continue;
+
+            // Load the full image file (cached per path, case-insensitive)
+            QString fullPath = resolveFilePath(def.file);
+            if (!imageCache.contains(fullPath)) {
+                QImage img(fullPath);
+                if (!img.isNull()) {
+                    imageCache[fullPath] = img;
+                }
+            }
+
+            const QImage &srcImage = imageCache.value(fullPath);
+            if (srcImage.isNull()) continue;
+
+            // Extract sub-rectangle from sprite sheet
+            int sx = def.x, sy = def.y;
+            int sw = def.w > 0 ? def.w : srcImage.width();
+            int sh = def.h > 0 ? def.h : srcImage.height();
+
+            // Clamp to image bounds
+            sw = qMin(sw, srcImage.width() - sx);
+            sh = qMin(sh, srcImage.height() - sy);
+
+            if (sw > 0 && sh > 0 && sx >= 0 && sy >= 0) {
+                loadedBitmaps[it.key()] = QPixmap::fromImage(srcImage.copy(sx, sy, sw, sh));
+            }
+        }
+    }
+
+    QString skinDir;
+    QString skinName;
+    bool valid = false;
+
+    QMap<QString, ModernBitmapDef> bitmapDefs;
+    QMap<QString, QPixmap> loadedBitmaps;
+    QMap<QString, QImage> imageCache;
+    QMap<QString, ModernBitmapFontDef> bitmapFonts;
+};
+
+// Detect whether a skin directory is a modern (XML) skin vs classic (BMP) skin
+static bool isModernSkinDir(const QString &path) {
+    return QFile::exists(path + "/skin.xml");
+}
 
 // Config file path helper
 static QString configPath() {
@@ -5318,35 +5654,523 @@ public slots:
     }
 
     void onSkinChanged(const QString &skinPath) {
-        WinampBitmaps::instance().loadAll(skinPath);
-        
-        // Parse skin playlist colors (PLEDIT.TXT)
-        g_plColors = parsePleditTxt(skinPath);
-        
-        // Load any missing bitmaps from fallback paths
-        QString appDir = QCoreApplication::applicationDirPath();
-        QStringList fallbacks = {
-            appDir + "/../skins/default",
-            appDir + "/../../skins/default",
-            QDir::homePath() + "/.winamp/skins/default",
-            appDir + "/../Src/Winamp/resource",
-            appDir + "/../../Src/Winamp/resource"
-        };
-        for (const QString &fb : fallbacks) {
-            QDir d(fb);
-            if (d.exists())
-                WinampBitmaps::instance().loadMissing(d.absolutePath());
+        // Check if this is a modern (XML-based) skin
+        if (isModernSkinDir(skinPath)) {
+            if (modernSkin.loadSkin(skinPath)) {
+                isModernSkin = true;
+                // Remove fixed size constraint, allow resizing
+                setMinimumSize(0, 0);
+                setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+                setMinimumSize(354, 144);
+                resize(354, 144);
+                setMouseTracking(true);
+                update();
+                qDebug() << "Loaded modern skin:" << modernSkin.getSkinName();
+            }
+        } else {
+            // Classic skin
+            isModernSkin = false;
+            WinampBitmaps::instance().loadAll(skinPath);
+            g_plColors = parsePleditTxt(skinPath);
+            
+            QString appDir = QCoreApplication::applicationDirPath();
+            QStringList fallbacks = {
+                appDir + "/../skins/default",
+                appDir + "/../../skins/default",
+                QDir::homePath() + "/.winamp/skins/default",
+                appDir + "/../Src/Winamp/resource",
+                appDir + "/../../Src/Winamp/resource"
+            };
+            for (const QString &fb : fallbacks) {
+                QDir d(fb);
+                if (d.exists())
+                    WinampBitmaps::instance().loadMissing(d.absolutePath());
+            }
+            
+            // Restore classic fixed size
+            if (doubleSize)
+                setFixedSize(550, 232);
+            else if (shadeMode)
+                setFixedSize(275, 14);
+            else
+                setFixedSize(275, 116);
         }
         
-        // Force all windows to repaint with the new skin
+        // Force all windows to repaint
         update();
         playlistWindow->applyPlaylistColors();
         playlistWindow->update();
         eqWindow->update();
 
-        // Save the new skin setting
         QSettings s(configPath(), QSettings::IniFormat);
         s.setValue("skin", skinPath);
+    }
+
+public:
+    // ================================================================
+    // Modern Skin Rendering — player.main layout from Winamp Modern
+    // ================================================================
+    
+    // Modern button definitions: index → rect + bitmap IDs + action
+    // Button indices: 0=Prev, 1=Play, 2=Pause, 3=Stop, 4=Next,
+    // 5=Eject, 6=PL, 7=ML, 8=Mute, 9=Repeat, 10=Shuffle,
+    // 11=Minimize, 12=Close
+    static constexpr int MB_PREV = 0, MB_PLAY = 1, MB_PAUSE = 2, MB_STOP = 3, MB_NEXT = 4;
+    static constexpr int MB_EJECT = 5, MB_PL = 6, MB_ML = 7, MB_MUTE = 8;
+    static constexpr int MB_REPEAT = 9, MB_SHUFFLE = 10;
+    static constexpr int MB_MINIMIZE = 11, MB_CLOSE = 12;
+    static constexpr int MB_COUNT = 13;
+    static constexpr int MODERN_TH = 18; // titlebar height
+    
+    QRect modernButtonRect(int idx) const {
+        int W = width();
+        int py = MODERN_TH; // player.main y offset
+        
+        switch (idx) {
+            // Playback buttons (in player.main, group offset x=4, y=93)
+            case MB_PREV:  return QRect(4, py + 93, 30, 26);
+            case MB_PLAY:  return QRect(34, py + 93, 30, 29);
+            case MB_PAUSE: return QRect(64, py + 93, 30, 29);
+            case MB_STOP:  return QRect(94, py + 93, 30, 29);
+            case MB_NEXT:  return QRect(124, py + 93, 30, 26);
+            // Right-side buttons (relatx=1)
+            case MB_EJECT: return QRect(W - 86, py + 75, 19, 13);
+            case MB_PL:    return QRect(W - 60, py + 75, 22, 13);
+            case MB_ML:    return QRect(W - 34, py + 75, 22, 13);
+            case MB_MUTE:  return QRect(164, py + 104, 15, 15);
+            case MB_REPEAT:  return QRect(W - 40, py + 22, 20, 15);
+            case MB_SHUFFLE: return QRect(W - 40, py + 45, 20, 15);
+            // Titlebar buttons (no py offset)
+            case MB_MINIMIZE: return QRect(W - 41, 4, 11, 10);
+            case MB_CLOSE:    return QRect(W - 17, 4, 11, 10);
+            default: return QRect();
+        }
+    }
+    
+    int modernGetButtonAt(int x, int y) const {
+        for (int i = 0; i < MB_COUNT; i++) {
+            if (modernButtonRect(i).contains(x, y))
+                return i;
+        }
+        return -1;
+    }
+    
+    QRect modernSeekRect() const {
+        int W = width();
+        int py = MODERN_TH;
+        return QRect(6, py + 75, W - 106, 13);
+    }
+    
+    QRect modernVolumeRect() const {
+        int py = MODERN_TH;
+        return QRect(183, py + 110, 86, 13);
+    }
+    
+    void paintModern(QPainter &p) {
+        int W = width();
+        int H = height();
+        
+        // ---- Fill background with base texture ----
+        QPixmap baseTex = modernSkin.getBitmap("wasabi.frame.basetexture");
+        if (!baseTex.isNull()) {
+            for (int ty = 0; ty < H; ty += baseTex.height())
+                for (int tx = 0; tx < W; tx += baseTex.width())
+                    p.drawPixmap(tx, ty, baseTex);
+        } else {
+            p.fillRect(0, 0, W, H, QColor(43, 45, 61));
+        }
+        
+        // ---- Titlebar (18px) ----
+        QPixmap tbLeft = modernSkin.getBitmap("wasabi.frame.top.left");
+        QPixmap tbCenter = modernSkin.getBitmap("wasabi.frame.top");
+        QPixmap tbRight = modernSkin.getBitmap("wasabi.frame.top.right");
+        
+        if (!tbLeft.isNull()) p.drawPixmap(0, 0, tbLeft);
+        if (!tbCenter.isNull()) {
+            for (int tx = 10; tx < W - 10; tx += tbCenter.width()) {
+                int tw = qMin(tbCenter.width(), W - 10 - tx);
+                p.drawPixmap(tx, 0, tbCenter, 0, 0, tw, MODERN_TH);
+            }
+        }
+        if (!tbRight.isNull()) p.drawPixmap(W - 10, 0, tbRight);
+        
+        // Titlebar active/inactive text background
+        QPixmap tbTextLeft = modernSkin.getBitmap(isActiveWindow() ?
+            "wasabi.titlebar.left.active" : "wasabi.titlebar.left.inactive");
+        QPixmap tbTextCenter = modernSkin.getBitmap(isActiveWindow() ?
+            "wasabi.titlebar.center.active" : "wasabi.titlebar.center.inactive");
+        QPixmap tbTextRight = modernSkin.getBitmap(isActiveWindow() ?
+            "wasabi.titlebar.right.active" : "wasabi.titlebar.right.inactive");
+        
+        if (!tbTextLeft.isNull()) p.drawPixmap(10, 5, tbTextLeft);
+        if (!tbTextCenter.isNull()) {
+            for (int tx = 20; tx < W - 55; tx += tbTextCenter.width()) {
+                int tw = qMin(tbTextCenter.width(), W - 55 - tx);
+                p.drawPixmap(tx, 5, tbTextCenter, 0, 0, tw, tbTextCenter.height());
+            }
+        }
+        if (!tbTextRight.isNull()) p.drawPixmap(W - 55, 5, tbTextRight);
+        
+        // Title text "WINAMP"
+        p.setPen(QColor(200, 200, 220));
+        p.setFont(QFont("Arial", 7, QFont::Bold));
+        p.drawText(15, 14, "WINAMP");
+        
+        // Titlebar buttons
+        auto drawModernBtn = [&](int idx, const QString &normalId, const QString &hId, const QString &dId) {
+            QRect r = modernButtonRect(idx);
+            QString id = normalId;
+            if (modernPressed == idx) id = dId;
+            else if (modernHovered == idx) id = hId;
+            QPixmap px = modernSkin.getBitmap(id);
+            if (!px.isNull()) p.drawPixmap(r.x(), r.y(), px);
+        };
+        
+        // Button backgrounds behind titlebar buttons
+        QPixmap btnBgTitle = modernSkin.getBitmap("wasabi.button.bg.title");
+        if (!btnBgTitle.isNull()) {
+            p.drawPixmap(W - 42, 4, btnBgTitle);
+            p.drawPixmap(W - 30, 4, btnBgTitle);
+            p.drawPixmap(W - 18, 4, btnBgTitle);
+        }
+        
+        drawModernBtn(MB_MINIMIZE, "wasabi.button.minimize", "wasabi.button.minimize.hover", "wasabi.button.minimize.pressed");
+        drawModernBtn(MB_CLOSE, "wasabi.button.exit", "wasabi.button.exit.hover", "wasabi.button.exit.pressed");
+        
+        // ---- Player Main Area (y = MODERN_TH, h = 126) ----
+        int py = MODERN_TH;
+        
+        // Background layers: left (180px) + center (tiled) + right (90px, right-aligned)
+        QPixmap bgLeft = modernSkin.getBitmap("player.main.left");
+        QPixmap bgCenter = modernSkin.getBitmap("player.main.center");
+        QPixmap bgRight = modernSkin.getBitmap("player.main.right");
+        
+        if (!bgLeft.isNull()) p.drawPixmap(0, py, bgLeft);
+        if (!bgCenter.isNull()) {
+            int fillW = W - 180 - 90;
+            for (int tx = 180; tx < 180 + fillW; tx += bgCenter.width()) {
+                int tw = qMin(bgCenter.width(), 180 + fillW - tx);
+                p.drawPixmap(tx, py, bgCenter, 0, 0, tw, bgCenter.height());
+            }
+        }
+        if (!bgRight.isNull()) p.drawPixmap(W - 90, py, bgRight);
+        
+        // BG2 secondary layer (y=95 within player.main)
+        QPixmap bg2Left = modernSkin.getBitmap("player.main.bg2.left");
+        QPixmap bg2Center = modernSkin.getBitmap("player.main.bg2.center");
+        QPixmap bg2Right = modernSkin.getBitmap("player.main.bg2.right");
+        
+        if (!bg2Left.isNull()) p.drawPixmap(138, py + 95, bg2Left);
+        if (!bg2Center.isNull()) {
+            int bg2FillW = W - 288;
+            for (int tx = 198; tx < 198 + bg2FillW; tx += bg2Center.width()) {
+                int tw = qMin(bg2Center.width(), 198 + bg2FillW - tx);
+                p.drawPixmap(tx, py + 95, bg2Center, 0, 0, tw, bg2Center.height());
+            }
+        }
+        if (!bg2Right.isNull()) p.drawPixmap(W - 90, py + 95, bg2Right);
+        
+        // ---- Display area (x=5, y=3 within player.main) ----
+        int dx = 5, dy = py + 3;
+        int dw = W - 49; // display width (relatw=1, w=-49 in XML = parentW - 49 but parent is player.main which is full width minus the shuffle/repeat area)
+        
+        // Display background
+        QPixmap dBgLeft = modernSkin.getBitmap("player.display.bg.left");
+        QPixmap dBgCenter = modernSkin.getBitmap("player.display.bg.center");
+        QPixmap dBgRight = modernSkin.getBitmap("player.display.bg.right");
+        
+        if (!dBgLeft.isNull()) p.drawPixmap(dx, dy, dBgLeft);
+        if (!dBgCenter.isNull()) {
+            for (int tx = dx + 60; tx < dx + dw - 60; tx += dBgCenter.width()) {
+                int tw = qMin(dBgCenter.width(), dx + dw - 60 - tx);
+                p.drawPixmap(tx, dy, dBgCenter, 0, 0, tw, dBgCenter.height());
+            }
+        }
+        if (!dBgRight.isNull()) p.drawPixmap(dx + dw - 60, dy, dBgRight);
+        
+        // Display overlay (translucent effect)
+        QPixmap dLeft = modernSkin.getBitmap("player.display.left");
+        QPixmap dCenter = modernSkin.getBitmap("player.display.center");
+        QPixmap dRight = modernSkin.getBitmap("player.display.right");
+        
+        if (!dLeft.isNull()) { p.setOpacity(0.05); p.drawPixmap(dx, dy, dLeft); p.setOpacity(1.0); }
+        if (!dCenter.isNull()) {
+            p.setOpacity(0.05);
+            for (int tx = dx + 60; tx < dx + dw - 60; tx += dCenter.width()) {
+                int tw = qMin(dCenter.width(), dx + dw - 60 - tx);
+                p.drawPixmap(tx, dy, dCenter, 0, 0, tw, dCenter.height());
+            }
+            p.setOpacity(1.0);
+        }
+        if (!dRight.isNull()) { p.setOpacity(0.05); p.drawPixmap(dx + dw - 60, dy, dRight); p.setOpacity(1.0); }
+        
+        // Songticker background (y=44 within display, 19px tall)
+        QPixmap stBgLeft = modernSkin.getBitmap("player.display.songticker.bg.left");
+        QPixmap stBgCenter = modernSkin.getBitmap("player.display.songticker.bg.center");
+        QPixmap stBgRight = modernSkin.getBitmap("player.display.songticker.bg.right");
+        
+        if (!stBgLeft.isNull()) p.drawPixmap(dx, dy + 44, stBgLeft);
+        if (!stBgCenter.isNull()) {
+            for (int tx = dx + 60; tx < dx + dw - 60; tx += stBgCenter.width()) {
+                int tw = qMin(stBgCenter.width(), dx + dw - 60 - tx);
+                p.drawPixmap(tx, dy + 44, stBgCenter, 0, 0, tw, stBgCenter.height());
+            }
+        }
+        if (!stBgRight.isNull()) p.drawPixmap(dx + dw - 60, dy + 44, stBgRight);
+        
+        // Display left/right overlays (gradient edges)
+        QPixmap dLeftOverlay = modernSkin.getBitmap("player.display.left.overlay");
+        QPixmap dRightOverlay = modernSkin.getBitmap("player.display.right.overlay");
+        if (!dLeftOverlay.isNull()) p.drawPixmap(dx, dy, dLeftOverlay);
+        if (!dRightOverlay.isNull()) p.drawPixmap(dx + dw - 21, dy, dRightOverlay);
+        
+        // ---- Timer (x=20, y=16 within display) ----
+        qint64 displayMs;
+        if (showRemainingTime && player->duration() > 0)
+            displayMs = player->duration() - player->position();
+        else
+            displayMs = player->position();
+        
+        int totalSec = displayMs / 1000;
+        int mins = totalSec / 60;
+        int secs = totalSec % 60;
+        
+        // Format: "MM:SS" or "-MM:SS"
+        QString timeStr;
+        if (showRemainingTime && player->duration() > 0)
+            timeStr = QString("-%1:%2").arg(mins, 2, 10, QChar('0')).arg(secs, 2, 10, QChar('0'));
+        else
+            timeStr = QString("%1:%2").arg(mins, 2, 10, QChar('0')).arg(secs, 2, 10, QChar('0'));
+        
+        modernSkin.drawBitmapText(p, "player.BIGNUM", timeStr, dx + 20, dy + 16, 78);
+        
+        // ---- Playback status (x=11, y=15 within display) ----
+        QString statusBmp;
+        if (player->playbackState() == QMediaPlayer::PlayingState)
+            statusBmp = "player.status.play";
+        else if (player->playbackState() == QMediaPlayer::PausedState)
+            statusBmp = "player.status.pause";
+        else
+            statusBmp = "player.status.stop";
+        QPixmap statusPx = modernSkin.getBitmap(statusBmp);
+        if (!statusPx.isNull()) p.drawPixmap(dx + 11, dy + 15, statusPx);
+        
+        // ---- Visualization (x = dw-94, y=12 within display) ----
+        QPixmap visBg = modernSkin.getBitmap("player.visualization.background");
+        if (!visBg.isNull()) p.drawPixmap(dx + dw - 94, dy + 12, visBg);
+        
+        // Draw simple spectrum analyzer visualization
+        if (visMode == 1) {
+            int vx = dx + dw - 88, vy = dy + 13;
+            p.setPen(Qt::NoPen);
+            for (int i = 0; i < 19 && i < 75; i++) {
+                int barH = (int)(spectrumData[i] * 25);
+                barH = qBound(0, barH, 25);
+                for (int j = 0; j < barH; j++) {
+                    int intensity = 255 - j * 8;
+                    p.fillRect(vx + i * 4, vy + 25 - j, 3, 1, QColor(intensity, intensity, 255));
+                }
+            }
+        } else if (visMode == 2) {
+            // Oscilloscope
+            int vx = dx + dw - 88, vy = dy + 25;
+            p.setPen(QColor(200, 200, 255));
+            for (int i = 0; i < 71; i++) {
+                int y1 = vy + (int)(oscData[i] * 12);
+                int y2 = vy + (int)(oscData[i + 1] * 12);
+                p.drawLine(vx + i, y1, vx + i + 1, y2);
+            }
+        }
+        
+        QPixmap visOverlay = modernSkin.getBitmap("player.visualization.overlay");
+        if (!visOverlay.isNull()) p.drawPixmap(dx + dw - 99, dy + 12, visOverlay);
+        
+        // ---- Songticker text (x=8, y=43 within display) ----
+        QString songTitle;
+        if (!metaTitle.isEmpty())
+            songTitle = metaTitle;
+        else if (!currentFile.isEmpty())
+            songTitle = QFileInfo(currentFile).completeBaseName();
+        
+        if (!songTitle.isEmpty()) {
+            // Scrolling text using songticker font
+            int stX = dx + 8, stY = dy + 43;
+            int stW = dw - 16;
+            p.setClipRect(stX, stY, stW, 22);
+            int textW = modernSkin.measureText("player.songticker.font", songTitle);
+            if (textW > stW) {
+                // Scroll
+                QString scrollStr = songTitle + "     " + songTitle;
+                int offset = scrollOffset % (textW + modernSkin.measureText("player.songticker.font", "     "));
+                modernSkin.drawBitmapText(p, "player.songticker.font", scrollStr, stX - offset, stY + 1);
+            } else {
+                // Center
+                modernSkin.drawBitmapText(p, "player.songticker.font", songTitle, stX + (stW - textW) / 2, stY + 1);
+            }
+            p.setClipping(false);
+        }
+        
+        // ---- Song info (x=96, y=17 within display) ----
+        QPixmap kbps = modernSkin.getBitmap("player.songinfo.kbps");
+        QPixmap khz = modernSkin.getBitmap("player.songinfo.khz");
+        if (!kbps.isNull()) p.drawPixmap(dx + 96 + 7, dy + 17, kbps);
+        if (!khz.isNull()) p.drawPixmap(dx + 96 + 56, dy + 17, khz);
+        
+        // Bitrate/frequency text
+        if (mediaBitrate > 0)
+            modernSkin.drawBitmapText(p, "player.songinfo.font", QString::number(mediaBitrate), dx + 96 + 27, dy + 17, 30);
+        if (mediaSampleRate > 0)
+            modernSkin.drawBitmapText(p, "player.songinfo.font", QString::number(mediaSampleRate), dx + 96 + 78, dy + 17, 30);
+        
+        // Mono/stereo indicator
+        QString chBmp = "player.songinfo.none";
+        if (mediaChannels >= 2) chBmp = "player.songinfo.stereo";
+        else if (mediaChannels == 1) chBmp = "player.songinfo.mono";
+        QPixmap chPx = modernSkin.getBitmap(chBmp);
+        if (!chPx.isNull()) p.drawPixmap(dx + 96 + 7, dy + 27, chPx);
+        
+        // EQ on indicator
+        QPixmap eqInd = modernSkin.getBitmap(eqBtnOn ? "player.songinfo.eq.on" : "player.songinfo.eq.off");
+        if (!eqInd.isNull()) p.drawPixmap(dx + 96 + 101, dy + 17, eqInd);
+        
+        // ---- Seek bar (x=6, y=75 within player.main) ----
+        QPixmap seekLeft = modernSkin.getBitmap("player.seekbar.left");
+        QPixmap seekCenter = modernSkin.getBitmap("player.seekbar.center");
+        QPixmap seekRight = modernSkin.getBitmap("player.seekbar.right");
+        
+        QRect seekRect = modernSeekRect();
+        if (!seekLeft.isNull()) p.drawPixmap(seekRect.x(), seekRect.y(), seekLeft);
+        if (!seekCenter.isNull()) {
+            for (int tx = seekRect.x() + 10; tx < seekRect.right() - 10; tx += seekCenter.width()) {
+                int tw = qMin(seekCenter.width(), seekRect.right() - 10 - tx);
+                p.drawPixmap(tx, seekRect.y(), seekCenter, 0, 0, tw, seekCenter.height());
+            }
+        }
+        if (!seekRight.isNull()) p.drawPixmap(seekRect.right() - 10, seekRect.y(), seekRight);
+        
+        // Seek thumb position
+        if (player->duration() > 0) {
+            double seekFrac = (double)player->position() / player->duration();
+            QPixmap seekThumb = modernSkin.getBitmap(modernDraggingSeek ? "player.button.seek.pressed" :
+                (modernSeekRect().contains(mapFromGlobal(QCursor::pos())) ? "player.button.seek.hover" : "player.button.seek"));
+            if (!seekThumb.isNull()) {
+                int thumbX = seekRect.x() + (int)((seekRect.width() - seekThumb.width()) * seekFrac);
+                p.drawPixmap(thumbX, seekRect.y(), seekThumb);
+            }
+        }
+        
+        // ---- Playback buttons ----
+        // Button backgrounds
+        auto drawBg = [&](const QString &id, int bx, int by) {
+            QPixmap px = modernSkin.getBitmap(id);
+            if (!px.isNull()) p.drawPixmap(bx, by + py, px);
+        };
+        drawBg("player.button.previous.bg", 4, 93);
+        drawBg("player.button.play.bg", 34, 93);
+        drawBg("player.button.pause.bg", 64, 93);
+        drawBg("player.button.stop.bg", 94, 93);
+        drawBg("player.button.next.bg", 124, 93);
+        
+        // Playback status overlay on buttons
+        QString btnStatusBmp;
+        if (player->playbackState() == QMediaPlayer::PlayingState)
+            btnStatusBmp = "player.button.status.play";
+        else if (player->playbackState() == QMediaPlayer::PausedState)
+            btnStatusBmp = "player.button.status.pause";
+        else
+            btnStatusBmp = "player.button.status.stop";
+        QPixmap btnStatusPx = modernSkin.getBitmap(btnStatusBmp);
+        if (!btnStatusPx.isNull()) p.drawPixmap(34, py + 93, btnStatusPx);
+        
+        // Button images with hover/pressed states
+        drawModernBtn(MB_PREV, "player.button.previous", "player.button.previous.hover", "player.button.previous.pressed");
+        drawModernBtn(MB_PLAY, "player.button.play", "player.button.play.hover", "player.button.play.pressed");
+        drawModernBtn(MB_PAUSE, "player.button.pause", "player.button.pause.hover", "player.button.pause.pressed");
+        drawModernBtn(MB_STOP, "player.button.stop", "player.button.stop.hover", "player.button.stop.pressed");
+        drawModernBtn(MB_NEXT, "player.button.next", "player.button.next.hover", "player.button.next.pressed");
+        
+        // ---- Volume area ----
+        QPixmap volBg = modernSkin.getBitmap("player.volume.bg");
+        if (!volBg.isNull()) p.drawPixmap(183, py + 100, volBg);
+        
+        // Volume bar fill
+        QPixmap volBar = modernSkin.getBitmap("player.volumebar");
+        if (!volBar.isNull()) {
+            int fillW = (int)(10.0 * volume / 255.0);
+            if (fillW > 0) p.drawPixmap(185, py + 115, volBar, 0, 0, fillW, volBar.height());
+        }
+        
+        // Volume slider thumb
+        QRect volRect = modernVolumeRect();
+        double volFrac = volume / 255.0;
+        QPixmap volThumb = modernSkin.getBitmap(modernDraggingVolume ? "player.button.volume.pressed" :
+            "player.button.volume");
+        if (!volThumb.isNull()) {
+            int thumbX = volRect.x() + (int)((volRect.width() - volThumb.width()) * volFrac);
+            p.drawPixmap(thumbX, volRect.y(), volThumb);
+        }
+        
+        // ---- Mute button ----
+        QPixmap muteBg = modernSkin.getBitmap("player.button.mute.bg");
+        if (!muteBg.isNull()) p.drawPixmap(160, py + 99, muteBg);
+        // (Mute toggle drawn with drawModernBtn)
+        bool isMuted = (audioOutput->volume() < 0.01f && volume > 0);
+        QString muteId = isMuted ? "player.button.mute.on" : "player.button.mute.off";
+        if (modernPressed == MB_MUTE) muteId = isMuted ? "player.button.mute.on.pressed" : "player.button.mute.off.pressed";
+        QPixmap mutePx = modernSkin.getBitmap(muteId);
+        if (!mutePx.isNull()) p.drawPixmap(164, py + 104, mutePx);
+        
+        // ---- MLPL buttons area ----
+        QPixmap mlplBg = modernSkin.getBitmap("player.button.mlpl.bg");
+        if (!mlplBg.isNull()) p.drawPixmap(W - 94, py + 69, mlplBg);
+        
+        drawModernBtn(MB_EJECT, "player.button.eject", "player.button.eject.hover", "player.button.eject.pressed");
+        
+        // PL button (active state when playlist visible)
+        {
+            QString plId = plBtnOn ? "player.button.pl.active" : "player.button.pl";
+            if (modernPressed == MB_PL) plId = "player.button.pl.pressed";
+            else if (modernHovered == MB_PL) plId = "player.button.pl.hover";
+            QPixmap px = modernSkin.getBitmap(plId);
+            QRect r = modernButtonRect(MB_PL);
+            if (!px.isNull()) p.drawPixmap(r.x(), r.y(), px);
+        }
+        // ML button (active state when ML visible)
+        {
+            QString mlId = (mediaLibraryWindow && mediaLibraryWindow->isVisible()) ? "player.button.ml.active" : "player.button.ml";
+            if (modernPressed == MB_ML) mlId = "player.button.ml.pressed";
+            else if (modernHovered == MB_ML) mlId = "player.button.ml.hover";
+            QPixmap px = modernSkin.getBitmap(mlId);
+            QRect r = modernButtonRect(MB_ML);
+            if (!px.isNull()) p.drawPixmap(r.x(), r.y(), px);
+        }
+        
+        // ---- Shuffle/Repeat with LED indicators ----
+        QPixmap repBg = modernSkin.getBitmap("player.button.repeat.bg");
+        QPixmap shufBg = modernSkin.getBitmap("player.button.shuffle.bg");
+        if (!repBg.isNull()) p.drawPixmap(W - 44, py + 18, repBg);
+        if (!shufBg.isNull()) p.drawPixmap(W - 44, py + 41, shufBg);
+        
+        drawModernBtn(MB_REPEAT, "player.button.repeat", "player.button.repeat.hover", "player.button.repeat.pressed");
+        drawModernBtn(MB_SHUFFLE, "player.button.shuffle", "player.button.shuffle.hover", "player.button.shuffle.pressed");
+        
+        // LED indicators
+        QPixmap ledOn = modernSkin.getBitmap("player.led.on");
+        QPixmap ledOff = modernSkin.getBitmap("player.led.off");
+        if (!ledOn.isNull() && !ledOff.isNull()) {
+            p.drawPixmap(W - 19, py + 22, repeatOn ? ledOn : ledOff);
+            p.drawPixmap(W - 19, py + 45, shuffleOn ? ledOn : ledOff);
+        }
+        
+        // ---- Bolt icon (about button) ----
+        QPixmap boltBg = modernSkin.getBitmap("player.button.bolt.bg");
+        QPixmap bolt = modernSkin.getBitmap("player.button.bolt");
+        if (!boltBg.isNull()) p.drawPixmap(W - 31, py + 101, boltBg);
+        if (!bolt.isNull()) p.drawPixmap(W - 31, py + 101, bolt);
+        
+        // ---- Resizer ----
+        QPixmap resizer = modernSkin.getBitmap("player.resizer");
+        if (!resizer.isNull()) p.drawPixmap(W - 17, py + 108, resizer);
     }
 
     void processAudioBuffer(const QAudioBuffer &buffer) {
@@ -5553,6 +6377,12 @@ protected:
     void paintEvent(QPaintEvent *) override {
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing, false);
+
+        // ---- Modern skin mode: use XML-based renderer ----
+        if (isModernSkin) {
+            paintModern(p);
+            return;
+        }
 
         auto &bmp = WinampBitmaps::instance();
         
@@ -6346,6 +7176,52 @@ protected:
     }
 
     void mousePressEvent(QMouseEvent *event) override {
+        // ---- Modern skin mouse press handling ----
+        if (isModernSkin) {
+            int x = event->pos().x();
+            int y = event->pos().y();
+            
+            if (event->button() == Qt::RightButton) {
+                showContextMenu(event->globalPosition().toPoint());
+                return;
+            }
+            
+            // Check seek bar
+            QRect seekR = modernSeekRect();
+            if (seekR.contains(x, y) && player->duration() > 0) {
+                modernDraggingSeek = true;
+                double frac = qBound(0.0, (double)(x - seekR.x()) / seekR.width(), 1.0);
+                player->setPosition((qint64)(frac * player->duration()));
+                update();
+                return;
+            }
+            
+            // Check volume slider
+            QRect volR = modernVolumeRect();
+            if (volR.contains(x, y)) {
+                modernDraggingVolume = true;
+                double frac = qBound(0.0, (double)(x - volR.x()) / volR.width(), 1.0);
+                volume = (int)(frac * 255);
+                applyVolume();
+                update();
+                return;
+            }
+            
+            // Check buttons
+            int btn = modernGetButtonAt(x, y);
+            if (btn >= 0) {
+                modernPressed = btn;
+                update();
+                return;
+            }
+            
+            // Drag window (titlebar or empty area)
+            isDragging = true;
+            dragPosition = event->globalPosition().toPoint() - frameGeometry().topLeft();
+            return;
+        }
+        
+        // ---- Classic skin mouse press ----
         if (event->button() == Qt::RightButton) {
             int x = event->pos().x();
             int y = event->pos().y();
@@ -6530,6 +7406,40 @@ protected:
         int x = event->position().x();
         int y = event->position().y();
         
+        // ---- Modern skin mouse move ----
+        if (isModernSkin) {
+            // Seek drag
+            if (modernDraggingSeek && player->duration() > 0) {
+                QRect seekR = modernSeekRect();
+                double frac = qBound(0.0, (double)(x - seekR.x()) / seekR.width(), 1.0);
+                player->setPosition((qint64)(frac * player->duration()));
+                update();
+                return;
+            }
+            // Volume drag
+            if (modernDraggingVolume) {
+                QRect volR = modernVolumeRect();
+                double frac = qBound(0.0, (double)(x - volR.x()) / volR.width(), 1.0);
+                volume = (int)(frac * 255);
+                applyVolume();
+                update();
+                return;
+            }
+            // Window drag
+            if (isDragging) {
+                move(event->globalPosition().toPoint() - dragPosition);
+                playlistWindow->followMain();
+                eqWindow->followMain();
+                return;
+            }
+            // Hover tracking
+            int oldHover = modernHovered;
+            modernHovered = modernGetButtonAt(x, y);
+            if (oldHover != modernHovered) update();
+            return;
+        }
+        
+        // ---- Classic skin mouse move ----
         // Update hovered button
         int oldHover = hoveredButton;
         hoveredButton = getButtonAt(x, y);
@@ -6602,6 +7512,91 @@ protected:
     }
     
     void mouseReleaseEvent(QMouseEvent *event) override {
+        // ---- Modern skin mouse release ----
+        if (isModernSkin) {
+            if (modernDraggingSeek || modernDraggingVolume) {
+                modernDraggingSeek = false;
+                modernDraggingVolume = false;
+                update();
+                return;
+            }
+            if (modernPressed >= 0) {
+                int x = event->pos().x();
+                int y = event->pos().y();
+                int btn = modernGetButtonAt(x, y);
+                if (btn == modernPressed) {
+                    // Execute action based on button index
+                    switch (btn) {
+                        case MB_PREV: {
+                            int curIdx = playlistWindow->currentTrackIndex();
+                            if (curIdx > 0) {
+                                playlistWindow->setCurrentTrackIndex(curIdx - 1);
+                                playTrack(playlistWindow->trackAt(curIdx - 1));
+                            } else {
+                                player->setPosition(0);
+                            }
+                            break;
+                        }
+                        case MB_PLAY:
+                            if (!currentFile.isEmpty()) player->play();
+                            else openFile();
+                            break;
+                        case MB_PAUSE: player->pause(); break;
+                        case MB_STOP: player->stop(); break;
+                        case MB_NEXT: {
+                            int curIdx = playlistWindow->currentTrackIndex();
+                            int count = playlistWindow->trackCount();
+                            if (curIdx + 1 < count) {
+                                playlistWindow->setCurrentTrackIndex(curIdx + 1);
+                                playTrack(playlistWindow->trackAt(curIdx + 1));
+                            }
+                            break;
+                        }
+                        case MB_EJECT: openFile(); break;
+                        case MB_PL:
+                            plBtnOn = !plBtnOn;
+                            if (plBtnOn) playlistWindow->show();
+                            else playlistWindow->hide();
+                            break;
+                        case MB_ML:
+                            if (mediaLibraryWindow) {
+                                if (mediaLibraryWindow->isVisible()) mediaLibraryWindow->hide();
+                                else mediaLibraryWindow->show();
+                            }
+                            break;
+                        case MB_MUTE: {
+                            // Toggle mute
+                            static int savedVolume = 200;
+                            if (audioOutput->volume() > 0.01f) {
+                                savedVolume = volume;
+                                audioOutput->setVolume(0.0);
+                            } else {
+                                volume = savedVolume;
+                                applyVolume();
+                            }
+                            break;
+                        }
+                        case MB_REPEAT:
+                            if (!repeatOn) { repeatOn = true; repeatTrack = false; }
+                            else if (!repeatTrack) { repeatTrack = true; }
+                            else { repeatOn = false; repeatTrack = false; }
+                            break;
+                        case MB_SHUFFLE:
+                            shuffleOn = !shuffleOn;
+                            break;
+                        case MB_MINIMIZE: showMinimized(); break;
+                        case MB_CLOSE: close(); break;
+                    }
+                }
+                modernPressed = -1;
+                update();
+                return;
+            }
+            isDragging = false;
+            return;
+        }
+        
+        // ---- Classic skin mouse release ----
         if (pressedButton >= 0) {
             int x = event->pos().x();
             int y = event->pos().y();
@@ -6948,6 +7943,14 @@ private:
     MilkdropWindow *milkdropWindow = nullptr;
     MediaLibraryWindow *mediaLibraryWindow = nullptr;
     
+    // Modern skin engine (Winamp 5 XML-based skins)
+    ModernSkinEngine modernSkin;
+    bool isModernSkin = false;
+    int modernHovered = -1;  // hovered button index for modern skin
+    int modernPressed = -1;  // pressed button index
+    bool modernDraggingSeek = false;
+    bool modernDraggingVolume = false;
+    
     void openMilkdrop() {
         if (milkdropWindow) {
             milkdropWindow->raise();
@@ -7209,13 +8212,36 @@ int main(int argc, char *argv[]) {
     candidates << appDir + "/../Src/Winamp/resource"
                << appDir + "/../../Src/Winamp/resource";
 
+    // Check if saved skin is a modern (XML) skin — still load classic as fallback
+    bool savedIsModern = !skinPath.isEmpty() && isModernSkinDir(skinPath);
+
     bool loaded = false;
     for (const QString &path : candidates) {
         QDir d(path);
+        // Skip modern skin paths when loading classic bitmaps
+        if (isModernSkinDir(d.absolutePath())) continue;
         if (d.exists() && WinampBitmaps::instance().loadAll(d.absolutePath())) {
             qDebug() << "Successfully loaded authentic Winamp bitmaps from:" << d.absolutePath();
             loaded = true;
             break;
+        }
+    }
+
+    // If no classic skin loaded yet and saved skin was modern, load default classic as fallback
+    if (!loaded) {
+        QStringList fallbackClassic = {
+            appDir + "/../skins/default",
+            appDir + "/../../skins/default",
+            QDir::homePath() + "/.winamp/skins/default",
+            appDir + "/../Src/Winamp/resource",
+            appDir + "/../../Src/Winamp/resource"
+        };
+        for (const QString &path : fallbackClassic) {
+            QDir d(path);
+            if (d.exists() && WinampBitmaps::instance().loadAll(d.absolutePath())) {
+                loaded = true;
+                break;
+            }
         }
     }
 
@@ -7260,6 +8286,11 @@ int main(int argc, char *argv[]) {
     }
 
     WinampWindow w;
+
+    // If saved skin is modern, trigger modern skin loading
+    if (savedIsModern) {
+        w.onSkinChanged(skinPath);
+    }
     
     // Process command-line arguments (matches Windows cmdline.cpp)
     // Supported: file paths to play, directories to scan, -play, -pause, -stop, -enqueue
