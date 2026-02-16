@@ -34,14 +34,18 @@ ninja -C build
 - **Play/Pause/Stop status indicator** — 9x9 icon at (26,28) from `PLAYPAUS.BMP` with 3 states
 - **LED time display** — MM:SS rendered with `numbers.bmp` (9x13 glyphs) at correct digit positions (36,26 / 48,26 / 78,26 / 90,26); colon baked into `MAIN.BMP`
 - **Scrolling song title** — bitmap font rendering from `text.bmp` (5x6 per character) in a clipped 154x6 region at (111,27); scrolls at 150ms with `***` separator wrap
-- **Mono/Stereo indicator** — `MONOSTER.BMP` at (212,41); 4 sprite states (stereo on/off, mono on/off)
+- **Mono/Stereo indicator** — `MONOSTER.BMP` at (212,41); dynamically reflects actual channel count (mono/stereo on/off states)
+- **Bitrate display** — kbps shown at (111,43) using `text.bmp` font, from `QMediaMetaData::AudioBitRate`
+- **Sample rate display** — kHz shown at (156,43) using `text.bmp` font, from audio buffer format
 - **Transport buttons** — Previous, Play, Pause, Stop, Next, Eject from `CBUTTONS.BMP` with normal/pressed sprite rows; actions fire on mouse release
+- **Previous/Next navigate playlist** — Previous goes to prior track (or seeks to 0 if first), Next advances to next track
+- **Auto-advance** — automatically plays next track when current one ends; respects shuffle (random) and repeat (wrap) modes
 - **Volume slider** — 28-frame sprite animation from `volume.bmp` (68x13 each, 15px stride); click and drag, range 0-255
 - **Position/seek bar** — background + thumb from `POSBAR.BMP` (248x10 bar, 29x10 thumb); draggable seek with distinct pressed thumb sprite
 - **Shuffle and Repeat toggles** — `SHUFREP.BMP` on/off states (47x15 and 28x15)
 - **EQ and PL toggle buttons** — `SHUFREP.BMP` on/off states (23x12 each); show/hide child windows
 - **Frameless window** with custom titlebar dragging
-- **Right-click context menu** — Play file, Play location, About Winamp, Exit
+- **Right-click context menu** — Play file, Play location, Preferences, About Winamp, Exit
 
 ### Spectrum Analyzer and Oscilloscope
 
@@ -74,10 +78,11 @@ ninja -C build
 - **Internal drag reorder** — drag tracks within the list to rearrange; tracks and durations stay in sync
 - **External file drop** — drag audio files from file manager into the playlist
 - **Double-click to play** — plays the selected track
-- **ADD menu** (right-click) — Add file(s), Add directory (recursive scan), Add location
-- **REM menu** (right-click) — Remove selected, Crop, Clear playlist, Remove misc
-- **SEL menu** (right-click) — Select all, Select none, Invert selection
-- **MISC menu** (right-click) — Sort by title, Sort by filename, Sort by path, Reverse list, Randomize list
+- **ADD menu** — Add file(s), Add directory (recursive scan), Add location
+- **REM menu** — Remove selected, Crop, Clear playlist, Remove misc
+- **SEL menu** — Select all, Select none, Invert selection
+- **MISC menu** — Sort by title, Sort by filename, Sort by path, Reverse list, Randomize list
+- **LIST menu** — New playlist (clear), Open playlist (.m3u/.m3u8/.pls), Save playlist (.m3u with #EXTM3U/#EXTINF metadata)
 - **Track persistence** — full track list saved/restored across sessions
 - **Draggable** with multi-mode snapping
 - **Close button** in titlebar
@@ -101,11 +106,20 @@ All state saved to `~/.config/winamp/winamp.conf` (INI format) on exit, restored
 - Playlist: position, snap mode, dimensions, complete track list
 - Skin path
 
+### Skin System
+
+- **WSZ/ZIP skin support** — place `.wsz` or `.zip` skin archives in `~/.winamp/skins/`; auto-extracted to `~/.cache/winamp/skins/` via `unzip`; cached for subsequent loads
+- **Folder skins** — unzipped skin directories in `~/.winamp/skins/` also supported
+- **"Winamp Default" entry** — always available in skin list to restore the stock skin
+- **Skin browser** — Preferences > Skins tab lists all available skins; double-click to apply
+- **Fallback loading** — missing bitmaps in custom skins automatically filled from default skin assets
+- **Case-insensitive BMP loading** — handles mixed-case filenames across skin archives
+
 ### Dialogs
 
-- **About Winamp** — version, copyright, tagline ("it really whips the llama's ass!")
+- **About Winamp** — demoscene-style animated dialog: starfield background, warped splash2.bmp, orbiting team.bmp cube, fire spheres, fading credits at 33fps
 - **Play Location** — URL input for stream/remote playback
-- **Preferences** — tabbed dialog with General and Skins tabs; skin browser lists `~/.winamp/skins/` folders
+- **Preferences** — tabbed dialog with General and Skins tabs
 
 ### Audio
 
@@ -140,20 +154,14 @@ Bitmap loading searches multiple fallback paths and merges missing assets from a
 
 ### High Priority
 
-- [ ] Skin system — load `.wsz` (ZIP) skin files; parse `viscolor.txt`; swap all bitmaps at runtime
 - [ ] Real EQ DSP processing — apply 10-band EQ + preamp to actual audio output (currently visual only)
-- [ ] Next/Previous track — wire to playlist (currently Previous seeks to 0, Next is a no-op)
-- [ ] Shuffle playback — randomize playlist order when shuffle is on (flag exists, not wired)
-- [ ] Repeat modes — repeat track / repeat playlist (flag exists, not wired)
-- [ ] Auto-advance — play next track when current one finishes
-- [ ] Bitrate / sample rate display — show kbps and kHz in the main window info area
+- [ ] `viscolor.txt` parsing — load per-skin visualization colors; use `SPEC.BMP` (66x16)
 - [ ] Clutterbar — clickable options bar from `titlebar.bmp` sprite (x=304)
 - [ ] Windowshade mode — compact single-bar mode for main, EQ, and playlist windows
 - [ ] Balance slider — `BALANCE.BMP` (68x433) exists, not loaded or rendered
 - [ ] Playlist scrollbar — functional scroll thumb from Pledit.bmp sprites
 - [ ] Playlist resize — drag bottom-right corner; re-tile skin pieces dynamically
-- [ ] Playlist bottom buttons — render ADD/REM/SEL/MISC/LIST button graphics from Pledit.bmp sprites (currently right-click menus only)
-- [ ] Visualization colors from skin — load `viscolor.txt` from skin for per-skin viz colors; use `SPEC.BMP` (66x16)
+- [ ] Playlist bottom button graphics — render ADD/REM/SEL/MISC/LIST button sprites from Pledit.bmp (currently menus work, button graphics not drawn)
 
 ### Medium Priority
 
@@ -170,7 +178,6 @@ Bitmap loading searches multiple fallback paths and merges missing assets from a
 - [ ] EQ AUTO behavior — auto-load preset based on file/genre
 - [ ] Playlist track numbering — show "1. Artist - Title (3:45)" format per entry
 - [ ] Playlist keyboard — Delete removes selected, Enter plays selected
-- [ ] Save/Load playlist — .m3u / .pls export and import
 - [ ] Playlist info text from `pledit.txt` — skin-specific font colors and background
 
 ### Low Priority
@@ -208,14 +215,15 @@ Bitmap loading searches multiple fallback paths and merges missing assets from a
 ```
 ├── CMakeLists.txt              # Qt6 build configuration
 ├── README.md                   # This file
-├── winamp_authentic.cpp        # Main implementation (~1940 lines)
+├── winamp_authentic.cpp        # Main implementation (~2450 lines)
 ├── skins/default/              # Default skin bitmaps
 ├── Src/Winamp/resource/        # Additional bitmap assets
 └── build/
     └── winamp                  # Executable
 ```
 
-Skin bitmaps loaded from `skins/default/` and `Src/Winamp/resource/` in the source tree.
+Skin bitmaps loaded from `skins/default/` and `Src/Winamp/resource/` with automatic fallback merging.
+Custom skins: place `.wsz`/`.zip` files or folders in `~/.winamp/skins/`.
 
 ---
 
