@@ -36,7 +36,40 @@
 #include <QDebug>
 #include <QFileInfo>
 #include <QDateTime>
+#include <QProcess>
 #include <type_traits>
+
+// Extract a .wsz or .zip skin archive to a cache directory.
+// Returns the path to the extracted folder, or empty string on failure.
+static QString extractSkinArchive(const QString &archivePath) {
+    QFileInfo fi(archivePath);
+    if (!fi.exists()) return {};
+    
+    // Cache dir: ~/.cache/winamp/skins/<basename_without_ext>
+    QString cacheDirBase = QDir::homePath() + "/.cache/winamp/skins";
+    QString skinName = fi.completeBaseName();
+    QString extractDir = cacheDirBase + "/" + skinName;
+    QDir().mkpath(extractDir);
+    
+    // Check if already extracted (MAIN.BMP or main.bmp exists)
+    QDir ed(extractDir);
+    if (ed.exists("MAIN.BMP") || ed.exists("main.bmp") || ed.exists("Main.bmp")) {
+        return extractDir;
+    }
+    
+    // Extract using unzip
+    QProcess proc;
+    proc.setWorkingDirectory(extractDir);
+    proc.start("unzip", QStringList() << "-o" << "-j" << archivePath << "-d" << extractDir);
+    proc.waitForFinished(10000);
+    
+    if (proc.exitCode() != 0) {
+        qWarning() << "Failed to extract skin archive:" << archivePath << proc.readAllStandardError();
+        return {};
+    }
+    
+    return extractDir;
+}
 
 // ============================================================
 // Simple FFT for spectrum analyzer (radix-2 DIT, 512-point)
@@ -532,14 +565,35 @@ private:
         if (!skinsDir.exists()) {
             skinsDir.mkpath(".");
         }
+        // List directories (unzipped skins)
         QStringList skinFolders = skinsDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
         skinListWidget->addItems(skinFolders);
+        
+        // List .wsz and .zip archives
+        QStringList archiveFilters;
+        archiveFilters << "*.wsz" << "*.WSZ" << "*.zip" << "*.ZIP";
+        QStringList archiveFiles = skinsDir.entryList(archiveFilters, QDir::Files);
+        for (const QString &f : archiveFiles) {
+            QFileInfo fi(f);
+            skinListWidget->addItem(fi.fileName());
+        }
     }
 
     void onSkinSelected(QListWidgetItem *item) {
         QString skinName = item->text();
-        QString skinPath = QDir::homePath() + "/.winamp/skins/" + skinName;
-        emit skinChanged(skinPath);
+        QString skinsBase = QDir::homePath() + "/.winamp/skins/";
+        QString fullPath = skinsBase + skinName;
+        
+        // Check if it's an archive (.wsz or .zip)
+        if (skinName.endsWith(".wsz", Qt::CaseInsensitive) ||
+            skinName.endsWith(".zip", Qt::CaseInsensitive)) {
+            QString extracted = extractSkinArchive(fullPath);
+            if (!extracted.isEmpty()) {
+                emit skinChanged(extracted);
+            }
+        } else {
+            emit skinChanged(fullPath);
+        }
     }
 
     QListWidget *skinListWidget;
@@ -1833,6 +1887,7 @@ protected:
         QAction *playFileAct = menu.addAction("Play file...");
         QAction *playLocAct = menu.addAction("Play location...");
         menu.addSeparator();
+        QAction *prefsAct = menu.addAction("Preferences...");
         QAction *aboutAct = menu.addAction("About Winamp...");
         menu.addSeparator();
         QAction *quitAct = menu.addAction("Exit");
@@ -1840,6 +1895,12 @@ protected:
         QAction *sel = menu.exec(globalPos);
         if (sel == playFileAct) onPlayFile();
         else if (sel == playLocAct) onPlayLocation();
+        else if (sel == prefsAct) {
+            PreferencesDialog *prefs = new PreferencesDialog(this);
+            connect(prefs, &PreferencesDialog::skinChanged, this, &WinampWindow::onSkinChanged);
+            prefs->setAttribute(Qt::WA_DeleteOnClose);
+            prefs->exec();
+        }
         else if (sel == aboutAct) onShowAbout();
         else if (sel == quitAct) close();
     }
