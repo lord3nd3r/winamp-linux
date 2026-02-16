@@ -846,6 +846,157 @@ static void loadVisColors(const QString &skinPath) {
     }
 }
 
+// ============================================================
+// Simple Translation System for Language Pack Support
+// ============================================================
+class Translator {
+public:
+    static Translator& instance() {
+        static Translator inst;
+        return inst;
+    }
+    
+    QString tr(const QString &key, const QString &defaultValue = QString()) {
+        if (strings.contains(key)) {
+            return strings[key];
+        }
+        return defaultValue.isEmpty() ? key : defaultValue;
+    }
+    
+    void loadLanguage(const QString &langCode) {
+        strings.clear();
+        currentLang = langCode;
+        
+        // Try ~/.winamp/lang/ first, then fallback to bundled location
+        QStringList langPaths = {
+            QDir::homePath() + "/.winamp/lang",
+            "lang"
+        };
+        
+        for (const QString &basePath : langPaths) {
+            QString langFile = basePath + "/" + langCode + ".lang";
+            if (QFile::exists(langFile)) {
+                loadFromFile(langFile);
+                return;
+            }
+        }
+        
+        // No language file found, use built-in English
+        loadEnglishDefaults();
+    }
+    
+    QString getCurrentLanguage() const { return currentLang; }
+    
+    QStringList getAvailableLanguages() {
+        QStringList langs;
+        langs << "en" << "de" << "fr" << "es" << "pt" << "ru" << "ja" << "zh";
+        
+        // Scan for installed language files
+        QStringList langPaths = {
+            QDir::homePath() + "/.winamp/lang",
+            "lang"
+        };
+        
+        for (const QString &basePath : langPaths) {
+            QDir dir(basePath);
+            if (dir.exists()) {
+                QStringList files = dir.entryList(QStringList() << "*.lang", QDir::Files);
+                for (const QString &file : files) {
+                    QString code = QFileInfo(file).baseName();
+                    if (!langs.contains(code)) {
+                        langs << code;
+                    }
+                }
+            }
+        }
+        
+        return langs;
+    }
+    
+private:
+    Translator() { loadEnglishDefaults(); }
+    
+    void loadFromFile(const QString &filePath) {
+        QFile file(filePath);
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            return;
+        }
+        
+        QTextStream in(&file);
+        in.setEncoding(QStringConverter::Utf8);
+        
+        while (!in.atEnd()) {
+            QString line = in.readLine().trimmed();
+            
+            // Skip comments and empty lines
+            if (line.isEmpty() || line.startsWith('#') || line.startsWith(';')) {
+                continue;
+            }
+            
+            // Parse KEY=Value format
+            int eqPos = line.indexOf('=');
+            if (eqPos > 0) {
+                QString key = line.left(eqPos).trimmed();
+                QString value = line.mid(eqPos + 1).trimmed();
+                
+                // Unescape basic sequences
+                value.replace("\\n", "\n");
+                value.replace("\\t", "\t");
+                
+                strings[key] = value;
+            }
+        }
+        
+        file.close();
+    }
+    
+    void loadEnglishDefaults() {
+        // Window titles
+        strings["win.main.title"] = "Winamp 5.666 for Linux";
+        strings["win.playlist.title"] = "Winamp Playlist Editor";
+        strings["win.equalizer.title"] = "Winamp Equalizer";
+        strings["win.video.title"] = "Winamp Video";
+        strings["win.library.title"] = "Winamp Library";
+        strings["win.milkdrop.title"] = "Milkdrop Visualization";
+        strings["win.preferences.title"] = "Winamp Preferences";
+        strings["win.about.title"] = "About Winamp";
+        strings["win.fileinfo.title"] = "File Info";
+        strings["win.jumpto.title"] = "Jump to File";
+        strings["win.playlocation.title"] = "Play Location";
+        strings["win.plgen.title"] = "Playlist Generator";
+        
+        // Menu items - File
+        strings["menu.file"] = "File";
+        strings["menu.file.play"] = "Play";
+        strings["menu.file.playfile"] = "Play file...\\tL";
+        strings["menu.file.playlocation"] = "Play location...\\tCtrl+L";
+        strings["menu.options"] = "Options";
+        strings["menu.playback"] = "Playback";
+        strings["menu.windows"] = "Windows";
+        strings["menu.visualization"] = "Visualization";
+        
+        // Common buttons
+        strings["button.ok"] = "OK";
+        strings["button.cancel"] = "Cancel";
+        strings["button.apply"] = "Apply";
+        strings["button.close"] = "Close";
+        strings["button.generate"] = "Generate";
+        
+        // Playlist generator
+        strings["plgen.numtracks"] = "Number of tracks:";
+        strings["plgen.replace"] = "Replace current playlist (otherwise add to current)";
+        strings["plgen.nofound"] = "No audio files found in";
+        
+        currentLang = "en";
+    }
+    
+    QMap<QString, QString> strings;
+    QString currentLang;
+};
+
+// Convenience macro
+#define TR(key, def) Translator::instance().tr(key, def)
+
 // Forward declarations
 class WinampWindow;
 class VideoWindow;
@@ -1460,7 +1611,65 @@ private:
         QVBoxLayout *layout = new QVBoxLayout(page);
         layout->addWidget(new QLabel("<b>Language</b>"));
         layout->addSpacing(10);
-        layout->addWidget(new QLabel("Language packs are not yet supported.\nWinamp currently runs in English."));
+        
+        QLabel *infoLabel = new QLabel(
+            "Select your preferred language for the Winamp interface.\n"
+            "Language packs are loaded from ~/.winamp/lang/ directory."
+        );
+        infoLabel->setWordWrap(true);
+        layout->addWidget(infoLabel);
+        
+        layout->addSpacing(10);
+        
+        QHBoxLayout *langLayout = new QHBoxLayout();
+        langLayout->addWidget(new QLabel("Language:"));
+        
+        QComboBox *langCombo = new QComboBox(page);
+        
+        // Language map
+        QMap<QString, QString> langNames;
+        langNames["en"] = "English";
+        langNames["de"] = "Deutsch (German)";
+        langNames["es"] = "Español (Spanish)";
+        langNames["fr"] = "Français (French)";
+        langNames["pt"] = "Português (Portuguese)";
+        langNames["ru"] = "Русский (Russian)";
+        langNames["ja"] = "日本語 (Japanese)";
+        langNames["zh"] = "中文 (Chinese)";
+        
+        // Add available languages
+        QStringList availableLangs = Translator::instance().getAvailableLanguages();
+        for (const QString &code : availableLangs) {
+            QString name = langNames.contains(code) ? langNames[code] : code.toUpper();
+            langCombo->addItem(name, code);
+        }
+        
+        // Select current language
+        QString currentLang = Translator::instance().getCurrentLanguage();
+        int currentIdx = langCombo->findData(currentLang);
+        if (currentIdx >= 0) {
+            langCombo->setCurrentIndex(currentIdx);
+        }
+        
+        langLayout->addWidget(langCombo);
+        langLayout->addStretch();
+        layout->addLayout(langLayout);
+        
+        layout->addSpacing(10);
+        
+        QLabel *noteLabel = new QLabel(
+            "<i>Note: Winamp must be restarted for language changes to take effect.</i>"
+        );
+        noteLabel->setWordWrap(true);
+        layout->addWidget(noteLabel);
+        
+        // Save language preference on change
+        connect(langCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [langCombo](int index) {
+            QString langCode = langCombo->itemData(index).toString();
+            QSettings settings(QDir::homePath() + "/.config/winamp/winamp.conf", QSettings::IniFormat);
+            settings.setValue("language", langCode);
+        });
+        
         layout->addStretch();
         return page;
     }
@@ -2496,7 +2705,7 @@ private:
 PlaylistWindow::PlaylistWindow(WinampWindow *parent) : QWidget(nullptr), mainWindow(parent) {
     setMinimumSize(275, 116);
     resize(275, 232);
-    setWindowTitle("Winamp Playlist Editor");
+    setWindowTitle(TR("win.playlist.title", "Winamp Playlist Editor"));
     setWindowFlags(Qt::Tool | Qt::FramelessWindowHint);
     
     // Position list widget within the skin frame
@@ -3650,7 +3859,7 @@ void PlaylistWindow::showListMenu(QPoint globalPos) {
     } else if (selected == genPl) {
         // Show playlist generator dialog
         QDialog dialog(this);
-        dialog.setWindowTitle("Playlist Generator");
+        dialog.setWindowTitle(TR("win.plgen.title", "Playlist Generator"));
         dialog.setModal(true);
         dialog.resize(350, 200);
         dialog.setStyleSheet(
@@ -3666,7 +3875,7 @@ void PlaylistWindow::showListMenu(QPoint globalPos) {
         
         // Number of tracks
         QHBoxLayout *countLayout = new QHBoxLayout();
-        QLabel *countLabel = new QLabel("Number of tracks:");
+        QLabel *countLabel = new QLabel(TR("plgen.numtracks", "Number of tracks:"));
         QSpinBox *countSpin = new QSpinBox();
         countSpin->setMinimum(1);
         countSpin->setMaximum(1000);
@@ -3677,7 +3886,7 @@ void PlaylistWindow::showListMenu(QPoint globalPos) {
         layout->addLayout(countLayout);
         
         // Replace or add option
-        QCheckBox *replaceCheck = new QCheckBox("Replace current playlist (otherwise add to current)");
+        QCheckBox *replaceCheck = new QCheckBox(TR("plgen.replace", "Replace current playlist (otherwise add to current)"));
         replaceCheck->setChecked(false);
         layout->addWidget(replaceCheck);
         
@@ -3686,8 +3895,8 @@ void PlaylistWindow::showListMenu(QPoint globalPos) {
         // Buttons
         QHBoxLayout *buttonLayout = new QHBoxLayout();
         buttonLayout->addStretch();
-        QPushButton *okBtn = new QPushButton("Generate");
-        QPushButton *cancelBtn = new QPushButton("Cancel");
+        QPushButton *okBtn = new QPushButton(TR("button.generate", "Generate"));
+        QPushButton *cancelBtn = new QPushButton(TR("button.cancel", "Cancel"));
         buttonLayout->addWidget(okBtn);
         buttonLayout->addWidget(cancelBtn);
         layout->addLayout(buttonLayout);
@@ -3755,7 +3964,7 @@ void PlaylistWindow::showListMenu(QPoint globalPos) {
 // Equalizer Window Constructor
 EqualizerWindow::EqualizerWindow(WinampWindow *parent) : QWidget(nullptr), mainWindow(parent) {
     setFixedSize(275, 116);
-    setWindowTitle("Winamp Equalizer");
+    setWindowTitle(TR("win.equalizer.title", "Winamp Equalizer"));
     setWindowFlags(Qt::Tool | Qt::FramelessWindowHint);
     
     // Initialize EQ bands to center position (32 out of 63)
@@ -3773,7 +3982,7 @@ class VideoWindow : public QWidget {
     
 public:
     VideoWindow(QWidget *parent = nullptr) : QWidget(parent) {
-        setWindowTitle("Winamp Video");
+        setWindowTitle(TR("win.video.title", "Winamp Video"));
         setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
         setAttribute(Qt::WA_DeleteOnClose, false);  // Don't delete on close, just hide
         resize(320, 240);
@@ -4382,7 +4591,7 @@ class MediaLibraryWindow : public QWidget {
     
 public:
     MediaLibraryWindow(QWidget *parent = nullptr) : QWidget(parent) {
-        setWindowTitle("Winamp Library");
+        setWindowTitle(TR("win.library.title", "Winamp Library"));
         setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
         setAttribute(Qt::WA_DeleteOnClose, false);  // Don't delete on close, just hide
         resize(275, 300);
@@ -6982,6 +7191,10 @@ int main(int argc, char *argv[]) {
     // Load bitmaps — try saved skin, then project skins/default, then resource dir
     QSettings settings(configPath(), QSettings::IniFormat);
     QString skinPath = settings.value("skin").toString();
+    
+    // Load language pack
+    QString langCode = settings.value("language", "en").toString();
+    Translator::instance().loadLanguage(langCode);
 
     // Build a list of candidate paths
     QStringList candidates;
