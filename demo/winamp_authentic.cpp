@@ -13,6 +13,11 @@
 #include <QImage>
 #include <QIcon>
 #include <QFile>
+#include <QSettings>
+#include <QDir>
+#include <QMenu>
+#include <QAction>
+#include <QCloseEvent>
 
 // Forward declaration
 class WinampWindow;
@@ -54,6 +59,41 @@ private:
     WinampBitmaps() {}
 };
 
+// Config file path helper
+static QString configPath() {
+    QString dir = QDir::homePath() + "/.config/winamp";
+    QDir().mkpath(dir);
+    return dir + "/winamp.conf";
+}
+
+// Built-in EQ Presets (slider values 0-63, center=32)
+struct EqPreset {
+    const char *name;
+    int values[10];
+};
+
+static const EqPreset builtinPresets[] = {
+    {"Flat",                {32, 32, 32, 32, 32, 32, 32, 32, 32, 32}},
+    {"Classical",           {32, 32, 32, 32, 32, 32, 19, 19, 19, 15}},
+    {"Club",                {32, 32, 38, 42, 42, 42, 38, 32, 32, 32}},
+    {"Dance",               {49, 45, 36, 32, 32, 23, 20, 20, 32, 32}},
+    {"Full Bass",           {49, 49, 49, 42, 34, 26, 19, 15, 13, 13}},
+    {"Full Bass & Treble",  {45, 42, 32, 20, 26, 35, 47, 51, 55, 57}},
+    {"Full Treble",         {15, 15, 15, 26, 36, 51, 59, 59, 59, 61}},
+    {"Laptop Speakers",     {38, 51, 40, 27, 30, 34, 38, 48, 55, 59}},
+    {"Large Hall",          {49, 49, 42, 42, 32, 26, 26, 26, 32, 32}},
+    {"Live",                {26, 32, 38, 42, 42, 42, 38, 35, 35, 34}},
+    {"Party",               {45, 45, 32, 32, 32, 32, 32, 32, 45, 45}},
+    {"Pop",                 {30, 38, 45, 47, 42, 32, 30, 30, 30, 30}},
+    {"Reggae",              {32, 32, 31, 23, 32, 41, 41, 32, 32, 32}},
+    {"Rock",                {45, 38, 24, 20, 28, 37, 47, 51, 51, 51}},
+    {"Ska",                 {29, 26, 26, 31, 37, 40, 47, 48, 51, 48}},
+    {"Soft",                {38, 34, 31, 29, 31, 38, 47, 49, 51, 53}},
+    {"Soft Rock",           {38, 38, 35, 31, 26, 28, 34, 38, 41, 47}},
+    {"Techno",              {45, 42, 32, 24, 26, 32, 45, 48, 48, 47}},
+};
+static const int numPresets = sizeof(builtinPresets) / sizeof(builtinPresets[0]);
+
 // Playlist Window
 class PlaylistWindow : public QWidget {
 public:
@@ -78,6 +118,33 @@ public:
     
     void followMain();
     void checkSnap();
+    
+    void saveSettings(QSettings &s) {
+        s.beginGroup("Playlist");
+        s.setValue("x", x());
+        s.setValue("y", y());
+        s.setValue("width", width());
+        s.setValue("height", height());
+        s.setValue("visible", isVisible());
+        s.setValue("tracks", tracks);
+        s.setValue("snapMode", snapMode);
+        s.endGroup();
+    }
+    
+    void loadSettings(QSettings &s) {
+        s.beginGroup("Playlist");
+        if (s.contains("x")) {
+            move(s.value("x").toInt(), s.value("y").toInt());
+        }
+        QStringList savedTracks = s.value("tracks").toStringList();
+        for (const QString &t : savedTracks) {
+            if (!t.isEmpty() && QFile::exists(t)) {
+                addTrack(t);
+            }
+        }
+        snapMode = s.value("snapMode", 0).toInt();
+        s.endGroup();
+    }
     
 protected:
     void paintEvent(QPaintEvent *) override {
@@ -206,6 +273,57 @@ public:
     void followMain();
     void checkSnap();
     
+    void showPresetsMenu(QPoint globalPos) {
+        QMenu menu;
+        menu.setStyleSheet(
+            "QMenu { background-color: #2b2b3d; color: #00ff00; border: 1px solid #555; font-size: 9pt; }"
+            "QMenu::item:selected { background-color: #0000c6; }"
+        );
+        for (int i = 0; i < numPresets; i++) {
+            QAction *action = menu.addAction(builtinPresets[i].name);
+            action->setData(i);
+        }
+        QAction *selected = menu.exec(globalPos);
+        if (selected) {
+            int idx = selected->data().toInt();
+            for (int i = 0; i < 10; i++) {
+                eqValues[i] = builtinPresets[idx].values[i];
+            }
+            update();
+        }
+    }
+    
+    void saveSettings(QSettings &s) {
+        s.beginGroup("Equalizer");
+        s.setValue("x", x());
+        s.setValue("y", y());
+        s.setValue("visible", isVisible());
+        s.setValue("enabled", eqEnabled);
+        s.setValue("auto", autoEnabled);
+        s.setValue("preamp", preampValue);
+        for (int i = 0; i < 10; i++) {
+            s.setValue(QString("band%1").arg(i), eqValues[i]);
+        }
+        s.setValue("snapped", isSnappedToMain);
+        s.endGroup();
+    }
+    
+    void loadSettings(QSettings &s) {
+        s.beginGroup("Equalizer");
+        if (s.contains("x")) {
+            move(s.value("x").toInt(), s.value("y").toInt());
+        }
+        eqEnabled = s.value("enabled", true).toBool();
+        autoEnabled = s.value("auto", false).toBool();
+        preampValue = s.value("preamp", 32).toInt();
+        for (int i = 0; i < 10; i++) {
+            eqValues[i] = s.value(QString("band%1").arg(i), 32).toInt();
+        }
+        isSnappedToMain = s.value("snapped", false).toBool();
+        s.endGroup();
+        update();
+    }
+    
 protected:
     void paintEvent(QPaintEvent *) override {
         QPainter p(this);
@@ -299,6 +417,12 @@ protected:
         if (x >= 39 && x < 72 && y >= 18 && y < 30) {
             autoEnabled = !autoEnabled;
             update();
+            return;
+        }
+        
+        // Presets button: (217,18)-(261,30)
+        if (x >= 217 && x < 261 && y >= 18 && y < 30) {
+            showPresetsMenu(mapToGlobal(QPoint(217, 30)));
             return;
         }
         
@@ -443,6 +567,9 @@ public:
         // Position windows: EQ below main, playlist below EQ
         playlistWindow->move(x(), y() + height() + 116);  // below EQ
         eqWindow->move(x(), y() + height());
+        
+        // Load saved settings (overrides defaults above)
+        loadAllSettings();
     }
     
     ~WinampWindow() {
@@ -867,6 +994,77 @@ protected:
         }
         if (y >= 89 && y <= 105 && x >= 136 && x < 158) return 5; // Eject
         return -1;
+    }
+    
+    void closeEvent(QCloseEvent *event) override {
+        saveAllSettings();
+        eqWindow->hide();
+        playlistWindow->hide();
+        QWidget::closeEvent(event);
+    }
+    
+    void saveAllSettings() {
+        QSettings s(configPath(), QSettings::IniFormat);
+        
+        s.beginGroup("MainWindow");
+        s.setValue("x", x());
+        s.setValue("y", y());
+        s.endGroup();
+        
+        s.beginGroup("Playback");
+        s.setValue("volume", volume);
+        s.setValue("shuffle", shuffleOn);
+        s.setValue("repeat", repeatOn);
+        s.setValue("eqVisible", eqBtnOn);
+        s.setValue("plVisible", plBtnOn);
+        if (!currentFile.isEmpty()) {
+            s.setValue("lastFile", currentFile);
+        }
+        s.endGroup();
+        
+        eqWindow->saveSettings(s);
+        playlistWindow->saveSettings(s);
+        
+        s.sync();
+    }
+    
+    void loadAllSettings() {
+        QString path = configPath();
+        if (!QFile::exists(path)) return;
+        
+        QSettings s(path, QSettings::IniFormat);
+        
+        s.beginGroup("MainWindow");
+        if (s.contains("x")) {
+            move(s.value("x").toInt(), s.value("y").toInt());
+        }
+        s.endGroup();
+        
+        s.beginGroup("Playback");
+        volume = s.value("volume", 200).toInt();
+        audioOutput->setVolume(volume / 255.0f);
+        shuffleOn = s.value("shuffle", false).toBool();
+        repeatOn = s.value("repeat", false).toBool();
+        eqBtnOn = s.value("eqVisible", false).toBool();
+        plBtnOn = s.value("plVisible", false).toBool();
+        QString lastFile = s.value("lastFile").toString();
+        if (!lastFile.isEmpty() && QFile::exists(lastFile)) {
+            currentFile = lastFile;
+        }
+        s.endGroup();
+        
+        eqWindow->loadSettings(s);
+        playlistWindow->loadSettings(s);
+        
+        // Position child windows relative to loaded main position
+        eqWindow->move(x(), y() + height());
+        playlistWindow->move(x(), y() + height() + 116);
+        
+        // Show/hide child windows based on saved state
+        if (eqBtnOn) eqWindow->show();
+        if (plBtnOn) playlistWindow->show();
+        
+        update();
     }
 
 private:
