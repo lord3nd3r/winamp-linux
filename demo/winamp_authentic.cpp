@@ -11,6 +11,8 @@
 #include <QVBoxLayout>
 #include <QPixmap>
 #include <QImage>
+#include <QIcon>
+#include <QFile>
 
 // Forward declaration
 class WinampWindow;
@@ -183,7 +185,7 @@ protected:
         isDragging = false;
     }
     
-    bool isSnapped() const { return isSnappedToMain; }
+    bool isSnapped() const { return snapMode > 0; }
     
 private:
     QListWidget *listWidget;
@@ -191,7 +193,7 @@ private:
     QPoint dragPosition;
     bool isDragging = false;
     WinampWindow *mainWindow = nullptr;
-    bool isSnappedToMain = false;
+    int snapMode = 0;  // 0=none, 1=right of main, 2=below EQ, 3=below main
 };
 
 // Equalizer Window
@@ -218,10 +220,11 @@ protected:
             return;
         }
         
-        // Fill with dark background first
-        p.fillRect(rect(), QColor(35, 36, 34));
+        // Draw base EQ background from rows 0-115 of Eqmain.bmp
+        // This contains the full EQ skin graphic (gradients, labels, borders)
+        p.drawPixmap(0, 0, bmp.eqmain, 0, 0, 275, 116);
         
-        // Titlebar: active at (0,134), inactive at (0,149), 275x14
+        // Overlay titlebar: active at (0,134), inactive at (0,149), 275x14
         int tbY = isActiveWindow() ? 134 : 149;
         p.drawPixmap(0, 0, bmp.eqmain, 0, tbY, 275, 14);
         
@@ -437,8 +440,8 @@ public:
         playlistWindow = new PlaylistWindow(this);
         eqWindow = new EqualizerWindow(this);
         
-        // Position windows
-        playlistWindow->move(x() + width(), y());
+        // Position windows: EQ below main, playlist below EQ
+        playlistWindow->move(x(), y() + height() + 116);  // below EQ
         eqWindow->move(x(), y() + height());
     }
     
@@ -894,18 +897,49 @@ void PlaylistWindow::checkSnap() {
     QSize mainSize = mainWindow->size();
     QPoint myPos = pos();
     
+    // Snap to right of main window
     if (qAbs(myPos.x() - (mainPos.x() + mainSize.width())) < snapDist &&
         qAbs(myPos.y() - mainPos.y()) < snapDist) {
         move(mainPos.x() + mainSize.width(), mainPos.y());
-        isSnappedToMain = true;
-    } else {
-        isSnappedToMain = false;
+        snapMode = 1;  // right of main
+        return;
     }
+    
+    // Snap below EQ (if EQ is visible and snapped below main)
+    // EQ is at main.y + main.height, so playlist goes at main.y + main.height + eq.height
+    int eqBottom = mainPos.y() + mainSize.height() + 116;  // EQ is 116px tall
+    if (qAbs(myPos.x() - mainPos.x()) < snapDist &&
+        qAbs(myPos.y() - eqBottom) < snapDist) {
+        move(mainPos.x(), eqBottom);
+        snapMode = 2;  // below EQ
+        return;
+    }
+    
+    // Snap below main window directly
+    if (qAbs(myPos.x() - mainPos.x()) < snapDist &&
+        qAbs(myPos.y() - (mainPos.y() + mainSize.height())) < snapDist) {
+        move(mainPos.x(), mainPos.y() + mainSize.height());
+        snapMode = 3;  // below main
+        return;
+    }
+    
+    snapMode = 0;
 }
 
 void PlaylistWindow::followMain() {
-    if (isSnappedToMain && mainWindow && isVisible()) {
-        move(mainWindow->pos().x() + mainWindow->width(), mainWindow->pos().y());
+    if (!mainWindow || !isVisible()) return;
+    QPoint mainPos = mainWindow->pos();
+    
+    switch (snapMode) {
+        case 1:  // right of main
+            move(mainPos.x() + mainWindow->width(), mainPos.y());
+            break;
+        case 2:  // below EQ
+            move(mainPos.x(), mainPos.y() + mainWindow->height() + 116);
+            break;
+        case 3:  // below main
+            move(mainPos.x(), mainPos.y() + mainWindow->height());
+            break;
     }
 }
 
@@ -958,6 +992,20 @@ int main(int argc, char *argv[]) {
         qWarning("Continuing with fallback rendered graphics...");
     } else {
         qInfo("Successfully loaded authentic Winamp bitmaps from: %s", qPrintable(usedPath));
+    }
+    
+    // Set application icon from original Winamp icon
+    QStringList iconSearchPaths = {
+        "/home/ender/winamp/Src/Winamp/resource",
+        "../../Src/Winamp/resource",
+        "../Src/Winamp/resource"
+    };
+    for (const QString &iconPath : iconSearchPaths) {
+        QString icoFile = iconPath + "/ICON1.ICO";
+        if (QFile::exists(icoFile)) {
+            app.setWindowIcon(QIcon(icoFile));
+            break;
+        }
     }
     
     WinampWindow window;
