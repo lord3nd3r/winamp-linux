@@ -179,6 +179,16 @@ All state saved to `~/.config/winamp/winamp.conf` (INI format) on exit, restored
 - **URL playback** — play remote streams via URL dialog
 - **Real-time audio buffer capture** for visualization (Int16 and Float sample formats)
 
+### Video
+
+- **Video playback** — QVideoWidget rendering within frameless window
+- **Supported formats**: MP4, AVI, MKV, MOV, WebM (all formats supported by Qt6 Multimedia + system codecs)
+- **Auto-show window** — video window appears automatically when video content is detected
+- **Logo display** — video_logo.bmp shown when no video is playing
+- **Fullscreen mode** — F key or double-click to toggle fullscreen
+- **Draggable window** — frameless window with custom drag
+- **Menu toggle** — show/hide via Windows → Video window
+
 ### Bitmap Assets Used
 
 | File | Size | Purpose |
@@ -236,7 +246,7 @@ Bitmap loading searches multiple fallback paths and merges missing assets from a
 
 - [ ] Media Library window — general purpose window using `gen.bmp` / `genex.bmp`
 - [ ] Mini-Browser window
-- [ ] Video playback — video window with `video.bmp` / `video_logo.bmp` skin
+- [x] Video playback — QVideoWidget-based video window with frameless draggable window, video_logo.bmp display when idle, auto-show on video content detection, fullscreen support (F/double-click)
 - [ ] Plugin architecture — input, output, DSP, general purpose, visualization plugin APIs
 - [x] Milkdrop visualization — projectM-powered with 274 presets, fullscreen, audio-reactive; launchable from Visualization menu
 - [x] Global hotkeys — MPRIS2 D-Bus integration for system-wide media key support (play/pause/next/prev/seek)

@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Multimedia OpenGL OpenGLWidgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Multimedia MultimediaWidgets OpenGL OpenGLWidgets)
 
 # Qt6 DBus for MPRIS2 media player desktop integration (optional)
 find_package(Qt6 COMPONENTS DBus QUIET)
@@ -28,6 +28,7 @@ target_link_libraries(winamp
     Qt6::Gui
     Qt6::Widgets
     Qt6::Multimedia
+    Qt6::MultimediaWidgets
     Qt6::OpenGL
     Qt6::OpenGLWidgets
     ${PROJECTM_LIB}
