@@ -2002,6 +2002,7 @@ private:
 
     void onModernSkinSelected(QListWidgetItem *item) {
         QString skinPath = item->data(Qt::UserRole).toString();
+        qDebug() << "ModernSkin: selected item" << item->text() << "path:" << skinPath;
         if (skinPath.isEmpty()) return;
 
         // If it's a .wal file, extract it first (ZIP archive)
@@ -2014,7 +2015,10 @@ private:
         }
 
         if (QFile::exists(skinPath + "/skin.xml")) {
+            qDebug() << "ModernSkin: emitting skinChanged for" << skinPath;
             emit skinChanged(skinPath);
+        } else {
+            qDebug() << "ModernSkin: skin.xml NOT found at" << skinPath + "/skin.xml";
         }
     }
 
@@ -2155,10 +2159,27 @@ public:
         valid = false;
 
         QString skinXml = skinDir + "/skin.xml";
-        if (!QFile::exists(skinXml)) return false;
+        if (!QFile::exists(skinXml)) {
+            qDebug() << "ModernSkin: skin.xml not found at" << skinXml;
+            return false;
+        }
 
+        qDebug() << "ModernSkin: parsing skin from" << skinDir;
         parseFile(skinXml);
+        qDebug() << "ModernSkin: parsed" << bitmapDefs.size() << "bitmap defs," << bitmapFonts.size() << "fonts";
         loadAllBitmaps();
+        qDebug() << "ModernSkin: loaded" << loadedBitmaps.size() << "bitmaps from" << imageCache.size() << "image files";
+        
+        // Debug: report any bitmap defs that failed to load
+        int missing = 0;
+        for (auto it = bitmapDefs.constBegin(); it != bitmapDefs.constEnd(); ++it) {
+            if (!loadedBitmaps.contains(it.key()) && !it.value().file.isEmpty()) {
+                if (missing < 10) qDebug() << "  MISSING:" << it.key() << "file:" << it.value().file;
+                missing++;
+            }
+        }
+        if (missing > 10) qDebug() << "  ... and" << (missing - 10) << "more missing";
+        
         valid = !loadedBitmaps.isEmpty();
         return valid;
     }
@@ -2174,6 +2195,80 @@ public:
     bool isValid() const { return valid; }
     QString getSkinName() const { return skinName; }
 
+    // Map a character to (x, y) source coordinates in a bitmap font image.
+    // Follows the Wasabi BitmapFont::getXYfromChar layout:
+    //   Row 0: A-Z (pos 0-25), " (26), @ (27), space (30)
+    //   Row 1: 0-9 (pos 0-9), \1 (10), . (11), : (12), ( (13), ) (14),
+    //          - (15), ' (16), ! (17), _ (18), + (19), \ (20), / (21),
+    //          [ (22), ] (23), ~ (24), & (25), % (26), , (27), = (28),
+    //          $ (29), # (30)
+    //   Row 2: ? (3), * (4)
+    static void getXYfromChar(QChar qch, int charWidth, int charHeight, int *outX, int *outY) {
+        int c = 30; // default = space position
+        int row = 0;
+        wchar_t ic = qch.unicode();
+
+        // Accent folding (subset matching Wasabi)
+        switch (ic) {
+            case 0x00B0: ic = L'0'; break;
+            case 0x00C6: case 0x00C1: case 0x00C2: ic = L'A'; break;
+            case 0x00C7: ic = L'C'; break;
+            case 0x00C9: ic = L'E'; break;
+            case 0x00D1: ic = L'N'; break;
+            case 0x00E0: case 0x00E1: case 0x00E2: case 0x00E6: ic = L'a'; break;
+            case 0x00E7: ic = L'c'; break;
+            case 0x00E8: case 0x00E9: case 0x00EA: case 0x00EB: ic = L'e'; break;
+            case 0x00EC: case 0x00ED: case 0x00EE: case 0x00EF: ic = L'i'; break;
+            case 0x00F1: ic = L'n'; break;
+            case 0x00F2: case 0x00F3: case 0x00F4: ic = L'o'; break;
+            case 0x00F9: case 0x00FA: case 0x00FB: case 0x00FC: ic = L'u'; break;
+            case 0x00FD: ic = L'y'; break;
+            case 0x00DC: ic = L'U'; break;
+            case 0x0192: ic = L'f'; break;
+            default: break;
+        }
+
+        if (ic >= L'A' && ic <= L'Z') {
+            c = ic - L'A'; row = 0;
+        } else if (ic >= L'a' && ic <= L'z') {
+            c = ic - L'a'; row = 0;
+        } else if (ic == L' ') {
+            c = 30; row = 0;
+        } else if (ic == L'"') {
+            c = 26; row = 0;
+        } else if (ic == L'@') {
+            c = 27; row = 0;
+        } else if (ic >= L'0' && ic <= L'9') {
+            c = ic - L'0'; row = 1;
+        } else if (ic == L'\1') { c = 10; row = 1; }
+        else if (ic == L'.') { c = 11; row = 1; }
+        else if (ic == L':') { c = 12; row = 1; }
+        else if (ic == L'(') { c = 13; row = 1; }
+        else if (ic == L')') { c = 14; row = 1; }
+        else if (ic == L'-') { c = 15; row = 1; }
+        else if (ic == L'\'' || ic == L'`') { c = 16; row = 1; }
+        else if (ic == L'!') { c = 17; row = 1; }
+        else if (ic == L'_') { c = 18; row = 1; }
+        else if (ic == L'+') { c = 19; row = 1; }
+        else if (ic == L'\\') { c = 20; row = 1; }
+        else if (ic == L'/') { c = 21; row = 1; }
+        else if (ic == L'[' || ic == L'{' || ic == L'<') { c = 22; row = 1; }
+        else if (ic == L']' || ic == L'}' || ic == L'>') { c = 23; row = 1; }
+        else if (ic == L'~' || ic == L'^') { c = 24; row = 1; }
+        else if (ic == L'&') { c = 25; row = 1; }
+        else if (ic == L'%') { c = 26; row = 1; }
+        else if (ic == L',') { c = 27; row = 1; }
+        else if (ic == L'=') { c = 28; row = 1; }
+        else if (ic == L'$') { c = 29; row = 1; }
+        else if (ic == L'#') { c = 30; row = 1; }
+        else if (ic == L'?') { c = 3; row = 2; }
+        else if (ic == L'*') { c = 4; row = 2; }
+        else { c = 30; row = 0; } // fallback to space
+
+        *outX = c * charWidth;
+        *outY = row * charHeight;
+    }
+
     // Draw text using a skin bitmap font (e.g. player.BIGNUM, player.songticker.font)
     void drawBitmapText(QPainter &p, const QString &fontId, const QString &text,
                         int x, int y, int maxWidth = -1) const {
@@ -2184,19 +2279,19 @@ public:
         QPixmap fontBitmap = getBitmap(font.bitmapId);
         if (fontBitmap.isNull()) return;
 
-        int charsPerRow = fontBitmap.width() / qMax(1, font.charWidth);
         int cx = x;
 
         for (const QChar &ch : text) {
-            int charIndex = ch.unicode() - 32; // ASCII printable starts at space (32)
-            if (charIndex < 0 || charIndex >= 96) charIndex = 0; // fallback to space
-
-            int srcX = (charIndex % charsPerRow) * font.charWidth;
-            int srcY = (charIndex / charsPerRow) * font.charHeight;
+            int srcX, srcY;
+            getXYfromChar(ch, font.charWidth, font.charHeight, &srcX, &srcY);
 
             if (maxWidth > 0 && (cx - x + font.charWidth) > maxWidth) break;
 
-            p.drawPixmap(cx, y, fontBitmap, srcX, srcY, font.charWidth, font.charHeight);
+            // Bounds check against bitmap dimensions
+            if (srcX + font.charWidth <= fontBitmap.width() &&
+                srcY + font.charHeight <= fontBitmap.height()) {
+                p.drawPixmap(cx, y, fontBitmap, srcX, srcY, font.charWidth, font.charHeight);
+            }
             cx += font.charWidth + font.hSpacing;
         }
     }
@@ -2365,6 +2460,10 @@ static bool isModernSkinDir(const QString &path) {
     return QFile::exists(path + "/skin.xml");
 }
 
+// Global modern skin state (accessible to playlist/EQ windows before WinampWindow is fully defined)
+static bool g_isModernSkin = false;
+static ModernSkinEngine *g_modernSkin = nullptr;
+
 // Config file path helper
 static QString configPath() {
     QString dir = QDir::homePath() + "/.config/winamp";
@@ -2509,6 +2608,7 @@ protected:
 private:
     void updateTotalTimeDisplay();
     void updateListGeometry();
+    void paintModernPlaylist(QPainter &p);
     void drawText(QPainter &painter, const QString &text, int x, int y);
     QPoint getTextCharPos(QChar ch);
     void showAddMenu(QPoint globalPos);
@@ -2743,6 +2843,11 @@ protected:
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing, false);
         
+        if (g_isModernSkin && g_modernSkin) {
+            paintModernEQ(p);
+            return;
+        }
+        
         auto &bmp = WinampBitmaps::instance();
         if (bmp.eqmain.isNull()) {
             p.fillRect(rect(), QColor(66, 66, 99));
@@ -2875,10 +2980,251 @@ protected:
         p.drawPixmap(destX + 1, thumbY, bmp.eqmain, 0, 164, 11, 11);
     }
     
+    void paintModernEQ(QPainter &p) {
+        auto &ms = *g_modernSkin;
+        int w = width();
+        int h = height();
+        
+        // ---- Base texture fill ----
+        QPixmap baseTex = ms.getBitmap("wasabi.frame.basetexture");
+        if (!baseTex.isNull()) {
+            for (int ty = 0; ty < h; ty += baseTex.height())
+                for (int tx = 0; tx < w; tx += baseTex.width())
+                    p.drawPixmap(tx, ty, baseTex);
+        } else {
+            p.fillRect(0, 0, w, h, QColor(43, 45, 61));
+        }
+        
+        // ---- Titlebar (18px) ----
+        QPixmap tbLeft = ms.getBitmap("wasabi.frame.top.left");
+        QPixmap tbCenter = ms.getBitmap("wasabi.frame.top");
+        QPixmap tbRight = ms.getBitmap("wasabi.frame.top.right");
+        
+        if (!tbLeft.isNull()) p.drawPixmap(0, 0, tbLeft);
+        if (!tbCenter.isNull()) {
+            for (int tx = tbLeft.width(); tx < w - tbRight.width(); tx += tbCenter.width()) {
+                int tw = qMin(tbCenter.width(), w - tbRight.width() - tx);
+                p.drawPixmap(tx, 0, tbCenter, 0, 0, tw, tbCenter.height());
+            }
+        }
+        if (!tbRight.isNull()) p.drawPixmap(w - tbRight.width(), 0, tbRight);
+        
+        // Titlebar text background
+        QPixmap tbTextLeft = ms.getBitmap(isActiveWindow() ?
+            "wasabi.titlebar.left.active" : "wasabi.titlebar.left.inactive");
+        QPixmap tbTextCenter = ms.getBitmap(isActiveWindow() ?
+            "wasabi.titlebar.center.active" : "wasabi.titlebar.center.inactive");
+        QPixmap tbTextRight = ms.getBitmap(isActiveWindow() ?
+            "wasabi.titlebar.right.active" : "wasabi.titlebar.right.inactive");
+        
+        if (!tbTextLeft.isNull()) p.drawPixmap(10, 5, tbTextLeft);
+        if (!tbTextCenter.isNull()) {
+            for (int tx = 20; tx < w - 55; tx += tbTextCenter.width()) {
+                int tw = qMin(tbTextCenter.width(), w - 55 - tx);
+                p.drawPixmap(tx, 5, tbTextCenter, 0, 0, tw, tbTextCenter.height());
+            }
+        }
+        if (!tbTextRight.isNull()) p.drawPixmap(w - 55, 5, tbTextRight);
+        
+        // Title text
+        p.setPen(QColor(200, 200, 220));
+        p.setFont(QFont("Arial", 7, QFont::Bold));
+        p.drawText(15, 14, "EQUALIZER");
+        
+        // Close button
+        QPixmap closeBg = ms.getBitmap("wasabi.button.bg.title");
+        QPixmap closeBtn = ms.getBitmap("wasabi.button.exit");
+        if (!closeBg.isNull()) p.drawPixmap(w - 18, 4, closeBg);
+        if (!closeBtn.isNull()) p.drawPixmap(w - 17, 4, closeBtn);
+        
+        // ---- EQ content area ----
+        // Center the 318px-wide EQ content in the window
+        const int cx = (w - 318) / 2;  // content X offset (centered)
+        const int cy = 18;              // content Y offset (below titlebar)
+        
+        // EQ drawer background (318x89)
+        QPixmap eqBg = ms.getBitmap("drawer.eq.bg");
+        // Fill the content area below titlebar with dark bg
+        p.fillRect(6, cy, w - 12, 89, QColor(27, 28, 40));
+        if (!eqBg.isNull()) {
+            p.drawPixmap(cx, cy, eqBg);
+        }
+        
+        // Text overlays
+        QPixmap txtDark = ms.getBitmap("drawer.eq.txtoverlay.dark");
+        QPixmap txtBright = ms.getBitmap("drawer.eq.txtoverlay.bright");
+        if (!txtDark.isNull()) p.drawPixmap(cx, cy, txtDark);
+        if (!txtBright.isNull()) p.drawPixmap(cx, cy + 82, txtBright);
+        
+        // Frequency labels (ISO band names at bottom)
+        QPixmap labelIso = ms.getBitmap("drawer.eq.label.iso");
+        if (!labelIso.isNull()) {
+            p.drawPixmap(cx + 135, cy + 82, labelIso);
+        }
+        
+        // Side borders
+        QPixmap plL = ms.getBitmap("player.pl.left");
+        QPixmap plR = ms.getBitmap("player.pl.right");
+        for (int by = cy; by < h - 6; by += 5) {
+            int bh = qMin(5, h - 6 - by);
+            if (!plL.isNull()) p.drawPixmap(0, by, plL, 0, 0, 6, bh);
+            if (!plR.isNull()) p.drawPixmap(w - 6, by, plR, 0, 0, 6, bh);
+        }
+        
+        // Bottom border
+        QPixmap plBC = ms.getBitmap("player.pl.bottomcenter");
+        if (!plBC.isNull()) {
+            for (int tx = 6; tx < w - 6; tx += plBC.width()) {
+                int tw = qMin(plBC.width(), w - 6 - tx);
+                p.drawPixmap(tx, h - 6, plBC, 0, 0, tw, 6);
+            }
+        }
+        
+        // ---- EQ Sliders (positions from configdrawer.xml) ----
+        // All sliders: w=13, h=80, y=1 (relative to content)
+        // Preamp at x=82; bands at x=134,152,170,188,206,224,242,260,278,296
+        const int sliderW = 13;
+        const int sliderH = 80;
+        const int sliderRelY = 1;
+        const int preampX = 82;
+        const int bandStartX = 134;
+        const int bandSpacing = 18;
+        
+        QPixmap thumb = ms.getBitmap("player.main.eq.button");
+        QPixmap thumbHover = ms.getBitmap("player.main.eq.button.hover");
+        int thumbH = thumb.isNull() ? 11 : thumb.height(); // 23px
+        int thumbW = thumb.isNull() ? 13 : thumb.width();   // 13px
+        
+        auto drawSlider = [&](int sliderIdx, int relX) {
+            int pos = (sliderIdx == 0) ? preampValue : eqValues[sliderIdx - 1];
+            int absX = cx + relX;
+            int absY = cy + sliderRelY;
+            
+            // Groove line
+            int grooveCX = absX + sliderW / 2;
+            p.setPen(QColor(20, 21, 35, 120));
+            p.drawLine(grooveCX, absY, grooveCX, absY + sliderH);
+            
+            // Thumb position: pos 63=top, 0=bottom
+            int travel = sliderH - thumbH;
+            int thumbY = absY + travel - (pos * travel) / 63;
+            
+            if (!thumb.isNull()) {
+                p.drawPixmap(absX, thumbY, thumb);
+            } else {
+                // Fallback thumb
+                p.setPen(QColor(80, 85, 120));
+                p.setBrush(QColor(55, 58, 80));
+                p.drawRoundedRect(absX, thumbY, 13, 11, 2, 2);
+                p.setBrush(Qt::NoBrush);
+            }
+        };
+        
+        // Preamp slider
+        drawSlider(0, preampX);
+        
+        // 10 band sliders
+        for (int i = 0; i < 10; i++) {
+            drawSlider(i + 1, bandStartX + i * bandSpacing);
+        }
+        
+        // ---- ON / AUTO / PRESETS buttons (from configdrawer.xml) ----
+        // ON at (16, 47), AUTO at (16, 61), PRESETS at (16, 75) relative to content
+        QPixmap onBtn = ms.getBitmap("drawer.eq.button.on");
+        QPixmap autoBtn = ms.getBitmap("drawer.eq.button.auto");
+        QPixmap presetsBtn = ms.getBitmap("drawer.eq.button.presets");
+        
+        if (!onBtn.isNull()) {
+            p.drawPixmap(cx + 16, cy + 47, onBtn);
+        } else {
+            p.setPen(QColor(160, 160, 180));
+            p.setFont(QFont("Arial", 6, QFont::Bold));
+            p.drawText(cx + 16, cy + 54, "ON");
+        }
+        // ON LED indicator
+        p.setPen(Qt::NoPen);
+        p.setBrush(eqEnabled ? QColor(0, 220, 0) : QColor(50, 50, 70));
+        p.drawEllipse(cx + 36, cy + 46, 5, 5);
+        p.setBrush(Qt::NoBrush);
+        
+        if (!autoBtn.isNull()) {
+            p.drawPixmap(cx + 16, cy + 61, autoBtn);
+        } else {
+            p.setPen(QColor(160, 160, 180));
+            p.setFont(QFont("Arial", 6, QFont::Bold));
+            p.drawText(cx + 16, cy + 68, "AUTO");
+        }
+        // AUTO LED indicator
+        p.setPen(Qt::NoPen);
+        p.setBrush(autoEnabled ? QColor(0, 220, 0) : QColor(50, 50, 70));
+        p.drawEllipse(cx + 49, cy + 60, 5, 5);
+        p.setBrush(Qt::NoBrush);
+        
+        if (!presetsBtn.isNull()) {
+            p.drawPixmap(cx + 16, cy + 75, presetsBtn);
+        } else {
+            p.setPen(QColor(160, 160, 180));
+            p.setFont(QFont("Arial", 6, QFont::Bold));
+            p.drawText(cx + 16, cy + 82, "PRESETS");
+        }
+        
+        // ---- EQ scale labels (+12, 0, -12) at x=104 ----
+        p.setPen(QColor(140, 140, 160));
+        p.setFont(QFont("Arial", 5));
+        p.drawText(cx + 104, cy + 12, "+12");
+        p.drawText(cx + 109, cy + 40, "0");
+        p.drawText(cx + 104, cy + 72, "-12");
+    }
+    
     void mousePressEvent(QMouseEvent *event) override {
         int x = event->pos().x();
         int y = event->pos().y();
         
+        if (g_isModernSkin && g_modernSkin) {
+            // Modern skin layout
+            int tbH = 18;
+            // Titlebar
+            if (y < tbH) {
+                if (x >= width() - 18) { hide(); return; }
+                isDragging = true;
+                dragPosition = event->globalPosition().toPoint() - frameGeometry().topLeft();
+                return;
+            }
+            // Content offset: center 318px EQ in window
+            const int cx = (width() - 318) / 2, cy = 18;
+            int rx = x - cx, ry = y - cy; // relative to content
+            
+            // ON button: rel (16,47) size 20x9
+            if (rx >= 16 && rx < 36 && ry >= 47 && ry < 56) {
+                eqEnabled = !eqEnabled; update(); return;
+            }
+            // AUTO button: rel (16,61) size 33x9
+            if (rx >= 16 && rx < 49 && ry >= 61 && ry < 70) {
+                autoEnabled = !autoEnabled; update(); return;
+            }
+            // PRESETS button: rel (16,75) size 49x9
+            if (rx >= 16 && rx < 65 && ry >= 75 && ry < 84) {
+                showPresetsMenu(mapToGlobal(QPoint(cx + 16, cy + 84))); return;
+            }
+            // Slider dragging - sliders: h=80, y=1 relative to content
+            // Preamp at relX=82, bands at 134+i*18, width=13
+            if (ry >= 1 && ry <= 81) {
+                if (rx >= 82 && rx < 95) {
+                    draggingSlider = 0;
+                    updateSliderFromY(y); return;
+                }
+                for (int i = 0; i < 10; i++) {
+                    int sx = 134 + i * 18;
+                    if (rx >= sx && rx < sx + 13) {
+                        draggingSlider = i + 1;
+                        updateSliderFromY(y); return;
+                    }
+                }
+            }
+            return;
+        }
+        
+        // Classic skin layout
         // Title bar
         if (y < 14) {
             if (x >= 264) { hide(); return; }
@@ -2927,6 +3273,20 @@ protected:
     }
     
     void updateSliderFromY(int y) {
+        if (g_isModernSkin) {
+            // Modern: sliders at cy+1 to cy+81, thumb 23px tall, travel = 80-23 = 57
+            const int cy = 18;
+            const int sliderTop = cy + 1;
+            const int sliderH = 80;
+            const int thumbH = 23;
+            int travel = sliderH - thumbH;
+            int pos = 63 - ((y - sliderTop) * 63) / travel;
+            pos = qBound(0, pos, 63);
+            if (draggingSlider == 0) preampValue = pos;
+            else eqValues[draggingSlider - 1] = pos;
+            update();
+            return;
+        }
         int pos = 63 - ((y - 38) * 63) / 52;
         if (pos < 0) pos = 0;
         if (pos > 63) pos = 63;
@@ -2954,8 +3314,9 @@ protected:
     
     void mouseDoubleClickEvent(QMouseEvent *event) override {
         // Double-click on titlebar toggles shade mode
-        if (event->pos().y() < 14) {
-            toggleShadeMode();
+        int tbH = (g_isModernSkin) ? 18 : 14;
+        if (event->pos().y() < tbH) {
+            if (!g_isModernSkin) toggleShadeMode();
             return;
         }
         QWidget::mouseDoubleClickEvent(event);
@@ -3082,29 +3443,54 @@ PlaylistWindow::PlaylistWindow(WinampWindow *parent) : QWidget(nullptr), mainWin
 }
 
 void PlaylistWindow::applyPlaylistColors() {
-    listWidget->setStyleSheet(
-        QString("QListWidget {"
-        "  background-color: %1;"
-        "  color: %2;"
-        "  border: none;"
-        "  font-family: 'Courier New', 'Courier';"
-        "  font-size: %3pt;"
-        "  selection-background-color: %4;"
-        "  selection-color: %5;"
-        "}"
-        "QListWidget::item {"
-        "  padding: 0px;"
-        "}")
-        .arg(g_plColors.normBg.name())
-        .arg(g_plColors.normal.name())
-        .arg(playlistFontSize)
-        .arg(g_plColors.selectBg.name())
-        .arg(g_plColors.current.name())
-    );
+    if (g_isModernSkin) {
+        listWidget->setStyleSheet(
+            QString("QListWidget {"
+            "  background-color: #1b1c28;"
+            "  color: #c0c0d0;"
+            "  border: none;"
+            "  font-family: 'Arial', 'Helvetica';"
+            "  font-size: 8pt;"
+            "  selection-background-color: #3a3b52;"
+            "  selection-color: #ffffff;"
+            "}"
+            "QListWidget::item {"
+            "  padding: 1px 2px;"
+            "}"
+            "QListWidget::item:hover {"
+            "  background-color: #2a2b3e;"
+            "}")
+        );
+    } else {
+        listWidget->setStyleSheet(
+            QString("QListWidget {"
+            "  background-color: %1;"
+            "  color: %2;"
+            "  border: none;"
+            "  font-family: 'Courier New', 'Courier';"
+            "  font-size: %3pt;"
+            "  selection-background-color: %4;"
+            "  selection-color: %5;"
+            "}"
+            "QListWidget::item {"
+            "  padding: 0px;"
+            "}")
+            .arg(g_plColors.normBg.name())
+            .arg(g_plColors.normal.name())
+            .arg(playlistFontSize)
+            .arg(g_plColors.selectBg.name())
+            .arg(g_plColors.current.name())
+        );
+    }
 }
 
 void PlaylistWindow::updateListGeometry() {
-    listWidget->setGeometry(12, 20, width() - 12 - 20, height() - 20 - 38);
+    if (g_isModernSkin) {
+        // Modern skin: 6px side borders, ~22px top (titlebar 18 + border 5 - 1), 35px bottom (buttons)
+        listWidget->setGeometry(6, 22, width() - 12, height() - 22 - 35);
+    } else {
+        listWidget->setGeometry(12, 20, width() - 12 - 20, height() - 20 - 38);
+    }
 }
 
 void PlaylistWindow::resizeEvent(QResizeEvent *event) {
@@ -3493,6 +3879,12 @@ void PlaylistWindow::paintEvent(QPaintEvent *event) {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, false);
     
+    // ---- Modern skin mode ----
+    if (g_isModernSkin && g_modernSkin) {
+        paintModernPlaylist(painter);
+        return;
+    }
+    
     auto &bmp = WinampBitmaps::instance();
     int w = width();
     int h = height();
@@ -3597,6 +3989,148 @@ void PlaylistWindow::paintEvent(QPaintEvent *event) {
     
     // LIST/FILE button at x=width-44 - show "load" normal state
     painter.drawPixmap(w - 44, btnY, bmp.pledit, 204, 149, 22, 18);
+}
+
+void PlaylistWindow::paintModernPlaylist(QPainter &p) {
+    auto &ms = *g_modernSkin;
+    int w = width();
+    int h = height();
+    
+    // ---- Base texture fill ----
+    QPixmap baseTex = ms.getBitmap("wasabi.frame.basetexture");
+    if (!baseTex.isNull()) {
+        for (int ty = 0; ty < h; ty += baseTex.height())
+            for (int tx = 0; tx < w; tx += baseTex.width())
+                p.drawPixmap(tx, ty, baseTex);
+    } else {
+        p.fillRect(0, 0, w, h, QColor(43, 45, 61));
+    }
+    
+    // ---- Titlebar (18px) ----
+    QPixmap tbLeft = ms.getBitmap("wasabi.frame.top.left");
+    QPixmap tbCenter = ms.getBitmap("wasabi.frame.top");
+    QPixmap tbRight = ms.getBitmap("wasabi.frame.top.right");
+    
+    if (!tbLeft.isNull()) p.drawPixmap(0, 0, tbLeft);
+    if (!tbCenter.isNull()) {
+        for (int tx = 10; tx < w - 10; tx += tbCenter.width()) {
+            int tw = qMin(tbCenter.width(), w - 10 - tx);
+            p.drawPixmap(tx, 0, tbCenter, 0, 0, tw, 18);
+        }
+    }
+    if (!tbRight.isNull()) p.drawPixmap(w - 10, 0, tbRight);
+    
+    // Titlebar text background
+    QPixmap tbTextLeft = ms.getBitmap(isActiveWindow() ?
+        "wasabi.titlebar.left.active" : "wasabi.titlebar.left.inactive");
+    QPixmap tbTextCenter = ms.getBitmap(isActiveWindow() ?
+        "wasabi.titlebar.center.active" : "wasabi.titlebar.center.inactive");
+    QPixmap tbTextRight = ms.getBitmap(isActiveWindow() ?
+        "wasabi.titlebar.right.active" : "wasabi.titlebar.right.inactive");
+    
+    if (!tbTextLeft.isNull()) p.drawPixmap(10, 5, tbTextLeft);
+    if (!tbTextCenter.isNull()) {
+        for (int tx = 20; tx < w - 55; tx += tbTextCenter.width()) {
+            int tw = qMin(tbTextCenter.width(), w - 55 - tx);
+            p.drawPixmap(tx, 5, tbTextCenter, 0, 0, tw, tbTextCenter.height());
+        }
+    }
+    if (!tbTextRight.isNull()) p.drawPixmap(w - 55, 5, tbTextRight);
+    
+    // Title text
+    p.setPen(QColor(200, 200, 220));
+    p.setFont(QFont("Arial", 7, QFont::Bold));
+    p.drawText(15, 14, "PLAYLIST EDITOR");
+    
+    // Close button
+    QPixmap closeBg = ms.getBitmap("wasabi.button.bg.title");
+    QPixmap closeBtn = ms.getBitmap("wasabi.button.exit");
+    if (!closeBg.isNull()) p.drawPixmap(w - 18, 4, closeBg);
+    if (!closeBtn.isNull()) p.drawPixmap(w - 17, 4, closeBtn);
+    
+    // ---- Playlist content area frame ----
+    int fy = 18; // below titlebar
+    int fh = h - 18; // rest of the window
+    
+    // Frame borders from player.pl.* bitmaps
+    QPixmap plTL = ms.getBitmap("player.pl.topleft");       // 6x5
+    QPixmap plTC = ms.getBitmap("player.pl.topcenter");     // 10x5
+    QPixmap plTR = ms.getBitmap("player.pl.topright");      // 6x5
+    QPixmap plL = ms.getBitmap("player.pl.left");           // 6x5
+    QPixmap plR = ms.getBitmap("player.pl.right");          // 6x5
+    QPixmap plBL = ms.getBitmap("player.pl.bottomleft");    // 20x67
+    QPixmap plBR = ms.getBitmap("player.pl.bottomright");   // 20x67
+    QPixmap plBC = ms.getBitmap("player.pl.bottomcenter");  // 10x25
+    
+    // Top border
+    if (!plTL.isNull()) p.drawPixmap(0, fy, plTL);
+    if (!plTC.isNull()) {
+        for (int tx = 6; tx < w - 6; tx += plTC.width()) {
+            int tw = qMin(plTC.width(), w - 6 - tx);
+            p.drawPixmap(tx, fy, plTC, 0, 0, tw, plTC.height());
+        }
+    }
+    if (!plTR.isNull()) p.drawPixmap(w - 6, fy, plTR);
+    
+    // Side borders
+    int borderTop = fy + 5;
+    int borderBottom = h - 67; // bottom corners are 67px tall
+    for (int by = borderTop; by < borderBottom; by += 5) {
+        int bh = qMin(5, borderBottom - by);
+        if (!plL.isNull()) p.drawPixmap(0, by, plL, 0, 0, 6, bh);
+        if (!plR.isNull()) p.drawPixmap(w - 6, by, plR, 0, 0, 6, bh);
+    }
+    
+    // Body fill
+    p.fillRect(6, borderTop, w - 12, borderBottom - borderTop, QColor(27, 28, 40));
+    
+    // Bottom corners and center
+    if (!plBL.isNull()) p.drawPixmap(0, h - 67, plBL);
+    if (!plBR.isNull()) p.drawPixmap(w - 20, h - 67, plBR);
+    if (!plBC.isNull()) {
+        for (int tx = 20; tx < w - 20; tx += plBC.width()) {
+            int tw = qMin(plBC.width(), w - 20 - tx);
+            p.drawPixmap(tx, h - 25, plBC, 0, 0, tw, plBC.height());
+        }
+    }
+    // Fill area between bottom corners above bottom center strip
+    p.fillRect(20, h - 67, w - 40, 42, QColor(27, 28, 40));
+    
+    // ---- Bottom buttons ----
+    int btnY = h - 23;
+    
+    // Button backgrounds and images
+    auto drawPlBtn = [&](const QString &bgId, const QString &btnId, int bx, int by) {
+        QPixmap bg = ms.getBitmap(bgId);
+        QPixmap btn = ms.getBitmap(btnId);
+        if (!bg.isNull()) p.drawPixmap(bx, by, bg);
+        if (!btn.isNull()) p.drawPixmap(bx + 3, by + 4, btn);
+    };
+    
+    drawPlBtn("player.pl.button.add.bg", "player.pl.button.add", 5, btnY);
+    drawPlBtn("player.pl.button.rem.bg", "player.pl.button.rem", 48, btnY);
+    drawPlBtn("player.pl.button.sel.bg", "player.pl.button.sel", 93, btnY);
+    drawPlBtn("player.pl.button.misc.bg", "player.pl.button.misc", 132, btnY);
+    
+    // List button (right-aligned)
+    QPixmap listBg = ms.getBitmap("player.pl.button.list.bg");
+    QPixmap listBtn = ms.getBitmap("player.pl.button.list");
+    if (!listBg.isNull()) p.drawPixmap(w - 115, btnY, listBg);
+    if (!listBtn.isNull()) p.drawPixmap(w - 112, btnY + 4, listBtn);
+    
+    // Time display
+    QPixmap timeBg = ms.getBitmap("player.pl.time");
+    if (!timeBg.isNull()) p.drawPixmap(w - 62, btnY - 2, timeBg);
+    
+    // Total time text
+    if (!totalTimeStr.isEmpty()) {
+        ms.drawBitmapText(p, "player.pe.time.font", totalTimeStr.toUpper(),
+                         w - 55, btnY + 5, 55);
+    }
+    
+    // Resizer
+    QPixmap resizer = ms.getBitmap("player.pl.resizer");
+    if (!resizer.isNull()) p.drawPixmap(w - 24, btnY + 4, resizer);
 }
 
 void PlaylistWindow::drawText(QPainter &painter, const QString &text, int x, int y) {
@@ -5658,6 +6192,8 @@ public slots:
         if (isModernSkinDir(skinPath)) {
             if (modernSkin.loadSkin(skinPath)) {
                 isModernSkin = true;
+                g_isModernSkin = true;
+                g_modernSkin = &modernSkin;
                 // Remove fixed size constraint, allow resizing
                 setMinimumSize(0, 0);
                 setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
@@ -5670,6 +6206,8 @@ public slots:
         } else {
             // Classic skin
             isModernSkin = false;
+            g_isModernSkin = false;
+            g_modernSkin = nullptr;
             WinampBitmaps::instance().loadAll(skinPath);
             g_plColors = parsePleditTxt(skinPath);
             
@@ -5700,6 +6238,17 @@ public slots:
         update();
         playlistWindow->applyPlaylistColors();
         playlistWindow->update();
+        if (g_isModernSkin) {
+            // Modern EQ: match main window width (354), height=18+89+6=113
+            eqWindow->setMinimumSize(0, 0);
+            eqWindow->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+            eqWindow->setFixedSize(354, 113);
+            // Match playlist width to main window
+            playlistWindow->setMinimumSize(275, 116);
+            playlistWindow->resize(354, playlistWindow->height());
+        } else {
+            eqWindow->setFixedSize(275, 116);
+        }
         eqWindow->update();
 
         QSettings s(configPath(), QSettings::IniFormat);
@@ -8086,7 +8635,8 @@ void PlaylistWindow::checkSnap() {
     
     // Snap below EQ (if EQ is visible and snapped below main)
     // EQ is at main.y + main.height, so playlist goes at main.y + main.height + eq.height
-    int eqBottom = mainPos.y() + mainSize.height() + 116;  // EQ is 116px tall
+    int eqH = g_isModernSkin ? 113 : 116;
+    int eqBottom = mainPos.y() + mainSize.height() + eqH;
     if (qAbs(myPos.x() - mainPos.x()) < snapDist &&
         qAbs(myPos.y() - eqBottom) < snapDist) {
         move(mainPos.x(), eqBottom);
@@ -8114,8 +8664,11 @@ void PlaylistWindow::followMain() {
             move(mainPos.x() + mainWindow->width(), mainPos.y());
             break;
         case 2:  // below EQ
-            move(mainPos.x(), mainPos.y() + mainWindow->height() + 116);
+        {
+            int eqH = g_isModernSkin ? 113 : 116;
+            move(mainPos.x(), mainPos.y() + mainWindow->height() + eqH);
             break;
+        }
         case 3:  // below main
             move(mainPos.x(), mainPos.y() + mainWindow->height());
             break;
@@ -8131,6 +8684,7 @@ void EqualizerWindow::checkSnap() {
     QSize mainSize = mainWindow->size();
     QPoint myPos = pos();
     
+    // Snap below main, aligned to left edge
     if (qAbs(myPos.x() - mainPos.x()) < snapDist &&
         qAbs(myPos.y() - (mainPos.y() + mainSize.height())) < snapDist) {
         move(mainPos.x(), mainPos.y() + mainSize.height());
