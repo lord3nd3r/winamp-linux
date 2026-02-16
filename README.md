@@ -185,7 +185,8 @@ All state saved to `~/.config/winamp/winamp.conf` (INI format) on exit, restored
 - **Supported formats**: MP4, AVI, MKV, MOV, WebM (all formats supported by Qt6 Multimedia + system codecs)
 - **Auto-show window** — video window appears automatically when video content is detected
 - **Logo display** — video_logo.bmp shown when no video is playing
-- **Fullscreen mode** — F key or double-click to toggle fullscreen
+- **Fullscreen mode** — F key or double-click to toggle fullscreen; hides main/EQ/playlist windows
+- **Resizable** — drag all 8 edges and corners to resize (minimum 160x120)
 - **Draggable window** — frameless window with custom drag
 - **Menu toggle** — show/hide via Windows → Video window
 
