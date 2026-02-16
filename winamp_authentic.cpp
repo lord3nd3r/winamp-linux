@@ -2,6 +2,7 @@
 #include <QWidget>
 #include <QPainter>
 #include <QMediaPlayer>
+#include <QMediaMetaData>
 #include <QAudioOutput>
 #include <QAudioBufferOutput>
 #include <QAudioBuffer>
@@ -663,6 +664,12 @@ public:
     void checkSnap();
     void saveSettings(QSettings &s);
     void loadSettings(QSettings &s);
+
+    // Track navigation accessors
+    int trackCount() const { return tracks.size(); }
+    QString trackAt(int index) const { return (index >= 0 && index < tracks.size()) ? tracks[index] : QString(); }
+    int currentTrackIndex() const { return listWidget->currentRow(); }
+    void setCurrentTrackIndex(int index) { if (index >= 0 && index < tracks.size()) listWidget->setCurrentRow(index); }
 
 signals:
     void trackDoubleClicked(const QString &filePath);
@@ -1458,6 +1465,37 @@ public:
         
         connect(player, &QMediaPlayer::positionChanged, this, [this](qint64) { update(); });
         
+        // Auto-advance to next track when current one ends
+        connect(player, &QMediaPlayer::mediaStatusChanged, this, [this](QMediaPlayer::MediaStatus status) {
+            if (status == QMediaPlayer::EndOfMedia) {
+                int curIdx = playlistWindow->currentTrackIndex();
+                int count = playlistWindow->trackCount();
+                if (count > 0) {
+                    int nextIdx;
+                    if (shuffleOn) {
+                        nextIdx = QRandomGenerator::global()->bounded(count);
+                    } else {
+                        nextIdx = curIdx + 1;
+                    }
+                    if (nextIdx < count) {
+                        playlistWindow->setCurrentTrackIndex(nextIdx);
+                        playTrack(playlistWindow->trackAt(nextIdx));
+                    } else if (repeatOn) {
+                        playlistWindow->setCurrentTrackIndex(0);
+                        playTrack(playlistWindow->trackAt(0));
+                    }
+                }
+            }
+        });
+        
+        // Extract bitrate from metadata when available
+        connect(player, &QMediaPlayer::metaDataChanged, this, [this]() {
+            QVariant br = player->metaData().value(QMediaMetaData::AudioBitRate);
+            if (br.isValid()) {
+                mediaBitrate = br.toInt() / 1000;  // bps -> kbps
+            }
+        });
+        
         // Create playlist and EQ windows
         playlistWindow = new PlaylistWindow(this);
         connect(playlistWindow, &PlaylistWindow::trackDoubleClicked, this, &WinampWindow::playTrack);
@@ -1537,6 +1575,11 @@ public slots:
         const QAudioFormat fmt = buffer.format();
         int sampleCount = buffer.frameCount();
         int channels = fmt.channelCount();
+        
+        // Update media info from audio format
+        mediaChannels = channels;
+        int sr = fmt.sampleRate();
+        if (sr > 0) mediaSampleRate = sr / 1000; // e.g. 44100 -> 44
 
         auto extractData = [&](auto *data) {
             float scale = 1.0f;
@@ -1649,11 +1692,36 @@ protected:
             p.restore();
         }
 
+        // kbps display at (111, 43) — 3 chars using text.bmp 5x6 font
+        // khz display at (156, 43) — 2 chars using text.bmp 5x6 font
+        if (!bmp.text.isNull() && player->playbackState() != QMediaPlayer::StoppedState) {
+            auto drawSmallChar = [&](int dx, int dy, QChar ch) {
+                QPoint cp = ::getTextCharPos(ch);
+                if (cp.x() >= 0)
+                    p.drawPixmap(dx, dy, bmp.text, cp.x(), cp.y(), 5, 6);
+            };
+            // kbps (3 digits, right-aligned)
+            if (mediaBitrate > 0) {
+                QString kbStr = QString::number(mediaBitrate).rightJustified(3, ' ');
+                for (int i = 0; i < 3; i++)
+                    drawSmallChar(111 + i * 5, 43, kbStr[i]);
+            }
+            // khz (2 digits)
+            if (mediaSampleRate > 0) {
+                QString khStr = QString::number(mediaSampleRate).rightJustified(2, ' ');
+                for (int i = 0; i < 2; i++)
+                    drawSmallChar(156 + i * 5, 43, khStr[i]);
+            }
+        }
+
         // Mono/Stereo indicator at (212,41) — each state 29x12
         if (!bmp.monoster.isNull()) {
             // stereo on: (0,0), stereo off: (0,12), mono on: (29,0), mono off: (29,12)
-            p.drawPixmap(212, 41, bmp.monoster, 0, 0, 29, 12);   // stereo on
-            p.drawPixmap(239, 41, bmp.monoster, 29, 12, 27, 12);  // mono off
+            bool isStereo = (mediaChannels >= 2);
+            bool isMono = (mediaChannels == 1);
+            bool playing = (player->playbackState() != QMediaPlayer::StoppedState);
+            p.drawPixmap(212, 41, bmp.monoster, 0, (playing && isStereo) ? 0 : 12, 29, 12);
+            p.drawPixmap(239, 41, bmp.monoster, 29, (playing && isMono) ? 0 : 12, 27, 12);
         }
 
         // Transport buttons from CBUTTONS.BMP — each 23x18, pressed row at y+18
@@ -1908,14 +1976,31 @@ protected:
             
             if (btnId == pressedButton) {
                 switch (btnId) {
-                    case 0: player->setPosition(0); break;          // Previous
+                    case 0: {                                       // Previous
+                        int curIdx = playlistWindow->currentTrackIndex();
+                        if (curIdx > 0) {
+                            playlistWindow->setCurrentTrackIndex(curIdx - 1);
+                            playTrack(playlistWindow->trackAt(curIdx - 1));
+                        } else {
+                            player->setPosition(0);
+                        }
+                        break;
+                    }
                     case 1:                                          // Play
                         if (!currentFile.isEmpty()) player->play();
                         else openFile();
                         break;
                     case 2: player->pause(); break;                  // Pause
                     case 3: player->stop(); break;                   // Stop
-                    case 4: break;                                   // Next
+                    case 4: {                                        // Next
+                        int curIdx = playlistWindow->currentTrackIndex();
+                        int count = playlistWindow->trackCount();
+                        if (curIdx + 1 < count) {
+                            playlistWindow->setCurrentTrackIndex(curIdx + 1);
+                            playTrack(playlistWindow->trackAt(curIdx + 1));
+                        }
+                        break;
+                    }
                     case 5: openFile(); break;                       // Eject
                 }
             }
@@ -1942,6 +2027,10 @@ protected:
     void playTrack(const QString &fileName) {
         if (!fileName.isEmpty() && QFile::exists(fileName)) {
             currentFile = fileName;
+            // Reset media info — will be refreshed by metaDataChanged and processAudioBuffer
+            mediaBitrate = 0;
+            mediaSampleRate = 0;
+            mediaChannels = 0;
             player->setSource(QUrl::fromLocalFile(fileName));
             player->play();
         }
@@ -2056,6 +2145,11 @@ private:
     float saPeakVel[19];       // Peak dot fall velocity
     float spectrumData[75];    // FFT spectrum bands (0.0-1.0)
     float oscData[75];         // Oscilloscope samples (-1.0 to 1.0)
+    
+    // Media info for kbps/khz/mono-stereo display
+    int mediaBitrate = 0;    // in kbps
+    int mediaSampleRate = 0; // in kHz (e.g. 44)
+    int mediaChannels = 0;   // 1=mono, 2=stereo
     
     PlaylistWindow *playlistWindow;
     EqualizerWindow *eqWindow;
