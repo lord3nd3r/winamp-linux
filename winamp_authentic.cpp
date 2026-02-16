@@ -2065,6 +2065,7 @@ public:
     MilkdropWindow(QWidget *parent = nullptr) : QOpenGLWidget(parent) {
         setWindowTitle("Milkdrop Visualization");
         setWindowFlags(Qt::Window);
+        setAttribute(Qt::WA_DeleteOnClose);
         resize(640, 480);
         setMinimumSize(320, 240);
         setFocusPolicy(Qt::StrongFocus);
@@ -3166,9 +3167,16 @@ private:
     MilkdropWindow *milkdropWindow = nullptr;
     
     void openMilkdrop() {
-        if (!milkdropWindow) {
-            milkdropWindow = new MilkdropWindow();
-            connect(milkdropWindow, &MilkdropWindow::fullscreenChanged, this, [this](bool fs) {
+        if (milkdropWindow) {
+            milkdropWindow->raise();
+            milkdropWindow->activateWindow();
+            return;
+        }
+        milkdropWindow = new MilkdropWindow();
+        connect(milkdropWindow, &QObject::destroyed, this, [this]() {
+            milkdropWindow = nullptr;
+        });
+        connect(milkdropWindow, &MilkdropWindow::fullscreenChanged, this, [this](bool fs) {
                 if (fs) {
                     // Hide all Winamp windows when Milkdrop goes fullscreen
                     eqWasVisible = eqWindow && eqWindow->isVisible();
@@ -3184,7 +3192,6 @@ private:
                     if (plWasVisible && playlistWindow) playlistWindow->show();
                 }
             });
-        }
         milkdropWindow->show();
         milkdropWindow->raise();
         milkdropWindow->activateWindow();
