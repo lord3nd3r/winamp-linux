@@ -157,7 +157,7 @@ All state saved to `~/.config/winamp/winamp.conf` (INI format) on exit, restored
 
 - **XML-based skin format** — full parser for Winamp 5 modern skins (`skin.xml` with recursive `<include>` support)
 - **ModernSkinEngine class** — loads `<bitmap>` sprite sheet definitions and sub-rectangle extraction from PNG images
-- **BitmapFont rendering** — grid-based text rendering for timer (BIGNUM), songticker, and songinfo fonts
+- **BitmapFont rendering** — Wasabi-compatible `getXYfromChar` character mapping for timer (BIGNUM), songticker, songinfo, playlist time, and small fonts; 3-row layout (A-Z / digits+punctuation / specials) matching original bitmap font grid
 - **Dual-mode window** — WinampWindow switches between classic (fixed 275×116) and modern (resizable, min 354×144) modes
 - **Full player rendering** — titlebar with active/inactive states, 3-part tiled backgrounds (main + bg2 layers), display area with overlay effects, seek bar with thumb, volume slider, playback buttons with hover/pressed states
 - **13-button interaction system** — Previous, Play, Pause, Stop, Next, Eject, PL, ML, Mute, Repeat, Shuffle, Minimize, Close — all with bitmap hover/pressed states
@@ -166,6 +166,9 @@ All state saved to `~/.config/winamp/winamp.conf` (INI format) on exit, restored
 - **Visualization** — spectrum analyzer and oscilloscope rendered in the modern display area
 - **Scrolling songticker** — animated song title text using bitmap font with seamless looping
 - **Song info display** — bitrate (kbps), sample rate (khz), channel mode (mono/stereo/surround), EQ indicator
+- **Modern EQ window** — 354×113 with centered 318×89 drawer content from `configdrawer.xml`; preamp + 10-band sliders, ON/AUTO/PRESETS buttons, ISO frequency labels, EQ curve graph
+- **Modern Playlist window** — 354px wide (resizable height) with frame borders, scrollbar, bottom bar with ADD/REM/SEL/MISC/LIST buttons, and bitmap font time display
+- **Unified window sizing** — all three windows (main, EQ, playlist) render at 354px width with correct snap/follow behavior
 - **Case-insensitive path resolution** — handles Windows-originated mixed-case filenames on Linux
 
 ### Dialogs
@@ -300,7 +303,7 @@ Bitmap loading searches multiple fallback paths and merges missing assets from a
 - [x] Command-line interface — `-play`, `-pause`, `-stop`, `-enqueue`, files and directories
 - [x] Song change notifications — desktop notification popup when track changes (toggleable in preferences)
 - [x] Localization — .lang file-based language pack system with UTF-8 support; English, German, Spanish included; extensible via ~/.winamp/lang/
-- [ ] Modern skin support — Winamp 3/5 XML-based skins
+- [x] Modern skin support — Winamp 3/5 XML-based skins (ModernSkinEngine with full bitmap font rendering, EQ, playlist, and main window)
 - [x] Drag tracks out of playlist to file manager — export via file:// MIME data for external apps
 
 ### Architecture
@@ -317,7 +320,7 @@ Bitmap loading searches multiple fallback paths and merges missing assets from a
 ```
 ├── CMakeLists.txt              # Qt6 + OpenGL + projectM build configuration
 ├── README.md                   # This file
-├── winamp_authentic.cpp        # Main implementation (~5200 lines)
+├── winamp_authentic.cpp        # Main implementation (~8900 lines)
 ├── skins/default/              # Default skin bitmaps
 ├── Src/Winamp/resource/        # Additional bitmap assets
 └── build/
