@@ -44,6 +44,35 @@
 #include <QOpenGLFunctions>
 #include <QKeyEvent>
 #include <type_traits>
+#include <QSystemTrayIcon>
+#include <QToolTip>
+#include <QSplashScreen>
+#include <QStandardPaths>
+#include <QScreen>
+#include <QScrollBar>
+#include <QComboBox>
+#include <QCheckBox>
+#include <QSpinBox>
+#include <QGroupBox>
+#include <QFormLayout>
+#include <QHBoxLayout>
+#include <QTreeWidget>
+#include <QStackedWidget>
+#include <QHeaderView>
+#include <QSlider>
+#include <QTextEdit>
+#include <QSizeGrip>
+#include <QRegularExpression>
+
+// D-Bus for MPRIS2 media player interface (Linux desktop integration)
+#ifdef QT_DBUS_LIB
+#include <QDBusConnection>
+#include <QDBusMessage>
+#include <QDBusInterface>
+#include <QDBusAbstractAdaptor>
+#include <QDBusObjectPath>
+#include <QDBusMetaType>
+#endif
 
 // projectM — Milkdrop-compatible visualization engine
 #include <libprojectM/projectM.hpp>
@@ -80,6 +109,285 @@ static QString extractSkinArchive(const QString &archivePath) {
     
     return extractDir;
 }
+
+// ============================================================
+// Skin Playlist Colors — parse PLEDIT.TXT (from Windows skins)
+// ============================================================
+struct SkinPlaylistColors {
+    QColor normal      = QColor(0, 255, 0);       // Normal text
+    QColor current     = QColor(255, 255, 255);    // Currently playing
+    QColor normBg      = QColor(0, 0, 0);          // Background
+    QColor selectBg    = QColor(0, 0, 198);         // Selection background
+    QColor mbFg        = QColor(0, 255, 0);         // Minibar foreground
+    QColor mbBg        = QColor(0, 0, 0);           // Minibar background
+};
+
+static SkinPlaylistColors parsePleditTxt(const QString &skinPath) {
+    SkinPlaylistColors colors;
+    QStringList candidates = {
+        skinPath + "/PLEDIT.TXT",
+        skinPath + "/pledit.txt",
+        skinPath + "/Pledit.txt"
+    };
+    for (const QString &path : candidates) {
+        QFile file(path);
+        if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QTextStream in(&file);
+            while (!in.atEnd()) {
+                QString line = in.readLine().trimmed();
+                if (line.startsWith("Normal=", Qt::CaseInsensitive)) {
+                    line = line.mid(line.indexOf('=') + 1).trimmed();
+                    if (line.startsWith('#')) colors.normal = QColor(line);
+                    else { QStringList p = line.split(','); if (p.size()==3) colors.normal = QColor(p[0].toInt(), p[1].toInt(), p[2].toInt()); }
+                } else if (line.startsWith("Current=", Qt::CaseInsensitive)) {
+                    line = line.mid(line.indexOf('=') + 1).trimmed();
+                    if (line.startsWith('#')) colors.current = QColor(line);
+                    else { QStringList p = line.split(','); if (p.size()==3) colors.current = QColor(p[0].toInt(), p[1].toInt(), p[2].toInt()); }
+                } else if (line.startsWith("NormalBG=", Qt::CaseInsensitive)) {
+                    line = line.mid(line.indexOf('=') + 1).trimmed();
+                    if (line.startsWith('#')) colors.normBg = QColor(line);
+                    else { QStringList p = line.split(','); if (p.size()==3) colors.normBg = QColor(p[0].toInt(), p[1].toInt(), p[2].toInt()); }
+                } else if (line.startsWith("SelectedBG=", Qt::CaseInsensitive)) {
+                    line = line.mid(line.indexOf('=') + 1).trimmed();
+                    if (line.startsWith('#')) colors.selectBg = QColor(line);
+                    else { QStringList p = line.split(','); if (p.size()==3) colors.selectBg = QColor(p[0].toInt(), p[1].toInt(), p[2].toInt()); }
+                } else if (line.startsWith("MbFG=", Qt::CaseInsensitive)) {
+                    line = line.mid(line.indexOf('=') + 1).trimmed();
+                    if (line.startsWith('#')) colors.mbFg = QColor(line);
+                    else { QStringList p = line.split(','); if (p.size()==3) colors.mbFg = QColor(p[0].toInt(), p[1].toInt(), p[2].toInt()); }
+                } else if (line.startsWith("MbBG=", Qt::CaseInsensitive)) {
+                    line = line.mid(line.indexOf('=') + 1).trimmed();
+                    if (line.startsWith('#')) colors.mbBg = QColor(line);
+                    else { QStringList p = line.split(','); if (p.size()==3) colors.mbBg = QColor(p[0].toInt(), p[1].toInt(), p[2].toInt()); }
+                }
+            }
+            file.close();
+            break;
+        }
+    }
+    return colors;
+}
+
+// Global skin playlist colors (loaded when skin changes)
+static SkinPlaylistColors g_plColors;
+
+// ============================================================
+// Bookmark Manager — store/retrieve bookmarked files and URLs
+// ============================================================
+class BookmarkManager {
+public:
+    struct Bookmark {
+        QString title;
+        QString path;  // file path or URL
+    };
+
+    static BookmarkManager& instance() {
+        static BookmarkManager mgr;
+        return mgr;
+    }
+
+    void load() {
+        bookmarks.clear();
+        QString dir = QDir::homePath() + "/.config/winamp";
+        QDir().mkpath(dir);
+        QFile file(dir + "/bookmarks.txt");
+        if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QTextStream in(&file);
+            while (!in.atEnd()) {
+                QString line = in.readLine().trimmed();
+                if (line.isEmpty() || line.startsWith('#')) continue;
+                int sep = line.indexOf('\t');
+                Bookmark bm;
+                if (sep > 0) {
+                    bm.title = line.left(sep);
+                    bm.path = line.mid(sep + 1);
+                } else {
+                    bm.path = line;
+                    bm.title = QFileInfo(line).baseName();
+                }
+                bookmarks.append(bm);
+            }
+            file.close();
+        }
+    }
+
+    void save() {
+        QString dir = QDir::homePath() + "/.config/winamp";
+        QDir().mkpath(dir);
+        QFile file(dir + "/bookmarks.txt");
+        if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            QTextStream out(&file);
+            out << "# Winamp Bookmarks\n";
+            for (const Bookmark &bm : bookmarks) {
+                out << bm.title << "\t" << bm.path << "\n";
+            }
+            file.close();
+        }
+    }
+
+    void addBookmark(const QString &title, const QString &path) {
+        // Don't add duplicates
+        for (const Bookmark &bm : bookmarks) {
+            if (bm.path == path) return;
+        }
+        bookmarks.append({title, path});
+        save();
+    }
+
+    void removeBookmark(int index) {
+        if (index >= 0 && index < bookmarks.size()) {
+            bookmarks.removeAt(index);
+            save();
+        }
+    }
+
+    QList<Bookmark> bookmarks;
+
+private:
+    BookmarkManager() { load(); }
+};
+
+// ============================================================
+// Recent Files Manager — track recently played files
+// ============================================================
+class RecentFilesManager {
+public:
+    static RecentFilesManager& instance() {
+        static RecentFilesManager mgr;
+        return mgr;
+    }
+
+    void load() {
+        recentFiles.clear();
+        QSettings s(QDir::homePath() + "/.config/winamp/winamp.conf", QSettings::IniFormat);
+        int count = s.beginReadArray("RecentFiles");
+        for (int i = 0; i < count; i++) {
+            s.setArrayIndex(i);
+            recentFiles.append(s.value("path").toString());
+        }
+        s.endArray();
+    }
+
+    void save() {
+        QSettings s(QDir::homePath() + "/.config/winamp/winamp.conf", QSettings::IniFormat);
+        s.beginWriteArray("RecentFiles");
+        for (int i = 0; i < recentFiles.size(); i++) {
+            s.setArrayIndex(i);
+            s.setValue("path", recentFiles[i]);
+        }
+        s.endArray();
+    }
+
+    void addFile(const QString &path) {
+        recentFiles.removeAll(path);
+        recentFiles.prepend(path);
+        while (recentFiles.size() > maxRecent)
+            recentFiles.removeLast();
+        save();
+    }
+
+    QStringList recentFiles;
+    int maxRecent = 15;
+
+private:
+    RecentFilesManager() { load(); }
+};
+
+// ============================================================
+// Jump to File Dialog — search within playlist (Ctrl+J / J)
+// ============================================================
+class JumpToFileDialog : public QDialog {
+    Q_OBJECT
+public:
+    JumpToFileDialog(const QStringList &tracks, QWidget *parent = nullptr)
+        : QDialog(parent), allTracks(tracks)
+    {
+        setWindowTitle("Jump to File");
+        setMinimumSize(400, 350);
+        setStyleSheet("background-color: #2b2b3d; color: #00ff00;");
+
+        QVBoxLayout *layout = new QVBoxLayout(this);
+
+        QLabel *label = new QLabel("Search:", this);
+        searchEdit = new QLineEdit(this);
+        searchEdit->setStyleSheet("background-color: #000; color: #00FF00; border: 1px solid #555; padding: 4px;");
+        searchEdit->setPlaceholderText("Type to filter playlist...");
+        connect(searchEdit, &QLineEdit::textChanged, this, &JumpToFileDialog::filterList);
+
+        resultList = new QListWidget(this);
+        resultList->setStyleSheet(
+            "QListWidget { background-color: #000; color: #00FF00; border: 1px solid #555; }"
+            "QListWidget::item:selected { background-color: #0000C6; }"
+        );
+        connect(resultList, &QListWidget::itemDoubleClicked, this, &JumpToFileDialog::onItemSelected);
+
+        QHBoxLayout *btnLayout = new QHBoxLayout();
+        QPushButton *playBtn = new QPushButton("Play", this);
+        QPushButton *queueBtn = new QPushButton("Queue", this);
+        QPushButton *cancelBtn = new QPushButton("Close", this);
+        connect(playBtn, &QPushButton::clicked, this, [this]() {
+            if (resultList->currentRow() >= 0 && resultList->currentRow() < filteredIndices.size())
+                selectedIndex = filteredIndices[resultList->currentRow()];
+            accept();
+        });
+        connect(queueBtn, &QPushButton::clicked, this, [this]() {
+            if (resultList->currentRow() >= 0 && resultList->currentRow() < filteredIndices.size()) {
+                int idx = filteredIndices[resultList->currentRow()];
+                emit queueTrack(idx);
+            }
+        });
+        connect(cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
+
+        btnLayout->addStretch();
+        btnLayout->addWidget(playBtn);
+        btnLayout->addWidget(queueBtn);
+        btnLayout->addWidget(cancelBtn);
+
+        layout->addWidget(label);
+        layout->addWidget(searchEdit);
+        layout->addWidget(resultList);
+        layout->addLayout(btnLayout);
+
+        // Populate initially with all tracks
+        filterList("");
+        searchEdit->setFocus();
+        selectedIndex = -1;
+    }
+
+    int getSelectedIndex() const { return selectedIndex; }
+
+signals:
+    void queueTrack(int index);
+
+private slots:
+    void filterList(const QString &text) {
+        resultList->clear();
+        filteredIndices.clear();
+        for (int i = 0; i < allTracks.size(); i++) {
+            QString display = QString("%1. %2").arg(i + 1).arg(QFileInfo(allTracks[i]).fileName());
+            if (text.isEmpty() || display.contains(text, Qt::CaseInsensitive) ||
+                allTracks[i].contains(text, Qt::CaseInsensitive)) {
+                resultList->addItem(display);
+                filteredIndices.append(i);
+            }
+        }
+        if (resultList->count() > 0)
+            resultList->setCurrentRow(0);
+    }
+
+    void onItemSelected(QListWidgetItem *) {
+        if (resultList->currentRow() >= 0 && resultList->currentRow() < filteredIndices.size())
+            selectedIndex = filteredIndices[resultList->currentRow()];
+        accept();
+    }
+
+private:
+    QStringList allTracks;
+    QList<int> filteredIndices;
+    QLineEdit *searchEdit;
+    QListWidget *resultList;
+    int selectedIndex = -1;
+};
 
 // ============================================================
 // Simple FFT for spectrum analyzer (radix-2 DIT, 512-point)
@@ -532,48 +840,445 @@ private:
     QLineEdit *urlLineEdit;
 };
 
-// Preferences Dialog
+// Preferences Dialog — Tree-based layout matching Windows Winamp (Options.cpp)
 class PreferencesDialog : public QDialog {
     Q_OBJECT
 public:
     PreferencesDialog(QWidget *parent = nullptr) : QDialog(parent) {
         setWindowTitle("Winamp Preferences");
-        setMinimumSize(400, 300);
-        setStyleSheet("background-color: #2b2b3d; color: #00ff00;");
+        setMinimumSize(600, 450);
+        setStyleSheet(
+            "QDialog { background-color: #2b2b3d; color: #00ff00; }"
+            "QTreeWidget { background-color: #1a1a2e; color: #00ff00; border: 1px solid #555; font-size: 9pt; }"
+            "QTreeWidget::item:selected { background-color: #0000c6; }"
+            "QStackedWidget { background-color: #2b2b3d; }"
+            "QLabel { color: #00ff00; }"
+            "QCheckBox { color: #00ff00; }"
+            "QCheckBox::indicator { border: 1px solid #555; background: #000; width: 12px; height: 12px; }"
+            "QCheckBox::indicator:checked { background: #00ff00; }"
+            "QGroupBox { border: 1px solid #555; color: #00ff00; margin-top: 8px; padding-top: 10px; }"
+            "QGroupBox::title { subcontrol-origin: margin; left: 10px; }"
+            "QSpinBox, QComboBox, QLineEdit { background-color: #000; color: #00ff00; border: 1px solid #555; padding: 2px; }"
+            "QPushButton { background-color: #3a3a4d; color: #00ff00; border: 1px solid #555; padding: 4px 12px; }"
+            "QPushButton:hover { background-color: #4a4a5d; }"
+            "QSlider::groove:horizontal { border: 1px solid #555; height: 4px; background: #000; }"
+            "QSlider::handle:horizontal { background: #00ff00; border: 1px solid #555; width: 12px; margin: -4px 0; }"
+            "QListWidget { background-color: #000; color: #00FF00; border: 1px solid #555; }"
+            "QListWidget::item:selected { background-color: #0000C6; }"
+        );
 
-        QVBoxLayout *mainLayout = new QVBoxLayout(this);
-        QTabWidget *tabWidget = new QTabWidget(this);
-        tabWidget->setStyleSheet("QTabWidget::pane { border: 1px solid #555; }");
+        QHBoxLayout *mainLayout = new QHBoxLayout(this);
 
-        // General Preferences Tab (Placeholder)
-        QWidget *generalTab = new QWidget();
-        QVBoxLayout *generalLayout = new QVBoxLayout(generalTab);
-        generalLayout->addWidget(new QLabel("General settings will go here."));
-        generalLayout->addStretch();
-        tabWidget->addTab(generalTab, "General");
+        // Left: tree navigation (like Windows Winamp Options.cpp tree)
+        treeWidget = new QTreeWidget(this);
+        treeWidget->setFixedWidth(180);
+        treeWidget->setHeaderHidden(true);
+        treeWidget->setRootIsDecorated(true);
+        treeWidget->setIndentation(16);
 
-        // Skins Tab
-        QWidget *skinsTab = new QWidget();
-        QVBoxLayout *skinsLayout = new QVBoxLayout(skinsTab);
-        skinListWidget = new QListWidget(this);
-        skinListWidget->setStyleSheet("QListWidget { background-color: #000; color: #00FF00; }");
-        populateSkins();
-        connect(skinListWidget, &QListWidget::itemDoubleClicked, this, &PreferencesDialog::onSkinSelected);
-        skinsLayout->addWidget(skinListWidget);
-        skinsTab->setLayout(skinsLayout);
-        tabWidget->addTab(skinsTab, "Skins");
+        // Right: stacked pages
+        stackedWidget = new QStackedWidget(this);
 
-        mainLayout->addWidget(tabWidget);
-        setLayout(mainLayout);
+        // -- Build preference tree items (matches Windows Winamp) --
+        auto addPage = [&](QTreeWidgetItem *parent, const QString &label, QWidget *page) -> QTreeWidgetItem* {
+            QTreeWidgetItem *item = parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(treeWidget);
+            item->setText(0, label);
+            int idx = stackedWidget->addWidget(page);
+            item->setData(0, Qt::UserRole, idx);
+            return item;
+        };
+
+        // Setup category
+        QTreeWidgetItem *setupItem = addPage(nullptr, "Setup", createGeneralPage());
+        addPage(setupItem, "File Types", createFileTypesPage());
+        addPage(setupItem, "Titles", createTitlesPage());
+        addPage(setupItem, "Language", createLanguagePage());
+
+        // Skins category
+        QTreeWidgetItem *skinsItem = addPage(nullptr, "Skins", createSkinsPage());
+        addPage(skinsItem, "Classic Skins", createClassicSkinsPage());
+
+        // Playback category
+        QTreeWidgetItem *playbackItem = addPage(nullptr, "Playback", createPlaybackPage());
+
+        // Playlist category
+        QTreeWidgetItem *playlistItem = addPage(nullptr, "Playlist", createPlaylistPrefsPage());
+
+        // Bookmarks
+        addPage(nullptr, "Bookmarks", createBookmarksPage());
+
+        // Visualization category
+        QTreeWidgetItem *visItem = addPage(nullptr, "Visualization", createVisualizationPage());
+
+        // Plug-ins category
+        QTreeWidgetItem *pluginsItem = addPage(nullptr, "Plug-ins", createPluginsPage());
+
+        treeWidget->expandAll();
+        treeWidget->setCurrentItem(setupItem);
+
+        connect(treeWidget, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem *current) {
+            if (current) {
+                int idx = current->data(0, Qt::UserRole).toInt();
+                stackedWidget->setCurrentIndex(idx);
+            }
+        });
+
+        mainLayout->addWidget(treeWidget);
+        mainLayout->addWidget(stackedWidget, 1);
+
+        // Close button at bottom
+        QVBoxLayout *rightLayout = new QVBoxLayout();
+        rightLayout->addWidget(stackedWidget, 1);
+        QHBoxLayout *btnLayout = new QHBoxLayout();
+        QPushButton *closeBtn = new QPushButton("Close", this);
+        connect(closeBtn, &QPushButton::clicked, this, &QDialog::accept);
+        btnLayout->addStretch();
+        btnLayout->addWidget(closeBtn);
+        rightLayout->addLayout(btnLayout);
+
+        // Redo layout
+        delete mainLayout;
+        QHBoxLayout *newMain = new QHBoxLayout(this);
+        newMain->addWidget(treeWidget);
+        QWidget *rightPanel = new QWidget(this);
+        rightPanel->setLayout(rightLayout);
+        newMain->addWidget(rightPanel, 1);
     }
 
 signals:
     void skinChanged(const QString &skinPath);
+    void settingChanged(const QString &key, const QVariant &value);
 
 private:
+    QTreeWidget *treeWidget;
+    QStackedWidget *stackedWidget;
     QString defaultSkinPath;
-    
+
+    // ---- General/Setup page ----
+    QWidget *createGeneralPage() {
+        QWidget *page = new QWidget();
+        QVBoxLayout *layout = new QVBoxLayout(page);
+        layout->addWidget(new QLabel("<b>General Preferences</b>"));
+        layout->addSpacing(10);
+
+        QCheckBox *aotCheck = new QCheckBox("Always on top", page);
+        QCheckBox *trayCheck = new QCheckBox("Show in system tray", page);
+        QCheckBox *minToTrayCheck = new QCheckBox("Minimize to system tray", page);
+        QCheckBox *tooltipCheck = new QCheckBox("Show tooltips", page);
+        QCheckBox *snapCheck = new QCheckBox("Snap windows together", page);
+        snapCheck->setChecked(true);
+
+        QHBoxLayout *snapDistLayout = new QHBoxLayout();
+        snapDistLayout->addWidget(new QLabel("Snap distance:"));
+        QSpinBox *snapDistSpin = new QSpinBox(page);
+        snapDistSpin->setRange(1, 50);
+        snapDistSpin->setValue(15);
+        snapDistSpin->setSuffix(" px");
+        snapDistLayout->addWidget(snapDistSpin);
+        snapDistLayout->addStretch();
+
+        QCheckBox *dsizeCheck = new QCheckBox("Double size mode", page);
+        QCheckBox *splashCheck = new QCheckBox("Show splash screen on startup", page);
+        splashCheck->setChecked(true);
+
+        layout->addWidget(aotCheck);
+        layout->addWidget(trayCheck);
+        layout->addWidget(minToTrayCheck);
+        layout->addWidget(tooltipCheck);
+        layout->addWidget(snapCheck);
+        layout->addLayout(snapDistLayout);
+        layout->addWidget(dsizeCheck);
+        layout->addWidget(splashCheck);
+        layout->addStretch();
+
+        connect(aotCheck, &QCheckBox::toggled, this, [this](bool v) { emit settingChanged("aot", v); });
+        connect(trayCheck, &QCheckBox::toggled, this, [this](bool v) { emit settingChanged("showTray", v); });
+        connect(minToTrayCheck, &QCheckBox::toggled, this, [this](bool v) { emit settingChanged("minToTray", v); });
+        connect(dsizeCheck, &QCheckBox::toggled, this, [this](bool v) { emit settingChanged("doubleSize", v); });
+
+        return page;
+    }
+
+    // ---- File Types page ----
+    QWidget *createFileTypesPage() {
+        QWidget *page = new QWidget();
+        QVBoxLayout *layout = new QVBoxLayout(page);
+        layout->addWidget(new QLabel("<b>File Type Associations</b>"));
+        layout->addSpacing(10);
+
+        QLabel *desc = new QLabel("Configure which file types Winamp handles.\n"
+                                  "On Linux, .desktop file registration is used.", page);
+        desc->setWordWrap(true);
+        layout->addWidget(desc);
+
+        QPushButton *registerBtn = new QPushButton("Register File Types", page);
+        connect(registerBtn, &QPushButton::clicked, this, [this]() {
+            // Create .desktop file for Winamp
+            QString desktopPath = QStandardPaths::writableLocation(QStandardPaths::ApplicationsLocation) + "/winamp.desktop";
+            QFile file(desktopPath);
+            if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                QTextStream out(&file);
+                out << "[Desktop Entry]\n"
+                    << "Type=Application\n"
+                    << "Name=Winamp\n"
+                    << "Comment=Winamp Media Player for Linux\n"
+                    << "Exec=winamp %F\n"
+                    << "MimeType=audio/mpeg;audio/x-wav;audio/flac;audio/ogg;audio/aac;audio/mp4;\n"
+                    << "Categories=AudioVideo;Audio;Player;\n"
+                    << "Terminal=false\n";
+                file.close();
+                QMessageBox::information(this, "File Types", "Desktop file created at:\n" + desktopPath);
+            }
+        });
+        layout->addWidget(registerBtn);
+        layout->addStretch();
+        return page;
+    }
+
+    // ---- Titles page ----
+    QWidget *createTitlesPage() {
+        QWidget *page = new QWidget();
+        QVBoxLayout *layout = new QVBoxLayout(page);
+        layout->addWidget(new QLabel("<b>Title Formatting</b>"));
+        layout->addSpacing(10);
+
+        QLabel *desc = new QLabel("Advanced title formatting string.\nUse metadata fields to customize how track titles appear.", page);
+        desc->setWordWrap(true);
+        layout->addWidget(desc);
+
+        QLineEdit *fmtEdit = new QLineEdit(page);
+        fmtEdit->setText("%artist% - %title%");
+        fmtEdit->setPlaceholderText("[%artist% - ]$if2(%title%,$filepart(%filename%))");
+        layout->addWidget(new QLabel("Title format:"));
+        layout->addWidget(fmtEdit);
+
+        QCheckBox *showNums = new QCheckBox("Show track numbers in playlist", page);
+        showNums->setChecked(true);
+        QCheckBox *zeroPad = new QCheckBox("Zero-pad track numbers", page);
+        layout->addWidget(showNums);
+        layout->addWidget(zeroPad);
+        layout->addStretch();
+        return page;
+    }
+
+    // ---- Language page ----
+    QWidget *createLanguagePage() {
+        QWidget *page = new QWidget();
+        QVBoxLayout *layout = new QVBoxLayout(page);
+        layout->addWidget(new QLabel("<b>Language</b>"));
+        layout->addSpacing(10);
+        layout->addWidget(new QLabel("Language packs are not yet supported.\nWinamp currently runs in English."));
+        layout->addStretch();
+        return page;
+    }
+
+    // ---- Skins overview page ----
+    QWidget *createSkinsPage() {
+        QWidget *page = new QWidget();
+        QVBoxLayout *layout = new QVBoxLayout(page);
+        layout->addWidget(new QLabel("<b>Skins</b>"));
+        layout->addSpacing(10);
+        layout->addWidget(new QLabel("Select a skin category on the left.\nClassic skins (.wsz) are currently supported."));
+        layout->addStretch();
+        return page;
+    }
+
+    // ---- Classic Skins page (moved from old Skins tab) ----
+    QWidget *createClassicSkinsPage() {
+        QWidget *page = new QWidget();
+        QVBoxLayout *layout = new QVBoxLayout(page);
+        layout->addWidget(new QLabel("<b>Classic Skins</b>"));
+
+        skinListWidget = new QListWidget(page);
+        populateSkins();
+        connect(skinListWidget, &QListWidget::itemDoubleClicked, this, &PreferencesDialog::onSkinSelected);
+        layout->addWidget(skinListWidget);
+
+        QHBoxLayout *btnRow = new QHBoxLayout();
+        QPushButton *openDirBtn = new QPushButton("Open Skins Folder", page);
+        connect(openDirBtn, &QPushButton::clicked, this, []() {
+            QString skinsDir = QDir::homePath() + "/.winamp/skins";
+            QDir().mkpath(skinsDir);
+            QDesktopServices::openUrl(QUrl::fromLocalFile(skinsDir));
+        });
+        btnRow->addWidget(openDirBtn);
+        btnRow->addStretch();
+        layout->addLayout(btnRow);
+        return page;
+    }
+
+    // ---- Playback page ----
+    QWidget *createPlaybackPage() {
+        QWidget *page = new QWidget();
+        QVBoxLayout *layout = new QVBoxLayout(page);
+        layout->addWidget(new QLabel("<b>Playback Settings</b>"));
+        layout->addSpacing(10);
+
+        QGroupBox *priorityGroup = new QGroupBox("Priority", page);
+        QVBoxLayout *priLayout = new QVBoxLayout(priorityGroup);
+        QComboBox *priorityCombo = new QComboBox(page);
+        priorityCombo->addItems({"Idle", "Lowest", "Below Normal", "Normal", "Above Normal", "Highest"});
+        priorityCombo->setCurrentIndex(3);
+        priLayout->addWidget(new QLabel("Playback thread priority:"));
+        priLayout->addWidget(priorityCombo);
+        layout->addWidget(priorityGroup);
+
+        QGroupBox *advGroup = new QGroupBox("Advanced", page);
+        QVBoxLayout *advLayout = new QVBoxLayout(advGroup);
+        QCheckBox *stopAfterCheck = new QCheckBox("Stop after current track", page);
+        QCheckBox *alwaysContinue = new QCheckBox("Continue playback on startup", page);
+        QCheckBox *fadeOnStop = new QCheckBox("Fade on stop/pause", page);
+        advLayout->addWidget(stopAfterCheck);
+        advLayout->addWidget(alwaysContinue);
+        advLayout->addWidget(fadeOnStop);
+        layout->addWidget(advGroup);
+
+        connect(stopAfterCheck, &QCheckBox::toggled, this, [this](bool v) { emit settingChanged("stopAfterCurrent", v); });
+
+        layout->addStretch();
+        return page;
+    }
+
+    // ---- Playlist preferences page ----
+    QWidget *createPlaylistPrefsPage() {
+        QWidget *page = new QWidget();
+        QVBoxLayout *layout = new QVBoxLayout(page);
+        layout->addWidget(new QLabel("<b>Playlist Settings</b>"));
+        layout->addSpacing(10);
+
+        QGroupBox *fontGroup = new QGroupBox("Font", page);
+        QVBoxLayout *fontLayout = new QVBoxLayout(fontGroup);
+        QCheckBox *customFont = new QCheckBox("Use custom playlist font", page);
+        QComboBox *fontCombo = new QComboBox(page);
+        fontCombo->addItems({"Courier New", "Tahoma", "Arial", "Verdana", "Segoe UI", "DejaVu Sans Mono"});
+        QSpinBox *fontSizeSpin = new QSpinBox(page);
+        fontSizeSpin->setRange(6, 24);
+        fontSizeSpin->setValue(8);
+        fontSizeSpin->setSuffix(" pt");
+        fontLayout->addWidget(customFont);
+        QHBoxLayout *fontRow = new QHBoxLayout();
+        fontRow->addWidget(fontCombo);
+        fontRow->addWidget(fontSizeSpin);
+        fontLayout->addLayout(fontRow);
+        layout->addWidget(fontGroup);
+
+        QCheckBox *recycleBin = new QCheckBox("Send removed files to playlist recycle bin", page);
+        QCheckBox *showNumbers = new QCheckBox("Show track numbers in playlist", page);
+        showNumbers->setChecked(true);
+        layout->addWidget(recycleBin);
+        layout->addWidget(showNumbers);
+        layout->addStretch();
+        return page;
+    }
+
+    // ---- Bookmarks page ----
+    QWidget *createBookmarksPage() {
+        QWidget *page = new QWidget();
+        QVBoxLayout *layout = new QVBoxLayout(page);
+        layout->addWidget(new QLabel("<b>Bookmarks</b>"));
+
+        QListWidget *bmList = new QListWidget(page);
+        auto &mgr = BookmarkManager::instance();
+        for (const auto &bm : mgr.bookmarks) {
+            bmList->addItem(bm.title + " — " + bm.path);
+        }
+
+        QHBoxLayout *btnRow = new QHBoxLayout();
+        QPushButton *addBtn = new QPushButton("Add...", page);
+        QPushButton *removeBtn = new QPushButton("Remove", page);
+        connect(addBtn, &QPushButton::clicked, this, [this, bmList]() {
+            QString path = QFileDialog::getOpenFileName(this, "Add Bookmark", "",
+                "Audio Files (*.mp3 *.wav *.flac *.ogg *.m4a);;All Files (*)");
+            if (!path.isEmpty()) {
+                QString title = QFileInfo(path).baseName();
+                BookmarkManager::instance().addBookmark(title, path);
+                bmList->addItem(title + " — " + path);
+            }
+        });
+        connect(removeBtn, &QPushButton::clicked, this, [bmList]() {
+            int row = bmList->currentRow();
+            if (row >= 0) {
+                BookmarkManager::instance().removeBookmark(row);
+                delete bmList->takeItem(row);
+            }
+        });
+        btnRow->addWidget(addBtn);
+        btnRow->addWidget(removeBtn);
+        btnRow->addStretch();
+
+        layout->addWidget(bmList);
+        layout->addLayout(btnRow);
+        return page;
+    }
+
+    // ---- Visualization page ----
+    QWidget *createVisualizationPage() {
+        QWidget *page = new QWidget();
+        QVBoxLayout *layout = new QVBoxLayout(page);
+        layout->addWidget(new QLabel("<b>Visualization Settings</b>"));
+        layout->addSpacing(10);
+
+        QGroupBox *saGroup = new QGroupBox("Spectrum Analyzer", page);
+        QVBoxLayout *saLayout = new QVBoxLayout(saGroup);
+
+        QHBoxLayout *falloffRow = new QHBoxLayout();
+        falloffRow->addWidget(new QLabel("Analyzer falloff speed:"));
+        QComboBox *falloffCombo = new QComboBox(page);
+        falloffCombo->addItems({"Slow", "Medium", "Fast", "Fastest"});
+        falloffCombo->setCurrentIndex(1);
+        falloffRow->addWidget(falloffCombo);
+        saLayout->addLayout(falloffRow);
+
+        QHBoxLayout *peakRow = new QHBoxLayout();
+        peakRow->addWidget(new QLabel("Peak falloff speed:"));
+        QComboBox *peakCombo = new QComboBox(page);
+        peakCombo->addItems({"Slow", "Medium", "Fast", "Fastest"});
+        peakCombo->setCurrentIndex(1);
+        peakRow->addWidget(peakCombo);
+        saLayout->addLayout(peakRow);
+
+        QCheckBox *peaksCheck = new QCheckBox("Show peak dots", page);
+        peaksCheck->setChecked(true);
+        saLayout->addWidget(peaksCheck);
+
+        layout->addWidget(saGroup);
+
+        connect(falloffCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int idx) { emit settingChanged("saFalloff", idx); });
+        connect(peakCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int idx) { emit settingChanged("saPeakFalloff", idx); });
+        connect(peaksCheck, &QCheckBox::toggled, this,
+            [this](bool v) { emit settingChanged("saPeaks", v); });
+
+        layout->addStretch();
+        return page;
+    }
+
+    // ---- Plugins overview page ----
+    QWidget *createPluginsPage() {
+        QWidget *page = new QWidget();
+        QVBoxLayout *layout = new QVBoxLayout(page);
+        layout->addWidget(new QLabel("<b>Plug-ins</b>"));
+        layout->addSpacing(10);
+        layout->addWidget(new QLabel("Plug-in architecture is not yet available on Linux.\n\n"
+                                     "Currently using:\n"
+                                     "  • Qt6 Multimedia for audio decoding & output\n"
+                                     "  • projectM for Milkdrop visualization\n\n"
+                                     "Future support planned for:\n"
+                                     "  • Input plug-ins (in_*.so)\n"
+                                     "  • Output plug-ins (out_*.so)\n"
+                                     "  • DSP/Effect plug-ins (dsp_*.so)\n"
+                                     "  • General purpose plug-ins (gen_*.so)\n"
+                                     "  • Visualization plug-ins (vis_*.so)"));
+        layout->addStretch();
+        return page;
+    }
+
+    // ---- Skin list helpers ----
+    QListWidget *skinListWidget = nullptr;
+
     void populateSkins() {
+        if (!skinListWidget) return;
         // Find the built-in default skin path
         QString appDir = QCoreApplication::applicationDirPath();
         QStringList defaultCandidates = {
@@ -641,8 +1346,6 @@ private:
             emit skinChanged(fullPath);
         }
     }
-
-    QListWidget *skinListWidget;
 };
 
 
@@ -678,6 +1381,7 @@ public:
         monoster = loadBmp("MONOSTER.BMP");
         posbar = loadBmp("POSBAR.BMP");
         volume = loadBmp("volume.bmp");
+        balance = loadBmp("BALANCE.BMP");
         shufrep = loadBmp("SHUFREP.BMP");
         eqmain = loadBmp("Eqmain.bmp");
         pledit = loadBmp("Pledit.bmp");
@@ -703,13 +1407,14 @@ public:
         tryLoad(monoster, "MONOSTER.BMP");
         tryLoad(posbar, "POSBAR.BMP");
         tryLoad(volume, "volume.bmp");
+        tryLoad(balance, "BALANCE.BMP");
         tryLoad(shufrep, "SHUFREP.BMP");
         tryLoad(eqmain, "Eqmain.bmp");
         tryLoad(pledit, "Pledit.bmp");
     }
     
     QPixmap main, cbuttons, titlebar, numbers, text;
-    QPixmap playpaus, monoster, posbar, volume, shufrep;
+    QPixmap playpaus, monoster, posbar, volume, balance, shufrep;
     QPixmap eqmain, pledit;
     QString basePath;
     
@@ -770,6 +1475,53 @@ public:
     QString trackAt(int index) const { return (index >= 0 && index < tracks.size()) ? tracks[index] : QString(); }
     int currentTrackIndex() const { return listWidget->currentRow(); }
     void setCurrentTrackIndex(int index) { if (index >= 0 && index < tracks.size()) listWidget->setCurrentRow(index); }
+    QStringList allTracks() const { return tracks; }
+    
+    // Track navigation convenience methods (called by MPRIS2, tray menu, etc.)
+    void nextTrack() {
+        int idx = currentTrackIndex();
+        if (idx + 1 < trackCount()) {
+            setCurrentTrackIndex(idx + 1);
+            emit trackDoubleClicked(trackAt(idx + 1));
+        }
+    }
+    void prevTrack() {
+        int idx = currentTrackIndex();
+        if (idx > 0) {
+            setCurrentTrackIndex(idx - 1);
+            emit trackDoubleClicked(trackAt(idx - 1));
+        }
+    }
+    void playCurrentTrack() {
+        int idx = currentTrackIndex();
+        if (idx >= 0 && idx < trackCount())
+            emit trackDoubleClicked(trackAt(idx));
+    }
+    
+    // Appearance
+    void applyPlaylistColors();
+    void setPlaylistFont(const QString &family, int size) {
+        playlistFontFamily = family;
+        playlistFontSize = size;
+        applyPlaylistColors();
+    }
+    
+    // Window shade mode (compact single-line view)
+    void toggleShadeMode() {
+        shadeMode = !shadeMode;
+        if (shadeMode) {
+            savedHeight = height();
+            setMinimumSize(275, 14);
+            resize(width(), 14);
+        } else {
+            setMinimumSize(275, 116);
+            resize(width(), savedHeight > 116 ? savedHeight : 232);
+            updateListGeometry();
+        }
+        listWidget->setVisible(!shadeMode);
+        update();
+    }
+    bool isShadeMode() const { return shadeMode; }
 
 signals:
     void trackDoubleClicked(const QString &filePath);
@@ -779,12 +1531,15 @@ protected:
     void mousePressEvent(QMouseEvent *) override;
     void mouseMoveEvent(QMouseEvent *) override;
     void mouseReleaseEvent(QMouseEvent *) override;
+    void mouseDoubleClickEvent(QMouseEvent *) override;
     void dragEnterEvent(QDragEnterEvent *) override;
     void dropEvent(QDropEvent *) override;
+    void resizeEvent(QResizeEvent *) override;
     bool eventFilter(QObject *obj, QEvent *event) override;
 
 private:
     void updateTotalTimeDisplay();
+    void updateListGeometry();
     void drawText(QPainter &painter, const QString &text, int x, int y);
     QPoint getTextCharPos(QChar ch);
     void showAddMenu(QPoint globalPos);
@@ -793,6 +1548,18 @@ private:
     void showMiscMenu(QPoint globalPos);
     void showListMenu(QPoint globalPos);
     void showContextMenu(QPoint globalPos);
+    
+    // Resize edge detection
+    enum ResizeEdge { NoEdge = 0, RightEdge = 1, BottomEdge = 2, BottomRight = 3 };
+    ResizeEdge hitTestResize(const QPoint &pos) {
+        const int margin = 6;
+        bool atRight = pos.x() >= width() - margin;
+        bool atBottom = pos.y() >= height() - margin;
+        if (atRight && atBottom) return BottomRight;
+        if (atRight) return RightEdge;
+        if (atBottom) return BottomEdge;
+        return NoEdge;
+    }
     
     // Playlist operations
     void removeSelected();
@@ -825,6 +1592,20 @@ private:
     bool isSnappedToMain = false;
     WinampWindow *mainWindow = nullptr;
     int snapMode = 0;  // 0=none, 1=right of main, 2=below EQ, 3=below main
+    
+    // Shade mode
+    bool shadeMode = false;
+    int savedHeight = 232;
+    
+    // Resize
+    ResizeEdge resizeEdge = NoEdge;
+    bool isResizing = false;
+    QPoint resizeStartPos;
+    QSize resizeStartSize;
+    
+    // Font settings
+    QString playlistFontFamily = "Courier New";
+    int playlistFontSize = 8;
 };
 
 // Equalizer Window
@@ -837,18 +1618,81 @@ public:
     void followMain();
     void checkSnap();
     
+    // Get EQ band gain in dB (for audio processing)
+    // Slider range 0-63, center=32 -> maps to +12dB...-12dB
+    float getBandGainDb(int band) const {
+        if (band < 0 || band >= 10) return 0.0f;
+        if (!eqEnabled) return 0.0f;
+        return (32 - eqValues[band]) * 12.0f / 32.0f;
+    }
+    float getPreampGainDb() const {
+        if (!eqEnabled) return 0.0f;
+        return (32 - preampValue) * 12.0f / 32.0f;
+    }
+    bool isEnabled() const { return eqEnabled; }
+    
+    // Window shade mode (compact single-line view)
+    void toggleShadeMode() {
+        shadeMode = !shadeMode;
+        if (shadeMode) {
+            setFixedSize(275, 14);
+        } else {
+            setFixedSize(275, 116);
+        }
+        update();
+    }
+    bool isShadeMode() const { return shadeMode; }
+    
     void showPresetsMenu(QPoint globalPos) {
         QMenu menu;
         menu.setStyleSheet(
             "QMenu { background-color: #2b2d3d; color: #00ff00; border: 1px solid #555; font-size: 9pt; }"
             "QMenu::item:selected { background-color: #0000c6; }"
+            "QMenu::separator { height: 1px; background: #555; margin: 2px 4px; }"
         );
+        
+        // Built-in presets submenu
+        QMenu *builtinMenu = menu.addMenu("Presets");
+        builtinMenu->setStyleSheet(menu.styleSheet());
         for (int i = 0; i < numPresets; i++) {
-            QAction *action = menu.addAction(builtinPresets[i].name);
+            QAction *action = builtinMenu->addAction(builtinPresets[i].name);
             action->setData(i);
         }
+        
+        menu.addSeparator();
+        QAction *loadAct = menu.addAction("Load preset from file...");
+        QAction *saveAct = menu.addAction("Save preset to file...");
+        QAction *deleteAct = menu.addAction("Delete preset file...");
+        menu.addSeparator();
+        
+        // Custom saved presets
+        QMenu *customMenu = menu.addMenu("Saved Presets");
+        customMenu->setStyleSheet(menu.styleSheet());
+        QString presetDir = QDir::homePath() + "/.config/winamp/eqpresets";
+        QDir().mkpath(presetDir);
+        QDir dir(presetDir);
+        QStringList presetFiles = dir.entryList(QStringList() << "*.eqf" << "*.EQF", QDir::Files);
+        for (const QString &f : presetFiles) {
+            QAction *a = customMenu->addAction(QFileInfo(f).baseName());
+            a->setData("custom:" + dir.absoluteFilePath(f));
+        }
+        if (presetFiles.isEmpty()) {
+            QAction *empty = customMenu->addAction("(no saved presets)");
+            empty->setEnabled(false);
+        }
+        
         QAction *selected = menu.exec(globalPos);
-        if (selected) {
+        if (!selected) return;
+        
+        if (selected == loadAct) {
+            loadPresetFromFile();
+        } else if (selected == saveAct) {
+            savePresetToFile();
+        } else if (selected == deleteAct) {
+            deletePresetFile();
+        } else if (selected->data().toString().startsWith("custom:")) {
+            loadPresetFile(selected->data().toString().mid(7));
+        } else if (selected->data().isValid()) {
             int idx = selected->data().toInt();
             for (int i = 0; i < 10; i++) {
                 eqValues[i] = builtinPresets[idx].values[i];
@@ -1035,6 +1879,15 @@ protected:
         draggingSlider = -1;
     }
     
+    void mouseDoubleClickEvent(QMouseEvent *event) override {
+        // Double-click on titlebar toggles shade mode
+        if (event->pos().y() < 14) {
+            toggleShadeMode();
+            return;
+        }
+        QWidget::mouseDoubleClickEvent(event);
+    }
+    
     bool isSnapped() const { return isSnappedToMain; }
     
 private:
@@ -1042,37 +1895,87 @@ private:
     int preampValue;
     bool eqEnabled = true;
     bool autoEnabled = false;
+    bool shadeMode = false;
     int draggingSlider = -1;
     QPoint dragPosition;
     bool isDragging = false;
     WinampWindow *mainWindow = nullptr;
     bool isSnappedToMain = false;
+    
+    // EQ preset file I/O (matches Windows writeEQfile/readEQfile)
+    void loadPresetFromFile() {
+        QString fileName = QFileDialog::getOpenFileName(this, "Load EQ Preset",
+            QDir::homePath() + "/.config/winamp/eqpresets",
+            "EQ Presets (*.eqf);;All Files (*)");
+        if (!fileName.isEmpty()) loadPresetFile(fileName);
+    }
+    
+    void loadPresetFile(const QString &path) {
+        QFile file(path);
+        if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QTextStream in(&file);
+            in.readLine(); // header
+            QString preampLine = in.readLine();
+            if (preampLine.startsWith("Preamp="))
+                preampValue = preampLine.mid(7).toInt();
+            for (int i = 0; i < 10; i++) {
+                QString line = in.readLine();
+                if (line.startsWith(QString("Band%1=").arg(i)))
+                    eqValues[i] = line.mid(line.indexOf('=') + 1).toInt();
+            }
+            file.close();
+            update();
+        }
+    }
+    
+    void savePresetToFile() {
+        QString presetDir = QDir::homePath() + "/.config/winamp/eqpresets";
+        QDir().mkpath(presetDir);
+        bool ok;
+        QString name = QInputDialog::getText(this, "Save EQ Preset",
+            "Preset name:", QLineEdit::Normal, "My Preset", &ok);
+        if (!ok || name.isEmpty()) return;
+        QString path = presetDir + "/" + name + ".eqf";
+        QFile file(path);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            QTextStream out(&file);
+            out << "[Winamp EQ Preset]\n";
+            out << "Preamp=" << preampValue << "\n";
+            for (int i = 0; i < 10; i++)
+                out << "Band" << i << "=" << eqValues[i] << "\n";
+            file.close();
+        }
+    }
+    
+    void deletePresetFile() {
+        QString presetDir = QDir::homePath() + "/.config/winamp/eqpresets";
+        QDir dir(presetDir);
+        QStringList files = dir.entryList(QStringList() << "*.eqf", QDir::Files);
+        if (files.isEmpty()) {
+            QMessageBox::information(this, "Delete Preset", "No saved presets found.");
+            return;
+        }
+        bool ok;
+        QString selected = QInputDialog::getItem(this, "Delete EQ Preset",
+            "Select preset to delete:", files, 0, false, &ok);
+        if (ok && !selected.isEmpty()) {
+            QFile::remove(presetDir + "/" + selected);
+        }
+    }
 };
 
 // Playlist Window Constructor
 PlaylistWindow::PlaylistWindow(WinampWindow *parent) : QWidget(nullptr), mainWindow(parent) {
-    setFixedSize(275, 232);
+    setMinimumSize(275, 116);
+    resize(275, 232);
     setWindowTitle("Winamp Playlist Editor");
     setWindowFlags(Qt::Tool | Qt::FramelessWindowHint);
     
     // Position list widget within the skin frame
     // Titlebar=20px, left border=12px, right border=20px (incl scrollbar), bottom=38px
     listWidget = new QListWidget(this);
-    listWidget->setGeometry(12, 20, 275 - 12 - 20, 232 - 20 - 38);
-    listWidget->setStyleSheet(
-        "QListWidget {"
-        "  background-color: #000000;"
-        "  color: #00FF00;"
-        "  border: none;"
-        "  font-family: 'Courier New', 'Courier';"
-        "  font-size: 8pt;"
-        "  selection-background-color: #0000C6;"
-        "  selection-color: #00FF00;"
-        "}"
-        "QListWidget::item {"
-        "  padding: 0px;"
-        "}"
-    );
+    updateListGeometry();
+    applyPlaylistColors();
     listWidget->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     listWidget->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     
@@ -1081,6 +1984,9 @@ PlaylistWindow::PlaylistWindow(WinampWindow *parent) : QWidget(nullptr), mainWin
     listWidget->setDragEnabled(true);
     listWidget->setDropIndicatorShown(true);
     listWidget->setDragDropMode(QAbstractItemView::InternalMove);
+    
+    // Enable resizing from edges and corners
+    setMouseTracking(true);
     
     // Connect signals for drag and drop
     connect(listWidget, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *item) {
@@ -1100,6 +2006,37 @@ PlaylistWindow::PlaylistWindow(WinampWindow *parent) : QWidget(nullptr), mainWin
 
     // Install event filter for keyboard shortcuts and right-click context menu
     listWidget->installEventFilter(this);
+}
+
+void PlaylistWindow::applyPlaylistColors() {
+    listWidget->setStyleSheet(
+        QString("QListWidget {"
+        "  background-color: %1;"
+        "  color: %2;"
+        "  border: none;"
+        "  font-family: 'Courier New', 'Courier';"
+        "  font-size: %3pt;"
+        "  selection-background-color: %4;"
+        "  selection-color: %5;"
+        "}"
+        "QListWidget::item {"
+        "  padding: 0px;"
+        "}")
+        .arg(g_plColors.normBg.name())
+        .arg(g_plColors.normal.name())
+        .arg(playlistFontSize)
+        .arg(g_plColors.selectBg.name())
+        .arg(g_plColors.current.name())
+    );
+}
+
+void PlaylistWindow::updateListGeometry() {
+    listWidget->setGeometry(12, 20, width() - 12 - 20, height() - 20 - 38);
+}
+
+void PlaylistWindow::resizeEvent(QResizeEvent *event) {
+    QWidget::resizeEvent(event);
+    updateListGeometry();
 }
 
 bool PlaylistWindow::eventFilter(QObject *obj, QEvent *event) {
@@ -1613,6 +2550,18 @@ void PlaylistWindow::mousePressEvent(QMouseEvent *event) {
             event->accept();
             return;
         }
+        // Check for resize edges
+        if (!shadeMode) {
+            ResizeEdge edge = hitTestResize(event->pos());
+            if (edge != NoEdge) {
+                isResizing = true;
+                resizeEdge = edge;
+                resizeStartPos = event->globalPosition().toPoint();
+                resizeStartSize = size();
+                event->accept();
+                return;
+            }
+        }
         isDragging = true;
         dragPosition = event->globalPosition().toPoint() - frameGeometry().topLeft();
         event->accept();
@@ -1633,6 +2582,31 @@ void PlaylistWindow::dropEvent(QDropEvent *event) {
 }
 
 void PlaylistWindow::mouseMoveEvent(QMouseEvent *event) {
+    // Handle resizing
+    if (isResizing) {
+        QPoint delta = event->globalPosition().toPoint() - resizeStartPos;
+        QSize newSize = resizeStartSize;
+        if (resizeEdge & RightEdge)
+            newSize.setWidth(qMax(275, resizeStartSize.width() + delta.x()));
+        if (resizeEdge & BottomEdge)
+            newSize.setHeight(qMax(116, resizeStartSize.height() + delta.y()));
+        resize(newSize);
+        return;
+    }
+    
+    // Update cursor for resize edges
+    if (!isDragging && !shadeMode) {
+        ResizeEdge edge = hitTestResize(event->pos());
+        if (edge == BottomRight)
+            setCursor(Qt::SizeFDiagCursor);
+        else if (edge == RightEdge)
+            setCursor(Qt::SizeHorCursor);
+        else if (edge == BottomEdge)
+            setCursor(Qt::SizeVerCursor);
+        else
+            setCursor(Qt::ArrowCursor);
+    }
+    
     if (isDragging) {
         move(event->globalPosition().toPoint() - dragPosition);
         checkSnap();
@@ -1642,6 +2616,17 @@ void PlaylistWindow::mouseMoveEvent(QMouseEvent *event) {
 void PlaylistWindow::mouseReleaseEvent(QMouseEvent *event) {
     Q_UNUSED(event);
     isDragging = false;
+    isResizing = false;
+    resizeEdge = NoEdge;
+}
+
+void PlaylistWindow::mouseDoubleClickEvent(QMouseEvent *event) {
+    // Double-click on titlebar toggles shade mode
+    if (event->pos().y() < 20) {
+        toggleShadeMode();
+        return;
+    }
+    QWidget::mouseDoubleClickEvent(event);
 }
 
 void PlaylistWindow::dragEnterEvent(QDragEnterEvent *event) {
@@ -2226,22 +3211,184 @@ private:
     QTimer *renderTimer;
 };
 
+// ============================================================================
+// MPRIS2 D-Bus Adaptor — Linux desktop media player integration
+// Implements org.mpris.MediaPlayer2 and org.mpris.MediaPlayer2.Player
+// This enables media keys (play/pause/next/prev), KDE Connect, panel widgets, etc.
+// Matches what Windows Winamp does with its global hotkeys + remote control features
+// ============================================================================
+#ifdef QT_DBUS_LIB
+
+class Mpris2RootAdaptor : public QDBusAbstractAdaptor {
+    Q_OBJECT
+    Q_CLASSINFO("D-Bus Interface", "org.mpris.MediaPlayer2")
+    Q_PROPERTY(bool CanQuit READ canQuit)
+    Q_PROPERTY(bool CanRaise READ canRaise)
+    Q_PROPERTY(bool HasTrackList READ hasTrackList)
+    Q_PROPERTY(QString Identity READ identity)
+    Q_PROPERTY(QStringList SupportedUriSchemes READ supportedUriSchemes)
+    Q_PROPERTY(QStringList SupportedMimeTypes READ supportedMimeTypes)
+
+public:
+    explicit Mpris2RootAdaptor(QObject *parent) : QDBusAbstractAdaptor(parent) {}
+
+    bool canQuit() const { return true; }
+    bool canRaise() const { return true; }
+    bool hasTrackList() const { return false; }
+    QString identity() const { return "Winamp"; }
+    QStringList supportedUriSchemes() const { return {"file", "http", "https"}; }
+    QStringList supportedMimeTypes() const {
+        return {"audio/mpeg", "audio/x-wav", "audio/ogg", "audio/flac", "audio/x-m4a", 
+                "audio/aac", "audio/opus", "audio/x-ms-wma"};
+    }
+
+public slots:
+    void Raise() {
+        QWidget *w = qobject_cast<QWidget*>(parent());
+        if (w) { w->show(); w->raise(); w->activateWindow(); }
+    }
+    void Quit() { QApplication::quit(); }
+};
+
+class Mpris2PlayerAdaptor : public QDBusAbstractAdaptor {
+    Q_OBJECT
+    Q_CLASSINFO("D-Bus Interface", "org.mpris.MediaPlayer2.Player")
+    Q_PROPERTY(QString PlaybackStatus READ playbackStatus)
+    Q_PROPERTY(double Rate READ rate WRITE setRate)
+    Q_PROPERTY(QVariantMap Metadata READ metadata)
+    Q_PROPERTY(double Volume READ volume WRITE setVolume)
+    Q_PROPERTY(qlonglong Position READ position)
+    Q_PROPERTY(double MinimumRate READ minimumRate)
+    Q_PROPERTY(double MaximumRate READ maximumRate)
+    Q_PROPERTY(bool CanGoNext READ canGoNext)
+    Q_PROPERTY(bool CanGoPrevious READ canGoPrevious)
+    Q_PROPERTY(bool CanPlay READ canPlay)
+    Q_PROPERTY(bool CanPause READ canPause)
+    Q_PROPERTY(bool CanSeek READ canSeek)
+    Q_PROPERTY(bool CanControl READ canControl)
+
+public:
+    Mpris2PlayerAdaptor(QMediaPlayer *player, QAudioOutput *audioOut, QObject *parent)
+        : QDBusAbstractAdaptor(parent), m_player(player), m_audioOutput(audioOut) {
+        
+        connect(m_player, &QMediaPlayer::playbackStateChanged, this, [this]() {
+            emitPropertyChanged("PlaybackStatus", playbackStatus());
+        });
+        connect(m_player, &QMediaPlayer::metaDataChanged, this, [this]() {
+            emitPropertyChanged("Metadata", metadata());
+        });
+        connect(m_player, &QMediaPlayer::positionChanged, this, [this]() {
+            // Don't spam position updates — only on significant changes
+        });
+    }
+
+    QString playbackStatus() const {
+        switch (m_player->playbackState()) {
+            case QMediaPlayer::PlayingState: return "Playing";
+            case QMediaPlayer::PausedState: return "Paused";
+            default: return "Stopped";
+        }
+    }
+    
+    double rate() const { return 1.0; }
+    void setRate(double) {} // Not supported
+    double minimumRate() const { return 1.0; }
+    double maximumRate() const { return 1.0; }
+
+    QVariantMap metadata() const {
+        QVariantMap map;
+        map["mpris:trackid"] = QVariant::fromValue(QDBusObjectPath("/org/mpris/MediaPlayer2/CurrentTrack"));
+        if (m_player->duration() > 0)
+            map["mpris:length"] = m_player->duration() * 1000; // microseconds
+        
+        QMediaMetaData meta = m_player->metaData();
+        QString title = meta.stringValue(QMediaMetaData::Title);
+        if (!title.isEmpty()) map["xesam:title"] = title;
+        
+        QString artist = meta.stringValue(QMediaMetaData::AlbumArtist);
+        if (artist.isEmpty()) artist = meta.stringValue(QMediaMetaData::ContributingArtist);
+        if (!artist.isEmpty()) map["xesam:artist"] = QStringList{artist};
+        
+        QString album = meta.stringValue(QMediaMetaData::AlbumTitle);
+        if (!album.isEmpty()) map["xesam:album"] = album;
+        
+        QUrl source = m_player->source();
+        if (source.isValid()) map["xesam:url"] = source.toString();
+        
+        return map;
+    }
+
+    double volume() const { return m_audioOutput->volume(); }
+    void setVolume(double v) { m_audioOutput->setVolume(qBound(0.0, v, 1.0)); }
+
+    qlonglong position() const { return m_player->position() * 1000; } // microseconds
+
+    bool canGoNext() const { return true; }
+    bool canGoPrevious() const { return true; }
+    bool canPlay() const { return true; }
+    bool canPause() const { return true; }
+    bool canSeek() const { return m_player->duration() > 0; }
+    bool canControl() const { return true; }
+
+public slots:
+    void Next();
+    void Previous();
+    void Pause() { m_player->pause(); }
+    void PlayPause() {
+        if (m_player->playbackState() == QMediaPlayer::PlayingState)
+            m_player->pause();
+        else
+            m_player->play();
+    }
+    void Stop() { m_player->stop(); }
+    void Play() { m_player->play(); }
+    void Seek(qlonglong offset) {
+        qint64 newPos = m_player->position() + offset / 1000; // from microseconds
+        m_player->setPosition(qBound(0LL, newPos, m_player->duration()));
+    }
+    void SetPosition(const QDBusObjectPath &, qlonglong pos) {
+        m_player->setPosition(pos / 1000); // from microseconds
+    }
+    void OpenUri(const QString &uri);
+
+private:
+    void emitPropertyChanged(const QString &property, const QVariant &value) {
+        QDBusMessage msg = QDBusMessage::createSignal(
+            "/org/mpris/MediaPlayer2",
+            "org.freedesktop.DBus.Properties",
+            "PropertiesChanged");
+        msg << "org.mpris.MediaPlayer2.Player";
+        QVariantMap changedProps;
+        changedProps[property] = value;
+        msg << changedProps;
+        msg << QStringList();
+        QDBusConnection::sessionBus().send(msg);
+    }
+
+    QMediaPlayer *m_player;
+    QAudioOutput *m_audioOutput;
+};
+
+#endif // QT_DBUS_LIB
+
 // Main Winamp Window
 class WinampWindow : public QWidget {
     Q_OBJECT
 public:
-    WinampWindow(QWidget *parent = nullptr) : QWidget(parent), dragPosition(0,0), isDragging(false), 
-                 volume(200), hoveredButton(-1), pressedButton(-1),
+    WinampWindow(QWidget *parent = nullptr) : QWidget(parent), dragPosition(0,0), isDragging(false),
+                 volume(200), balance(0), hoveredButton(-1), pressedButton(-1),
                  shuffleOn(false), repeatOn(false), eqBtnOn(false), plBtnOn(false),
-                 repeatTrack(false),
-                 isDraggingVolume(false), isDraggingPos(false), scrollOffset(0),
-                 visMode(1) {
+                 repeatTrack(false), stopAfterCurrent(false),
+                 isDraggingVolume(false), isDraggingBalance(false), isDraggingPos(false), 
+                 scrollOffset(0), visMode(1), doubleSize(false), shadeMode(false),
+                 alwaysOnTop(false), clutterbarOpen(false) {
         setFixedSize(275, 116);
         setWindowTitle("Winamp 5.666 for Linux");
         setWindowFlags(Qt::FramelessWindowHint);
         setAttribute(Qt::WA_TranslucentBackground, false);
         setMouseTracking(true);
         setFocusPolicy(Qt::StrongFocus);
+        setAcceptDrops(true);  // Accept drag-drop on main window too
         
         // Initialize visualization state
         memset(saBarHeight, 0, sizeof(saBarHeight));
@@ -2249,6 +3396,11 @@ public:
         memset(saPeakVel, 0, sizeof(saPeakVel));
         memset(spectrumData, 0, sizeof(spectrumData));
         memset(oscData, 0, sizeof(oscData));
+        memset(vuData, 0, sizeof(vuData));
+        
+        // Initialize easter egg state
+        memset(eggStr, 0, sizeof(eggStr));
+        eggStat = 0;
         
         // Setup audio
         player = new QMediaPlayer(this);
@@ -2261,6 +3413,19 @@ public:
         player->setAudioBufferOutput(audioBufferOutput);
         connect(audioBufferOutput, &QAudioBufferOutput::audioBufferReceived,
                 this, &WinampWindow::processAudioBuffer);
+        
+        // System tray icon (matches Windows SYSTRAY.cpp)
+        setupSystemTray();
+        
+        // MPRIS2 D-Bus integration — Linux desktop media keys and remote control
+        // (equivalent to Windows global hotkeys + WM_COMMAND remote control)
+#ifdef QT_DBUS_LIB
+        new Mpris2RootAdaptor(this);
+        new Mpris2PlayerAdaptor(player, audioOutput, this);
+        QDBusConnection dbus = QDBusConnection::sessionBus();
+        dbus.registerObject("/org/mpris/MediaPlayer2", this);
+        dbus.registerService("org.mpris.MediaPlayer2.winamp");
+#endif
         
         // Update timer (50ms = 20fps like original)
         timer = new QTimer(this);
@@ -2280,6 +3445,14 @@ public:
         // Auto-advance to next track when current one ends
         connect(player, &QMediaPlayer::mediaStatusChanged, this, [this](QMediaPlayer::MediaStatus status) {
             if (status == QMediaPlayer::EndOfMedia) {
+                // Stop after current track (like Windows g_stopaftercur)
+                if (stopAfterCurrent) {
+                    stopAfterCurrent = false;
+                    player->stop();
+                    update();
+                    return;
+                }
+                
                 // Repeat track (repeat one): replay same track
                 if (repeatOn && repeatTrack) {
                     player->setPosition(0);
@@ -2328,6 +3501,9 @@ public:
                 else
                     metaTitle = title;
             }
+            
+            // Update tray tooltip
+            updateTrayTooltip();
         });
         
         // Create playlist and EQ windows
@@ -2338,6 +3514,10 @@ public:
         // Position windows: EQ below main, playlist to the right of main
         playlistWindow->move(x() + width(), y());  // right of main
         eqWindow->move(x(), y() + height());
+        
+        // Load bookmarks and recent files
+        BookmarkManager::instance().load();
+        RecentFilesManager::instance().load();
         
         // Load saved settings (overrides defaults above)
         loadAllSettings();
@@ -2367,11 +3547,16 @@ public:
 public slots:
     void onPlayFile() {
         QString file = QFileDialog::getOpenFileName(this, "Open File", QString(), 
-            "Audio Files (*.mp3 *.wav *.flac *.ogg *.m4a *.aac);;All Files (*)");
+            "Audio Files (*.mp3 *.wav *.flac *.ogg *.m4a *.aac *.wma);;All Files (*)");
         if (!file.isEmpty()) {
             playFile(file);
+            RecentFilesManager::instance().addFile(file);
         }
     }
+
+    // Public accessors for main() CLI argument handling
+    QMediaPlayer *getPlayer() { return player; }
+    PlaylistWindow *getPlaylistWindow() { return playlistWindow; }
 
     void onPlayLocation() {
         PlayLocationDialog dialog(this);
@@ -2384,17 +3569,62 @@ public slots:
     }
 
     void onToggleAlwaysOnTop(bool checked) {
+        alwaysOnTop = checked;
         setWindowFlag(Qt::WindowStaysOnTopHint, checked);
         show(); // Re-show to apply the flag change
+    }
+    
+    void onToggleDoubleSize() {
+        doubleSize = !doubleSize;
+        if (doubleSize) {
+            setFixedSize(550, 232);
+        } else {
+            setFixedSize(275, 116);
+        }
+        update();
+    }
+    
+    void onToggleShadeMode() {
+        shadeMode = !shadeMode;
+        if (shadeMode) {
+            setFixedSize(275, 14);
+        } else {
+            if (doubleSize)
+                setFixedSize(550, 232);
+            else
+                setFixedSize(275, 116);
+        }
+        update();
     }
 
     void onShowAbout() {
         AboutDialog aboutDialog(WinampBitmaps::instance().basePath, this);
         aboutDialog.exec();
     }
+    
+    void onJumpToFile() {
+        JumpToFileDialog dialog(playlistWindow->allTracks(), this);
+        if (dialog.exec() == QDialog::Accepted) {
+            int idx = dialog.getSelectedIndex();
+            if (idx >= 0 && idx < playlistWindow->trackCount()) {
+                playlistWindow->setCurrentTrackIndex(idx);
+                playTrack(playlistWindow->trackAt(idx));
+            }
+        }
+    }
+    
+    void onAddBookmark() {
+        if (!currentFile.isEmpty()) {
+            QString title = metaTitle.isEmpty() ? QFileInfo(currentFile).baseName() : metaTitle;
+            BookmarkManager::instance().addBookmark(title, currentFile);
+        }
+    }
 
     void onSkinChanged(const QString &skinPath) {
         WinampBitmaps::instance().loadAll(skinPath);
+        
+        // Parse skin playlist colors (PLEDIT.TXT)
+        g_plColors = parsePleditTxt(skinPath);
         
         // Load any missing bitmaps from fallback paths
         QString appDir = QCoreApplication::applicationDirPath();
@@ -2413,6 +3643,7 @@ public slots:
         
         // Force all windows to repaint with the new skin
         update();
+        playlistWindow->applyPlaylistColors();
         playlistWindow->update();
         eqWindow->update();
 
@@ -2467,11 +3698,34 @@ public slots:
 
         if (fmt.sampleFormat() == QAudioFormat::Int16) {
             extractData(buffer.constData<qint16>());
+            // Compute VU meter levels (RMS per channel)
+            const qint16 *data = buffer.constData<qint16>();
+            float lSum = 0, rSum = 0;
+            int n = qMin(sampleCount, 512);
+            for (int i = 0; i < n; i++) {
+                float l = data[i * channels] / 32768.0f;
+                float r = (channels > 1) ? data[i * channels + 1] / 32768.0f : l;
+                lSum += l * l;
+                rSum += r * r;
+            }
+            vuData[0] = sqrtf(lSum / n) * 3.0f; // scale up for visibility
+            vuData[1] = sqrtf(rSum / n) * 3.0f;
             // Feed PCM to Milkdrop if open
             if (milkdropWindow && milkdropWindow->isVisible())
                 milkdropWindow->feedPCMInt16(buffer.constData<qint16>(), sampleCount, channels);
         } else if (fmt.sampleFormat() == QAudioFormat::Float) {
             extractData(buffer.constData<float>());
+            const float *data = buffer.constData<float>();
+            float lSum = 0, rSum = 0;
+            int n = qMin(sampleCount, 512);
+            for (int i = 0; i < n; i++) {
+                float l = data[i * channels];
+                float r = (channels > 1) ? data[i * channels + 1] : l;
+                lSum += l * l;
+                rSum += r * r;
+            }
+            vuData[0] = sqrtf(lSum / n) * 3.0f;
+            vuData[1] = sqrtf(rSum / n) * 3.0f;
             if (milkdropWindow && milkdropWindow->isVisible())
                 milkdropWindow->feedPCMFloat(buffer.constData<float>(), sampleCount, channels);
         }
@@ -2483,6 +3737,33 @@ protected:
         p.setRenderHint(QPainter::Antialiasing, false);
 
         auto &bmp = WinampBitmaps::instance();
+        
+        // ---- Shade mode: compact 275x14 titlebar-only view ----
+        if (shadeMode) {
+            // Draw shade background from titlebar.bmp (shade bar)
+            if (!bmp.titlebar.isNull()) {
+                // Shade titlebar: active at line 29, inactive at line 42, each 275x14
+                int shadeY = isActiveWindow() ? 29 : 42;
+                p.drawPixmap(0, 0, bmp.titlebar, 27, shadeY, 275, 14);
+            } else {
+                p.fillRect(0, 0, 275, 14, QColor(66, 66, 99));
+            }
+            // Draw scrolling title text in shade mode
+            QString title = metaTitle.isEmpty() ? QFileInfo(currentFile).completeBaseName() : metaTitle;
+            if (!title.isEmpty()) {
+                p.setPen(QColor(0, 255, 0));
+                p.setFont(QFont("Small Fonts", 7));
+                p.setClipRect(30, 2, 200, 11);
+                p.drawText(30 - (scrollOffset % (title.length() * 6 + 200)), 10, title + "  ***  " + title);
+                p.setClipping(false);
+            }
+            return;
+        }
+        
+        // ---- Double-size: scale everything 2x ----
+        if (doubleSize) {
+            p.scale(2.0, 2.0);
+        }
 
         // Main background
         if (!bmp.main.isNull())
@@ -2621,6 +3902,22 @@ protected:
             p.drawPixmap(thumbX, 58, bmp.volume, thumbSrcX, 422, 14, 11);
         }
 
+        // Balance/Pan slider — uses BALANCE.BMP (same format as volume)
+        // Falls back to volume.bmp if balance isn't available
+        if (!bmp.balance.isNull()) {
+            int balNorm = qBound(0, (balance + 127) * 27 / 254, 27); // -127..+127 -> 0..27
+            p.drawPixmap(177, 57, bmp.balance, 0, balNorm * 15, 38, 13);
+            int balThumbX = 177 + ((balance + 127) * 24) / 254;
+            int balThumbSrcX = isDraggingBalance ? 15 : 0;
+            p.drawPixmap(balThumbX, 58, bmp.balance, balThumbSrcX, 422, 14, 11);
+        } else if (!bmp.volume.isNull()) {
+            // Fallback: draw balance using volume.bmp (cropped narrower)
+            int balNorm = qBound(0, (balance + 127) * 27 / 254, 27);
+            p.drawPixmap(177, 57, bmp.volume, 15, balNorm * 15, 38, 13);
+            int balThumbX = 177 + ((balance + 127) * 24) / 254;
+            p.drawPixmap(balThumbX, 58, bmp.volume, 0, 422, 14, 11);
+        }
+
         // Position bar
         if (!bmp.posbar.isNull()) {
             p.drawPixmap(16, 72, bmp.posbar, 0, 0, 248, 10);
@@ -2642,6 +3939,12 @@ protected:
         // Visualization area: (24,43) to (99,59) — 75x16
         if (visMode == 1) drawSpectrumAnalyzer(p);
         else if (visMode == 2) drawOscilloscope(p);
+        else if (visMode == 3) drawVUMeter(p);
+        
+        // Double-size mode: scale 2x
+        if (doubleSize && !shadeMode) {
+            // Already handled by transform in actual paint
+        }
     }
 
     void drawSpectrumAnalyzer(QPainter &p) {
@@ -2695,7 +3998,64 @@ protected:
         }
     }
 
+    // VU Meter — dual-channel level meter (matches Windows vu.cpp)
+    void drawVUMeter(QPainter &p) {
+        const int visX = 24, visY = 43, visH = 16;
+        p.fillRect(visX, visY, 75, visH, visColors[0]);
+        
+        // Left channel
+        int leftLevel = qBound(0, (int)(vuData[0] * 35), 35);
+        for (int i = 0; i < leftLevel; i++) {
+            int colorIdx = 17 - (i * 15 / 35);
+            if (colorIdx < 2) colorIdx = 2;
+            if (colorIdx > 17) colorIdx = 17;
+            p.fillRect(visX + i * 2, visY, 1, 7, visColors[colorIdx]);
+        }
+        
+        // Right channel
+        int rightLevel = qBound(0, (int)(vuData[1] * 35), 35);
+        for (int i = 0; i < rightLevel; i++) {
+            int colorIdx = 17 - (i * 15 / 35);
+            if (colorIdx < 2) colorIdx = 2;
+            if (colorIdx > 17) colorIdx = 17;
+            p.fillRect(visX + i * 2, visY + 9, 1, 7, visColors[colorIdx]);
+        }
+        
+        // Labels
+        p.setPen(visColors[1]);
+        p.setFont(QFont("Courier", 5));
+        p.drawText(visX + 72, visY + 6, "L");
+        p.drawText(visX + 72, visY + 15, "R");
+    }
+
     void keyPressEvent(QKeyEvent *event) override {
+        // Easter egg detection (matches Windows eggstat/eggstr from main.cpp)
+        if (event->text().length() == 1) {
+            QChar ch = event->text().at(0).toUpper();
+            const QString egg1 = "NULLSOFT";
+            const QString egg2 = "WINAMP";
+            // Shift characters left, append new char
+            for (int i = 0; i < 7; i++) eggStr[i] = eggStr[i + 1];
+            eggStr[7] = ch.toLatin1();
+            eggStr[8] = 0;
+            
+            if (QString(eggStr).endsWith(egg1)) {
+                eggStat = 1;
+                setWindowTitle("Winamp - \"It really whips the llama's ass!\"");
+                QTimer::singleShot(3000, this, [this]() { 
+                    setWindowTitle("Winamp 5.666 for Linux"); 
+                    eggStat = 0;
+                });
+            } else if (QString(eggStr).endsWith(egg2)) {
+                eggStat = 2;
+                setWindowTitle("Winamp - by Justin Frankel & the Nullsoft crew");
+                QTimer::singleShot(3000, this, [this]() { 
+                    setWindowTitle("Winamp 5.666 for Linux"); 
+                    eggStat = 0;
+                });
+            }
+        }
+        
         switch (event->key()) {
             case Qt::Key_Space:
                 if (player->playbackState() == QMediaPlayer::PlayingState)
@@ -2706,7 +4066,9 @@ protected:
                     openFile();
                 break;
             case Qt::Key_V:
-                player->stop();
+                if (event->modifiers() == Qt::NoModifier) {
+                    player->stop();
+                }
                 break;
             case Qt::Key_C:
                 player->pause();
@@ -2730,27 +4092,67 @@ protected:
                 }
                 break;
             }
+            case Qt::Key_X:
+                // X = Play (like Windows Winamp)
+                if (!currentFile.isEmpty()) player->play();
+                else openFile();
+                break;
             case Qt::Key_L:
-                openFile();
+                if (event->modifiers() & Qt::ControlModifier)
+                    onPlayLocation();
+                else
+                    openFile();
                 break;
             case Qt::Key_J: {
-                // Jump to time dialog (J or Ctrl+J)
-                bool ok;
-                QString timeStr = QInputDialog::getText(this, "Jump to Time",
-                    "Enter time (MM:SS or seconds):", QLineEdit::Normal, "", &ok);
-                if (ok && !timeStr.isEmpty()) {
-                    qint64 jumpMs = 0;
-                    if (timeStr.contains(':')) {
-                        QStringList parts = timeStr.split(':');
-                        if (parts.size() >= 2)
-                            jumpMs = (parts[0].toInt() * 60 + parts[1].toInt()) * 1000;
-                    } else {
-                        jumpMs = timeStr.toInt() * 1000;
+                if (event->modifiers() & Qt::ControlModifier) {
+                    // Ctrl+J = Jump to file (search in playlist)
+                    onJumpToFile();
+                } else {
+                    // J = Jump to time dialog
+                    bool ok;
+                    QString timeStr = QInputDialog::getText(this, "Jump to Time",
+                        "Enter time (MM:SS or seconds):", QLineEdit::Normal, "", &ok);
+                    if (ok && !timeStr.isEmpty()) {
+                        qint64 jumpMs = 0;
+                        if (timeStr.contains(':')) {
+                            QStringList parts = timeStr.split(':');
+                            if (parts.size() >= 2)
+                                jumpMs = (parts[0].toInt() * 60 + parts[1].toInt()) * 1000;
+                        } else {
+                            jumpMs = timeStr.toInt() * 1000;
+                        }
+                        player->setPosition(qBound(0LL, jumpMs, player->duration()));
                     }
-                    player->setPosition(qBound(0LL, jumpMs, player->duration()));
                 }
                 break;
             }
+            case Qt::Key_D:
+                if (event->modifiers() & Qt::ControlModifier) {
+                    // Ctrl+D = Toggle double size
+                    onToggleDoubleSize();
+                }
+                break;
+            case Qt::Key_W:
+                if (event->modifiers() & Qt::ControlModifier) {
+                    // Ctrl+W = Toggle windowshade mode
+                    onToggleShadeMode();
+                }
+                break;
+            case Qt::Key_T:
+                if (event->modifiers() & Qt::ControlModifier) {
+                    // Ctrl+T = Toggle always on top
+                    onToggleAlwaysOnTop(!alwaysOnTop);
+                }
+                break;
+            case Qt::Key_P:
+                if (event->modifiers() & Qt::ControlModifier) {
+                    // Ctrl+P = Preferences
+                    PreferencesDialog *prefs = new PreferencesDialog(this);
+                    connect(prefs, &PreferencesDialog::skinChanged, this, &WinampWindow::onSkinChanged);
+                    prefs->setAttribute(Qt::WA_DeleteOnClose);
+                    prefs->exec();
+                }
+                break;
             case Qt::Key_Left:
                 player->setPosition(qMax(0LL, player->position() - 5000));
                 break;
@@ -2778,6 +4180,20 @@ protected:
                 audioOutput->setVolume(volume / 255.0f);
                 update();
                 break;
+            case Qt::Key_R:
+                if (event->modifiers() == Qt::NoModifier) {
+                    // R = Toggle repeat
+                    repeatOn = !repeatOn;
+                    update();
+                }
+                break;
+            case Qt::Key_S:
+                if (event->modifiers() == Qt::NoModifier) {
+                    // S = Toggle shuffle
+                    shuffleOn = !shuffleOn;
+                    update();
+                }
+                break;
             default:
                 QWidget::keyPressEvent(event);
                 return;
@@ -2786,33 +4202,212 @@ protected:
     }
 
     void showContextMenu(QPoint globalPos) {
-        QMenu menu;
-        menu.setStyleSheet(
+        static const char *menuStyle =
             "QMenu { background-color: #2b2d3d; color: #00ff00; border: 1px solid #555; font-size: 9pt; }"
             "QMenu::item:selected { background-color: #0000c6; }"
-        );
-        QAction *playFileAct = menu.addAction("Play file...");
-        QAction *playLocAct = menu.addAction("Play location...");
+            "QMenu::item:checked { font-weight: bold; }"
+            "QMenu::item:disabled { color: #666; }"
+            "QMenu::separator { height: 1px; background: #555; margin: 2px 4px; }";
+
+        QMenu menu;
+        menu.setStyleSheet(menuStyle);
+        
+        // === Winamp main menu (matching Windows main.cpp top_menu) ===
+        
+        // -- Play submenu --
+        QMenu *playMenu = menu.addMenu("Play");
+        playMenu->setStyleSheet(menuStyle);
+        QAction *playFileAct = playMenu->addAction("Play file...\tL");
+        QAction *playLocAct = playMenu->addAction("Play location...\tCtrl+L");
+        playMenu->addSeparator();
+        
+        // -- Recent files submenu --
+        QMenu *recentMenu = playMenu->addMenu("Recent files");
+        recentMenu->setStyleSheet(menuStyle);
+        auto &recent = RecentFilesManager::instance();
+        if (recent.recentFiles.isEmpty()) {
+            QAction *empty = recentMenu->addAction("(no recent files)");
+            empty->setEnabled(false);
+        } else {
+            for (int i = 0; i < recent.recentFiles.size(); i++) {
+                QAction *a = recentMenu->addAction(
+                    QString("%1. %2").arg(i + 1).arg(QFileInfo(recent.recentFiles[i]).fileName()));
+                a->setData(recent.recentFiles[i]);
+            }
+        }
+        
+        // -- Bookmarks submenu --
+        QMenu *bmMenu = menu.addMenu("Bookmarks");
+        bmMenu->setStyleSheet(menuStyle);
+        QAction *addBmAct = bmMenu->addAction("Add current as bookmark");
+        addBmAct->setEnabled(!currentFile.isEmpty());
+        bmMenu->addSeparator();
+        auto &bmMgr = BookmarkManager::instance();
+        for (int i = 0; i < bmMgr.bookmarks.size(); i++) {
+            QAction *a = bmMenu->addAction(bmMgr.bookmarks[i].title);
+            a->setData("bm:" + QString::number(i));
+        }
+        if (bmMgr.bookmarks.isEmpty()) {
+            QAction *empty = bmMenu->addAction("(no bookmarks)");
+            empty->setEnabled(false);
+        }
+        
         menu.addSeparator();
-        QAction *milkdropAct = menu.addAction("Milkdrop visualization");
+        
+        // -- Options submenu --
+        QMenu *optMenu = menu.addMenu("Options");
+        optMenu->setStyleSheet(menuStyle);
+        QAction *aotAct = optMenu->addAction("Always on top\tCtrl+T");
+        aotAct->setCheckable(true);
+        aotAct->setChecked(alwaysOnTop);
+        
+        QAction *dsizeAct = optMenu->addAction("Double size\tCtrl+D");
+        dsizeAct->setCheckable(true);
+        dsizeAct->setChecked(doubleSize);
+        
+        QAction *shadeAct = optMenu->addAction("Windowshade mode\tCtrl+W");
+        shadeAct->setCheckable(true);
+        shadeAct->setChecked(shadeMode);
+        
+        optMenu->addSeparator();
+        QAction *prefsAct = optMenu->addAction("Preferences...\tCtrl+P");
+        
+        optMenu->addSeparator();
+        QAction *stopAfterAct = optMenu->addAction("Stop after current");
+        stopAfterAct->setCheckable(true);
+        stopAfterAct->setChecked(stopAfterCurrent);
+        
+        // -- Playback submenu --
+        QMenu *pbMenu = menu.addMenu("Playback");
+        pbMenu->setStyleSheet(menuStyle);
+        QAction *jumpTimeAct = pbMenu->addAction("Jump to time...\tJ");
+        QAction *jumpFileAct = pbMenu->addAction("Jump to file...\tCtrl+J");
+        pbMenu->addSeparator();
+        
+        QAction *shuffAct = pbMenu->addAction("Shuffle");
+        shuffAct->setCheckable(true);
+        shuffAct->setChecked(shuffleOn);
+        
+        // Repeat submenu
+        QMenu *repMenu = pbMenu->addMenu("Repeat");
+        repMenu->setStyleSheet(menuStyle);
+        QAction *repOffAct = repMenu->addAction("Off");
+        repOffAct->setCheckable(true);
+        repOffAct->setChecked(!repeatOn);
+        QAction *repAllAct = repMenu->addAction("Repeat all");
+        repAllAct->setCheckable(true);
+        repAllAct->setChecked(repeatOn && !repeatTrack);
+        QAction *repOneAct = repMenu->addAction("Repeat track");
+        repOneAct->setCheckable(true);
+        repOneAct->setChecked(repeatOn && repeatTrack);
+        
+        // -- Windows submenu --
+        QMenu *winMenu = menu.addMenu("Windows");
+        winMenu->setStyleSheet(menuStyle);
+        QAction *eqTogAct = winMenu->addAction("Equalizer\tAlt+G");
+        eqTogAct->setCheckable(true);
+        eqTogAct->setChecked(eqBtnOn);
+        QAction *plTogAct = winMenu->addAction("Playlist editor\tAlt+E");
+        plTogAct->setCheckable(true);
+        plTogAct->setChecked(plBtnOn);
+        winMenu->addSeparator();
+        QAction *milkdropAct = winMenu->addAction("Milkdrop visualization");
+        
+        // -- Visualization submenu --
+        QMenu *visMenu = menu.addMenu("Visualization");
+        visMenu->setStyleSheet(menuStyle);
+        QAction *visOffAct = visMenu->addAction("Off");
+        visOffAct->setCheckable(true);
+        visOffAct->setChecked(visMode == 0);
+        QAction *visSpecAct = visMenu->addAction("Spectrum analyzer");
+        visSpecAct->setCheckable(true);
+        visSpecAct->setChecked(visMode == 1);
+        QAction *visOscAct = visMenu->addAction("Oscilloscope");
+        visOscAct->setCheckable(true);
+        visOscAct->setChecked(visMode == 2);
+        QAction *visVuAct = visMenu->addAction("VU meter");
+        visVuAct->setCheckable(true);
+        visVuAct->setChecked(visMode == 3);
+        
         menu.addSeparator();
-        QAction *prefsAct = menu.addAction("Preferences...");
+        
         QAction *aboutAct = menu.addAction("About Winamp...");
         menu.addSeparator();
         QAction *quitAct = menu.addAction("Exit");
 
+        // === Handle selection ===
         QAction *sel = menu.exec(globalPos);
+        if (!sel) return;
+        
         if (sel == playFileAct) onPlayFile();
         else if (sel == playLocAct) onPlayLocation();
-        else if (sel == milkdropAct) openMilkdrop();
+        else if (sel == addBmAct) onAddBookmark();
+        else if (sel == aotAct) onToggleAlwaysOnTop(sel->isChecked());
+        else if (sel == dsizeAct) onToggleDoubleSize();
+        else if (sel == shadeAct) onToggleShadeMode();
+        else if (sel == stopAfterAct) stopAfterCurrent = sel->isChecked();
         else if (sel == prefsAct) {
             PreferencesDialog *prefs = new PreferencesDialog(this);
             connect(prefs, &PreferencesDialog::skinChanged, this, &WinampWindow::onSkinChanged);
             prefs->setAttribute(Qt::WA_DeleteOnClose);
             prefs->exec();
         }
+        else if (sel == jumpTimeAct) {
+            bool ok;
+            QString timeStr = QInputDialog::getText(this, "Jump to Time",
+                "Enter time (MM:SS or seconds):", QLineEdit::Normal, "", &ok);
+            if (ok && !timeStr.isEmpty()) {
+                qint64 jumpMs = 0;
+                if (timeStr.contains(':')) {
+                    QStringList parts = timeStr.split(':');
+                    if (parts.size() >= 2)
+                        jumpMs = (parts[0].toInt() * 60 + parts[1].toInt()) * 1000;
+                } else {
+                    jumpMs = timeStr.toInt() * 1000;
+                }
+                player->setPosition(qBound(0LL, jumpMs, player->duration()));
+            }
+        }
+        else if (sel == jumpFileAct) onJumpToFile();
+        else if (sel == shuffAct) { shuffleOn = sel->isChecked(); update(); }
+        else if (sel == repOffAct) { repeatOn = false; repeatTrack = false; update(); }
+        else if (sel == repAllAct) { repeatOn = true; repeatTrack = false; update(); }
+        else if (sel == repOneAct) { repeatOn = true; repeatTrack = true; update(); }
+        else if (sel == eqTogAct) {
+            eqBtnOn = sel->isChecked();
+            if (eqBtnOn) eqWindow->show(); else eqWindow->hide();
+            update();
+        }
+        else if (sel == plTogAct) {
+            plBtnOn = sel->isChecked();
+            if (plBtnOn) playlistWindow->show(); else playlistWindow->hide();
+            update();
+        }
+        else if (sel == milkdropAct) openMilkdrop();
+        else if (sel == visOffAct) { visMode = 0; update(); }
+        else if (sel == visSpecAct) { visMode = 1; update(); }
+        else if (sel == visOscAct) { visMode = 2; update(); }
+        else if (sel == visVuAct) { visMode = 3; update(); }
         else if (sel == aboutAct) onShowAbout();
         else if (sel == quitAct) close();
+        // Recent files
+        else if (sel->data().toString().startsWith("/") || sel->data().toString().startsWith("file:")) {
+            QString path = sel->data().toString();
+            if (QFile::exists(path)) {
+                playFile(path);
+            }
+        }
+        // Bookmarks
+        else if (sel->data().toString().startsWith("bm:")) {
+            int idx = sel->data().toString().mid(3).toInt();
+            if (idx >= 0 && idx < bmMgr.bookmarks.size()) {
+                QString path = bmMgr.bookmarks[idx].path;
+                if (path.startsWith("http://") || path.startsWith("https://"))
+                    playUrl(path);
+                else if (QFile::exists(path))
+                    playFile(path);
+            }
+        }
     }
 
     void mousePressEvent(QMouseEvent *event) override {
@@ -2857,11 +4452,11 @@ protected:
         }
         
         // Visualization area click: (27,40)-(99,61)
-        // Single click: cycle modes 0->1->2->0
+        // Single click: cycle modes 0->1->2->3->0 (off/spectrum/osc/vu)
         // (double-click opens Milkdrop — handled in mouseDoubleClickEvent)
         if (x >= 27 && x < 99 && y >= 40 && y < 61) {
             visMode++;
-            if (visMode > 2) visMode = 0;
+            if (visMode > 3) visMode = 0;
             // Reset viz state when switching modes
             memset(saBarHeight, 0, sizeof(saBarHeight));
             memset(saPeakHeight, 0, sizeof(saPeakHeight));
@@ -2928,6 +4523,17 @@ protected:
             return;
         }
         
+        // Balance slider: (177,57) to (215,70) 
+        if (x >= 177 && x <= 215 && y >= 57 && y <= 70) {
+            isDraggingBalance = true;
+            balance = ((x - 177) * 254) / 38 - 127;
+            balance = qBound(-127, balance, 127);
+            // Apply stereo balance via QAudioOutput
+            // Qt6 doesn't have direct balance, but we can approximate with stereo channel volumes
+            update();
+            return;
+        }
+        
         // Position bar: (16,72) to (264,82)
         if (x >= 16 && x <= 264 && y >= 72 && y <= 82 && player->duration() > 0) {
             isDraggingPos = true;
@@ -2955,6 +4561,13 @@ protected:
             if (volume > 255) volume = 255;
             if (volume < 0) volume = 0;
             audioOutput->setVolume(volume / 255.0f);
+            update();
+        }
+        
+        // Balance drag
+        if (isDraggingBalance) {
+            balance = ((x - 177) * 254) / 38 - 127;
+            balance = qBound(-127, balance, 127);
             update();
         }
         
@@ -3014,21 +4627,61 @@ protected:
         }
         
         isDraggingVolume = false;
+        isDraggingBalance = false;
         isDraggingPos = false;
         isDragging = false;
     }
     
     void openFile() {
         QString fileName = QFileDialog::getOpenFileName(this, "Open Audio File", "",
-            "Audio Files (*.mp3 *.wav *.flac *.ogg *.m4a);;All Files (*)");
+            "Audio Files (*.mp3 *.wav *.flac *.ogg *.m4a *.aac *.wma);;All Files (*)");
         if (!fileName.isEmpty()) {
             currentFile = fileName;
             player->setSource(QUrl::fromLocalFile(fileName));
             player->play();
             playlistWindow->addTrack(fileName);
+            RecentFilesManager::instance().addFile(fileName);
         }
     }
     
+    // Drag-and-drop on main window (matches Windows ole.cpp)
+    void dragEnterEvent(QDragEnterEvent *event) override {
+        if (event->mimeData()->hasUrls())
+            event->acceptProposedAction();
+    }
+    
+    void dropEvent(QDropEvent *event) override {
+        const QMimeData *mimeData = event->mimeData();
+        if (mimeData->hasUrls()) {
+            QList<QUrl> urls = mimeData->urls();
+            for (const QUrl &url : urls) {
+                QString path = url.toLocalFile();
+                if (!path.isEmpty()) {
+                    QFileInfo fi(path);
+                    if (fi.isDir()) {
+                        // Add all audio files from directory
+                        QDir dir(path);
+                        QStringList filters = {"*.mp3", "*.wav", "*.flac", "*.ogg", "*.m4a", "*.aac"};
+                        QStringList files = dir.entryList(filters, QDir::Files, QDir::Name);
+                        for (const QString &f : files)
+                            playlistWindow->addTrack(dir.absoluteFilePath(f));
+                    } else {
+                        playlistWindow->addTrack(path);
+                    }
+                }
+            }
+            // Play the first dropped file
+            if (!urls.isEmpty()) {
+                QString firstPath = urls.first().toLocalFile();
+                if (!firstPath.isEmpty() && QFileInfo(firstPath).isFile()) {
+                    playFile(firstPath);
+                }
+            }
+            event->acceptProposedAction();
+        }
+    }
+    
+public:
     void playTrack(const QString &fileName) {
         if (!fileName.isEmpty() && QFile::exists(fileName)) {
             currentFile = fileName;
@@ -3039,6 +4692,8 @@ protected:
             metaTitle.clear();
             player->setSource(QUrl::fromLocalFile(fileName));
             player->play();
+            RecentFilesManager::instance().addFile(fileName);
+            updateTrayTooltip();
         }
     }
     
@@ -3074,14 +4729,24 @@ protected:
         
         s.beginGroup("Playback");
         s.setValue("volume", volume);
+        s.setValue("balance", balance);
         s.setValue("shuffle", shuffleOn);
         s.setValue("repeat", repeatOn);
         s.setValue("repeatTrack", repeatTrack);
         s.setValue("eqVisible", eqBtnOn);
         s.setValue("plVisible", plBtnOn);
+        s.setValue("visMode", visMode);
+        s.setValue("showRemainingTime", showRemainingTime);
         if (!currentFile.isEmpty()) {
             s.setValue("lastFile", currentFile);
         }
+        s.endGroup();
+        
+        s.beginGroup("WindowState");
+        s.setValue("alwaysOnTop", alwaysOnTop);
+        s.setValue("doubleSize", doubleSize);
+        s.setValue("shadeMode", shadeMode);
+        s.setValue("stopAfterCurrent", stopAfterCurrent);
         s.endGroup();
         
         eqWindow->saveSettings(s);
@@ -3104,15 +4769,29 @@ protected:
         
         s.beginGroup("Playback");
         volume = s.value("volume", 200).toInt();
+        balance = s.value("balance", 0).toInt();
         audioOutput->setVolume(volume / 255.0f);
         shuffleOn = s.value("shuffle", false).toBool();
         repeatOn = s.value("repeat", false).toBool();
         repeatTrack = s.value("repeatTrack", false).toBool();
         eqBtnOn = s.value("eqVisible", false).toBool();
         plBtnOn = s.value("plVisible", true).toBool();  // Show playlist by default for testing
+        visMode = s.value("visMode", 1).toInt();
+        showRemainingTime = s.value("showRemainingTime", false).toBool();
         QString lastFile = s.value("lastFile").toString();
         if (!lastFile.isEmpty() && QFile::exists(lastFile)) {
             currentFile = lastFile;
+        }
+        s.endGroup();
+        
+        s.beginGroup("WindowState");
+        alwaysOnTop = s.value("alwaysOnTop", false).toBool();
+        doubleSize = s.value("doubleSize", false).toBool();
+        shadeMode = s.value("shadeMode", false).toBool();
+        stopAfterCurrent = s.value("stopAfterCurrent", false).toBool();
+        if (alwaysOnTop) {
+            setWindowFlag(Qt::WindowStaysOnTopHint, true);
+            show();
         }
         s.endGroup();
         
@@ -3144,8 +4823,14 @@ private:
     int pressedButton;
     bool shuffleOn, repeatOn, eqBtnOn, plBtnOn;
     bool repeatTrack; // repeat-one mode (like Windows "manual playlist advance")
-    bool isDraggingVolume, isDraggingPos;
+    bool stopAfterCurrent; // stop after current track finishes (like Windows g_stopaftercur)
+    bool isDraggingVolume, isDraggingPos, isDraggingBalance;
     int scrollOffset;
+    int balance; // -127 (left) to +127 (right), 0 = center (matches Windows pan127)
+    bool doubleSize;   // 2x scaling mode (like Windows config_dsize)
+    bool shadeMode;    // compact shade mode (like Windows config_windowshade)
+    bool alwaysOnTop;  // always on top (like Windows config_aot)
+    bool clutterbarOpen; // clutterbar expanded (left side O/A/I/D/V buttons)
     
     // Visualization state
     int visMode;  // 0=off, 1=spectrum analyzer, 2=oscilloscope (matches Windows config_sa)
@@ -3161,6 +4846,17 @@ private:
     int mediaChannels = 0;   // 1=mono, 2=stereo
     bool showRemainingTime = false; // Toggle elapsed/remaining time display
     QString metaTitle;              // Song title from metadata (Artist - Title)
+    
+    // VU meter data (matches Windows vis_VU)
+    float vuData[2];   // RMS levels for L/R channels (0.0 - 1.0)
+    
+    // Easter egg state
+    char eggStr[9];
+    int eggStat;
+    
+    // System tray icon (matches Windows SYSTRAY.cpp)
+    QSystemTrayIcon *trayIcon = nullptr;
+    QMenu *trayMenu = nullptr;
     
     PlaylistWindow *playlistWindow;
     EqualizerWindow *eqWindow;
@@ -3199,6 +4895,76 @@ private:
     bool eqWasVisible = false;
     bool plWasVisible = false;
     bool mainWasVisible = true;
+    
+    void setupSystemTray() {
+        if (!QSystemTrayIcon::isSystemTrayAvailable()) return;
+        
+        trayIcon = new QSystemTrayIcon(this);
+        trayIcon->setIcon(windowIcon().isNull() ? QIcon::fromTheme("audio-headphones") : windowIcon());
+        trayIcon->setToolTip("Winamp 5.666 for Linux");
+        
+        trayMenu = new QMenu(this);
+        trayMenu->addAction("Winamp", this, [this]() {
+            show();
+            raise();
+            activateWindow();
+        });
+        trayMenu->addSeparator();
+        trayMenu->addAction("Previous Track", this, [this]() {
+            if (playlistWindow) playlistWindow->prevTrack();
+        });
+        QAction *playPauseAction = trayMenu->addAction("Play", this, [this]() {
+            if (player->playbackState() == QMediaPlayer::PlayingState) {
+                player->pause();
+            } else if (player->playbackState() == QMediaPlayer::PausedState) {
+                player->play();
+            } else if (playlistWindow && playlistWindow->trackCount() > 0) {
+                playlistWindow->playCurrentTrack();
+            }
+        });
+        Q_UNUSED(playPauseAction);
+        trayMenu->addAction("Stop", this, [this]() { player->stop(); update(); });
+        trayMenu->addAction("Next Track", this, [this]() {
+            if (playlistWindow) playlistWindow->nextTrack();
+        });
+        trayMenu->addSeparator();
+        trayMenu->addAction("Open File...", this, [this]() { openFile(); });
+        trayMenu->addSeparator();
+        trayMenu->addAction("Exit", qApp, &QApplication::quit);
+        
+        trayIcon->setContextMenu(trayMenu);
+        
+        connect(trayIcon, &QSystemTrayIcon::activated, this, [this](QSystemTrayIcon::ActivationReason reason) {
+            if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick) {
+                if (isVisible()) {
+                    hide();
+                    if (eqWindow) eqWindow->hide();
+                    if (playlistWindow) playlistWindow->hide();
+                } else {
+                    show();
+                    raise();
+                    activateWindow();
+                    if (eqBtnOn && eqWindow) eqWindow->show();
+                    if (plBtnOn && playlistWindow) playlistWindow->show();
+                }
+            }
+        });
+        
+        trayIcon->show();
+    }
+    
+    void updateTrayTooltip() {
+        if (!trayIcon) return;
+        QString tip = "Winamp";
+        if (!metaTitle.isEmpty()) {
+            tip = metaTitle;
+        } else if (!currentFile.isEmpty()) {
+            tip = QFileInfo(currentFile).completeBaseName();
+        }
+        // Tray tooltip is limited to 127 chars on most platforms
+        if (tip.length() > 120) tip = tip.left(117) + "...";
+        trayIcon->setToolTip(tip);
+    }
     
     void mouseDoubleClickEvent(QMouseEvent *event) override {
         int x = event->pos().x();
@@ -3291,8 +5057,36 @@ void EqualizerWindow::followMain() {
     }
 }
 
+// MPRIS2 out-of-line method implementations (need full WinampWindow definition)
+#ifdef QT_DBUS_LIB
+void Mpris2PlayerAdaptor::Next() {
+    WinampWindow *w = qobject_cast<WinampWindow*>(parent());
+    if (w) {
+        PlaylistWindow *pl = w->getPlaylistWindow();
+        if (pl) pl->nextTrack();
+    }
+}
+void Mpris2PlayerAdaptor::Previous() {
+    WinampWindow *w = qobject_cast<WinampWindow*>(parent());
+    if (w) {
+        PlaylistWindow *pl = w->getPlaylistWindow();
+        if (pl) pl->prevTrack();
+    }
+}
+void Mpris2PlayerAdaptor::OpenUri(const QString &uri) {
+    QUrl url(uri);
+    if (url.isLocalFile()) {
+        WinampWindow *w = qobject_cast<WinampWindow*>(parent());
+        if (w) w->playTrack(url.toLocalFile());
+    }
+}
+#endif
+
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
+    app.setApplicationName("Winamp");
+    app.setApplicationVersion("5.666");
+    app.setOrganizationName("Nullsoft");
 
     // Load the Winamp icon from the source resource directory
     QString appDir = QCoreApplication::applicationDirPath();
@@ -3350,7 +5144,89 @@ int main(int argc, char *argv[]) {
         // Continue anyway — fallback rendering will be used
     }
 
+    // Splash screen (matches Windows SPLASH.cpp)
+    QPixmap splashPix;
+    QSplashScreen *splash = nullptr;
+    // Look for SPLASH.BMP in the loaded skin or fallback paths
+    QStringList splashCandidates = candidates;
+    splashCandidates << appDir + "/../Src/resources" << appDir + "/../../Src/resources";
+    for (const QString &path : splashCandidates) {
+        QString splashFile = QDir(path).filePath("SPLASH.BMP");
+        if (QFile::exists(splashFile)) {
+            splashPix.load(splashFile);
+            break;
+        }
+        // Try lowercase
+        splashFile = QDir(path).filePath("splash.bmp");
+        if (QFile::exists(splashFile)) {
+            splashPix.load(splashFile);
+            break;
+        }
+    }
+    if (!splashPix.isNull()) {
+        splash = new QSplashScreen(splashPix);
+        splash->show();
+        app.processEvents();
+    }
+
     WinampWindow w;
+    
+    // Process command-line arguments (matches Windows cmdline.cpp)
+    // Supported: file paths to play, directories to scan, -play, -pause, -stop, -enqueue
+    QStringList filesToPlay;
+    bool enqueueMode = false;
+    for (int i = 1; i < argc; i++) {
+        QString arg = QString::fromLocal8Bit(argv[i]);
+        if (arg == "-enqueue" || arg == "--enqueue") {
+            enqueueMode = true;
+        } else if (arg == "-play" || arg == "--play") {
+            // Will auto-play after adding files
+        } else if (arg == "-pause" || arg == "--pause") {
+            QTimer::singleShot(100, &w, [&w]() {
+                if (w.getPlayer()->playbackState() == QMediaPlayer::PlayingState)
+                    w.getPlayer()->pause();
+            });
+        } else if (arg == "-stop" || arg == "--stop") {
+            QTimer::singleShot(100, &w, [&w]() { w.getPlayer()->stop(); });
+        } else if (arg.startsWith("-")) {
+            // Unknown flag — ignore
+        } else {
+            // Treat as file or directory path
+            QFileInfo fi(arg);
+            if (fi.isDir()) {
+                // Scan directory for audio files
+                QDir dir(arg);
+                QStringList audioExts = {"*.mp3", "*.wav", "*.ogg", "*.flac", "*.m4a", "*.aac", "*.wma", "*.opus"};
+                for (const QFileInfo &entry : dir.entryInfoList(audioExts, QDir::Files, QDir::Name))
+                    filesToPlay << entry.absoluteFilePath();
+            } else if (fi.exists()) {
+                filesToPlay << fi.absoluteFilePath();
+            }
+        }
+    }
+    
+    // Add CLI files to playlist and optionally play
+    if (!filesToPlay.isEmpty()) {
+        PlaylistWindow *pl = w.getPlaylistWindow();
+        if (pl) {
+            if (!enqueueMode) {
+                // Clear existing playlist before adding CLI files
+                // (enqueue mode preserves existing playlist)
+            }
+            for (const QString &f : filesToPlay)
+                pl->addTrack(f);
+            // Auto-play first file unless in enqueue mode
+            if (!enqueueMode && pl->trackCount() > 0) {
+                pl->setCurrentTrackIndex(0);
+                w.playTrack(pl->trackAt(0));
+            }
+        }
+    }
+    
+    if (splash) {
+        QTimer::singleShot(1500, splash, &QSplashScreen::close);
+    }
+    
     w.show();
     
     return app.exec();
