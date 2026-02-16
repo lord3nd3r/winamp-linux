@@ -3677,6 +3677,8 @@ public:
         videoWidget = new QVideoWidget(this);
         videoWidget->setGeometry(0, 0, 320, 240);
         videoWidget->setStyleSheet("background-color: black;");
+        videoWidget->setMouseTracking(true);  // Enable mouse tracking on video widget
+        videoWidget->installEventFilter(this);  // Intercept mouse events for resize
         
         // Load logo bitmap
         loadLogo();
@@ -3739,6 +3741,92 @@ protected:
         } else {
             QWidget::keyPressEvent(event);
         }
+    }
+    
+    bool eventFilter(QObject *obj, QEvent *event) override {
+        // Intercept mouse events on the video widget for resize handling
+        if (obj == videoWidget && !isFullScreen()) {
+            if (event->type() == QEvent::MouseButtonPress) {
+                QMouseEvent *me = static_cast<QMouseEvent*>(event);
+                // Map video widget coordinates to window coordinates
+                QPoint windowPos = videoWidget->mapTo(this, me->pos());
+                
+                // Check for resize edges first
+                ResizeEdge edge = hitTestResize(windowPos);
+                if (edge != NoEdge) {
+                    isResizing = true;
+                    resizeEdge = edge;
+                    resizeStartPos = me->globalPosition().toPoint();
+                    resizeStartGeometry = geometry();
+                    return true;  // Event handled
+                }
+                // Otherwise, start dragging
+                if (me->button() == Qt::LeftButton) {
+                    isDragging = true;
+                    dragStartPos = me->globalPosition().toPoint() - frameGeometry().topLeft();
+                }
+            }
+            else if (event->type() == QEvent::MouseMove) {
+                QMouseEvent *me = static_cast<QMouseEvent*>(event);
+                QPoint windowPos = videoWidget->mapTo(this, me->pos());
+                
+                // Handle resizing
+                if (isResizing) {
+                    QPoint delta = me->globalPosition().toPoint() - resizeStartPos;
+                    QRect newGeom = resizeStartGeometry;
+                    
+                    // Adjust geometry based on resize edge
+                    if (resizeEdge & LeftEdge) {
+                        int newX = resizeStartGeometry.x() + delta.x();
+                        int newWidth = resizeStartGeometry.width() - delta.x();
+                        if (newWidth >= minimumWidth()) {
+                            newGeom.setX(newX);
+                            newGeom.setWidth(newWidth);
+                        }
+                    }
+                    if (resizeEdge & RightEdge) {
+                        newGeom.setWidth(qMax(minimumWidth(), resizeStartGeometry.width() + delta.x()));
+                    }
+                    if (resizeEdge & TopEdge) {
+                        int newY = resizeStartGeometry.y() + delta.y();
+                        int newHeight = resizeStartGeometry.height() - delta.y();
+                        if (newHeight >= minimumHeight()) {
+                            newGeom.setY(newY);
+                            newGeom.setHeight(newHeight);
+                        }
+                    }
+                    if (resizeEdge & BottomEdge) {
+                        newGeom.setHeight(qMax(minimumHeight(), resizeStartGeometry.height() + delta.y()));
+                    }
+                    
+                    setGeometry(newGeom);
+                    return true;  // Event handled
+                }
+                
+                // Handle dragging
+                if (isDragging) {
+                    move(me->globalPosition().toPoint() - dragStartPos);
+                    return true;  // Event handled
+                }
+                
+                // Update cursor for resize edges
+                ResizeEdge edge = hitTestResize(windowPos);
+                updateCursorForEdge(edge);
+            }
+            else if (event->type() == QEvent::MouseButtonRelease) {
+                QMouseEvent *me = static_cast<QMouseEvent*>(event);
+                if (me->button() == Qt::LeftButton) {
+                    isDragging = false;
+                    isResizing = false;
+                    resizeEdge = NoEdge;
+                }
+            }
+            else if (event->type() == QEvent::MouseButtonDblClick) {
+                toggleFullscreen();
+                return true;  // Event handled
+            }
+        }
+        return QWidget::eventFilter(obj, event);
     }
     
     void mousePressEvent(QMouseEvent *event) override {
@@ -3851,27 +3939,30 @@ private:
     }
     
     void updateCursorForEdge(ResizeEdge edge) {
+        QCursor cursor;
         switch (edge) {
             case TopLeft:
             case BottomRight:
-                setCursor(Qt::SizeFDiagCursor);
+                cursor = Qt::SizeFDiagCursor;
                 break;
             case TopRight:
             case BottomLeft:
-                setCursor(Qt::SizeBDiagCursor);
+                cursor = Qt::SizeBDiagCursor;
                 break;
             case LeftEdge:
             case RightEdge:
-                setCursor(Qt::SizeHorCursor);
+                cursor = Qt::SizeHorCursor;
                 break;
             case TopEdge:
             case BottomEdge:
-                setCursor(Qt::SizeVerCursor);
+                cursor = Qt::SizeVerCursor;
                 break;
             default:
-                setCursor(Qt::ArrowCursor);
+                cursor = Qt::ArrowCursor;
                 break;
         }
+        setCursor(cursor);
+        videoWidget->setCursor(cursor);
     }
     
     void toggleFullscreen() {
