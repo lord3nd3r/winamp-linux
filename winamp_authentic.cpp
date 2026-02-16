@@ -34,6 +34,7 @@
 #include <QLineEdit>
 #include <QDebug>
 #include <QFileInfo>
+#include <QDateTime>
 #include <type_traits>
 
 // ============================================================
@@ -144,43 +145,308 @@ static QPoint getTextCharPos(QChar ch) {
     return QPoint(-1, -1);
 }
 
-// About Dialog
+// About Dialog — Demoscene-style animated credits (faithful to Windows original)
 class AboutDialog : public QDialog {
+    Q_OBJECT
 public:
-    AboutDialog(QWidget *parent = nullptr) : QDialog(parent) {
+    AboutDialog(const QString &skinPath, QWidget *parent = nullptr) : QDialog(parent) {
         setWindowTitle("About Winamp");
-        setFixedSize(320, 240);
-        setStyleSheet("background-color: #2b2b3d; color: #00ff00;");
+        setFixedSize(480, 360);
 
-        QVBoxLayout *layout = new QVBoxLayout(this);
-        
-        QLabel *titleLabel = new QLabel("Winamp for Linux", this);
-        titleLabel->setFont(QFont("Tahoma", 12, QFont::Bold));
-        titleLabel->setAlignment(Qt::AlignCenter);
+        // Load splash2.bmp and team.bmp
+        QStringList searchPaths;
+        searchPaths << skinPath << skinPath + "/../skins/default" << skinPath + "/../../skins/default";
+        for (const auto &p : searchPaths) {
+            if (splashImg.isNull()) {
+                splashImg = QImage(p + "/splash2.bmp");
+                if (splashImg.isNull()) splashImg = QImage(p + "/Splash2.bmp");
+            }
+            if (teamImg.isNull()) {
+                teamImg = QImage(p + "/team.bmp");
+                if (teamImg.isNull()) teamImg = QImage(p + "/Team.bmp");
+            }
+        }
+        if (!splashImg.isNull()) splashImg = splashImg.convertToFormat(QImage::Format_ARGB32);
+        if (!teamImg.isNull()) teamImg = teamImg.convertToFormat(QImage::Format_ARGB32);
 
-        QLabel *versionLabel = new QLabel("Version 5.9.0 (x86)", this);
-        versionLabel->setAlignment(Qt::AlignCenter);
+        // Build team frames (32x32 tiles stacked vertically)
+        if (!teamImg.isNull()) {
+            int nFrames = teamImg.height() / 32;
+            for (int i = 0; i < nFrames; i++)
+                teamFrames.append(teamImg.copy(0, i * 32, 32, 32));
+        }
 
-        QLabel *copyrightLabel = new QLabel("Copyright © 1997-2026 The Winamp Team", this);
-        copyrightLabel->setAlignment(Qt::AlignCenter);
+        // Credits text (from original creditsrend.c)
+        credits = {
+            "Winamp v5.9.0\n    The Credits",
+            "Linux Qt6 Port:\n    Kristopher Craig",
+            "Winamp for Linux\n    Qt6 Native Port",
+            "Original Development:\n Quentin Hebette, Thierry Honore,\n Lionel Peeters, Hakan Danisik,\n Eddy Richman, Jef Mauguit",
+            "QA, Engineering & Support:\n    DJ Egg",
+            "Freeform Skin Engine:\n    Linus Brolin",
+            "Bento Skin:\n    Martin Pohlmann, Taber Buhl,\n    Ben Allison, Victor Brocaz",
+            "Winamp Hall-of-Fame:\n    Justin Frankel,\n    Christophe Thibault,\n    Francis Gastellu,\n    Brennan Underwood",
+            "    Peter Pawlowski, Tom Pepper,\n    Ryan Geiss, Will Fisher,\n    Maksim Tyrtyshny, Darren Owen,\n    Ben Allison",
+            "Modern Skin:\n    Sven Kistner",
+            "PCM EQ magic:\n    4Front Technologies / George Yohng",
+            "Intro sound:\n    JJ McKay",
+            "Credits rendered with Plush:\n    http://www.cockos.com/wdl/\n    (8bpp foreva)",
+            "Thanks:\n    NS Beta Team & Craig Freer,\n    Our lowly forum moderators,\n    Our precious skin reviewers",
+            QString::fromUtf8("Copyright \u00A9 1997-2026 Winamp SA\n    www.winamp.com"),
+            "It really whips\n    the llama's ass!",
+        };
 
-        QLabel *llamaLabel = new QLabel("Winamp, it really whips the llama's ass!", this);
-        llamaLabel->setAlignment(Qt::AlignCenter);
-        llamaLabel->setWordWrap(true);
+        // Init starfield
+        for (int i = 0; i < NUM_STARS; i++) {
+            stars[i].x = (rand() % 2000 - 1000) / 1000.0;
+            stars[i].y = (rand() % 2000 - 1000) / 1000.0;
+            stars[i].z = (rand() % 1000) / 1000.0;
+            stars[i].speed = 0.003 + (rand() % 100) / 10000.0;
+        }
 
-        QPushButton *okButton = new QPushButton("OK", this);
-        connect(okButton, &QPushButton::clicked, this, &QDialog::accept);
+        // Init warp lookup table (sqrt table for radial distance)
+        for (int i = 0; i < 65536; i++)
+            sqTable[i] = (int)sqrt((double)i);
 
-        layout->addWidget(titleLabel);
-        layout->addWidget(versionLabel);
-        layout->addStretch();
-        layout->addWidget(llamaLabel);
-        layout->addStretch();
-        layout->addWidget(copyrightLabel);
-        layout->addWidget(okButton);
-        
-        setLayout(layout);
+        // Init credit state
+        creditIndex = 0;
+        creditFrame = 0;
+        creditX = rand() % 160 + 20;
+        creditY = rand() % 80 + 40;
+
+        // Animation timer — 33fps like the original
+        animTimer = new QTimer(this);
+        connect(animTimer, &QTimer::timeout, this, &AboutDialog::tick);
+        animTimer->start(30);
+        frameCount = 0;
+        warpPhase = 0;
     }
+
+protected:
+    void paintEvent(QPaintEvent *) override {
+        QPainter p(this);
+        p.setRenderHint(QPainter::SmoothPixmapTransform, false);
+
+        int w = width(), h = height();
+
+        // Black background
+        p.fillRect(0, 0, w, h, Qt::black);
+
+        // === Layer 1: Starfield ===
+        for (int i = 0; i < NUM_STARS; i++) {
+            double sx = stars[i].x / stars[i].z;
+            double sy = stars[i].y / stars[i].z;
+            int px = (int)(w / 2 + sx * w / 2);
+            int py = (int)(h / 2 + sy * h / 2);
+            if (px >= 0 && px < w && py >= 0 && py < h) {
+                int brightness = (int)(255 * (1.0 - stars[i].z));
+                brightness = qBound(40, brightness, 255);
+                int sz = (stars[i].z < 0.3) ? 2 : 1;
+                p.fillRect(px, py, sz, sz, QColor(brightness, brightness, brightness + 40));
+            }
+        }
+
+        // === Layer 2: Warped splash image (sinusoidal zoom from original ABOUT.cpp) ===
+        if (!splashImg.isNull()) {
+            int sw = splashImg.width(), sh = splashImg.height();
+            int dw = 280, dh = (int)(280.0 * sh / sw);
+            int dx = (w - dw) / 2, dy = 30;
+
+            // Create warped version
+            QImage warpedImg(dw, dh, QImage::Format_ARGB32);
+            warpedImg.fill(Qt::transparent);
+
+            double maxD = sqrt(dw * dw / 4.0 + dh * dh / 4.0);
+            double wt = warpPhase / 128.0; // 0..1 cycle
+            double dpos = 1.0 + sin(wt * M_PI);
+
+            for (int y = 0; y < dh; y++) {
+                QRgb *scanline = (QRgb *)warpedImg.scanLine(y);
+                for (int x = 0; x < dw; x++) {
+                    double fx = x - dw / 2.0;
+                    double fy = y - dh / 2.0;
+                    double dist = sqrt(fx * fx + fy * fy);
+
+                    // Sinusoidal radial distortion
+                    double scale;
+                    if (dist < 1.0) {
+                        scale = 1.0;
+                    } else {
+                        scale = pow(sin(dist / maxD * M_PI / 2.0), dpos) * 1.5 * maxD / (dist + 1.0);
+                        scale = qBound(0.1, scale, 3.0);
+                    }
+
+                    int srcX = (int)(sw / 2.0 + fx * sw / (dw * scale));
+                    int srcY = (int)(sh / 2.0 + fy * sh / (dh * scale));
+                    srcX = qBound(0, srcX, sw - 1);
+                    srcY = qBound(0, srcY, sh - 1);
+                    scanline[x] = splashImg.pixel(srcX, srcY);
+                }
+            }
+
+            // Draw with slight alpha pulsing
+            int alpha = 180 + (int)(75.0 * sin(frameCount * 0.05));
+            p.setOpacity(alpha / 255.0);
+            p.drawImage(dx, dy, warpedImg);
+            p.setOpacity(1.0);
+        }
+
+        // === Layer 3: Rotating team cube frames ===
+        if (!teamFrames.isEmpty()) {
+            int fi = (frameCount / 8) % teamFrames.size();
+            QImage frame = teamFrames[fi].scaled(64, 64, Qt::KeepAspectRatio);
+
+            // Orbit position
+            double angle = frameCount * 0.03;
+            int cx = w / 2 + (int)(140 * cos(angle));
+            int cy = h / 2 + (int)(50 * sin(angle * 0.7));
+
+            // Slight 3D rotation perspective (fake via shear)
+            p.save();
+            p.translate(cx, cy);
+            double rot = sin(frameCount * 0.04) * 15.0;
+            p.rotate(rot);
+            double scaleF = 0.8 + 0.2 * sin(frameCount * 0.025);
+            p.scale(scaleF, scaleF);
+            p.setOpacity(0.85);
+            p.drawImage(-32, -32, frame);
+            p.restore();
+            p.setOpacity(1.0);
+        }
+
+        // === Layer 4: Glowing fire spheres ===
+        for (int s = 0; s < 2; s++) {
+            double angle = frameCount * (s == 0 ? 0.02 : -0.025) + s * M_PI;
+            int sx = w / 2 + (int)(180 * cos(angle));
+            int sy = h / 2 + (int)(80 * sin(angle * 1.3));
+            int radius = 12 + (int)(4 * sin(frameCount * 0.06 + s));
+
+            // Fire gradient
+            QRadialGradient grad(sx, sy, radius * 3);
+            if (s == 0) {
+                grad.setColorAt(0.0, QColor(255, 200, 80, 200));
+                grad.setColorAt(0.3, QColor(255, 120, 20, 150));
+                grad.setColorAt(0.6, QColor(200, 40, 0, 80));
+                grad.setColorAt(1.0, QColor(0, 0, 0, 0));
+            } else {
+                grad.setColorAt(0.0, QColor(100, 180, 255, 200));
+                grad.setColorAt(0.3, QColor(40, 100, 255, 150));
+                grad.setColorAt(0.6, QColor(20, 40, 200, 80));
+                grad.setColorAt(1.0, QColor(0, 0, 0, 0));
+            }
+            p.setBrush(grad);
+            p.setPen(Qt::NoPen);
+            p.drawEllipse(QPoint(sx, sy), radius * 3, radius * 3);
+        }
+
+        // === Layer 5: Credits text (fade in/out at random positions) ===
+        if (creditIndex < credits.size()) {
+            int opacity = 0;
+            // 128-frame cycle per credit: 0-15 hidden, 16-31 fade in, 32-111 visible, 112-127 fade out
+            if (creditFrame < 16) {
+                opacity = 0;
+            } else if (creditFrame < 32) {
+                opacity = (creditFrame - 16) * 255 / 16;
+            } else if (creditFrame < 112) {
+                opacity = 255;
+            } else {
+                opacity = (127 - creditFrame) * 255 / 16;
+            }
+
+            if (opacity > 0) {
+                p.setOpacity(opacity / 255.0);
+                QFont font("Tahoma", 11);
+                font.setBold(true);
+                p.setFont(font);
+
+                // Drop shadow
+                p.setPen(QColor(0, 0, 0));
+                p.drawText(QRect(creditX + 1, creditY + 1, w - 40, h - 40),
+                           Qt::AlignLeft | Qt::TextWordWrap, credits[creditIndex]);
+                // Green text
+                p.setPen(QColor(0, 255, 0));
+                p.drawText(QRect(creditX, creditY, w - 40, h - 40),
+                           Qt::AlignLeft | Qt::TextWordWrap, credits[creditIndex]);
+                p.setOpacity(1.0);
+            }
+        }
+
+        // === FPS counter (bottom left, like the original) ===
+        p.setPen(QColor(80, 80, 80));
+        p.setFont(QFont("Courier", 8));
+        p.drawText(5, h - 5, QString("%1 fps").arg(currentFps, 0, 'f', 0));
+
+        // === Bottom bar: "Winamp v5.9.0" ===
+        p.setPen(QColor(100, 100, 100));
+        p.setFont(QFont("Tahoma", 8));
+        p.drawText(0, h - 18, w, 15, Qt::AlignCenter, "Winamp v5.9.0 for Linux — Qt6 Native Port");
+    }
+
+    void keyPressEvent(QKeyEvent *e) override {
+        if (e->key() == Qt::Key_Escape || e->key() == Qt::Key_Return)
+            accept();
+    }
+    void mousePressEvent(QMouseEvent *) override { accept(); }
+
+private slots:
+    void tick() {
+        frameCount++;
+
+        // Update starfield
+        for (int i = 0; i < NUM_STARS; i++) {
+            stars[i].z -= stars[i].speed;
+            if (stars[i].z <= 0.001) {
+                stars[i].x = (rand() % 2000 - 1000) / 1000.0;
+                stars[i].y = (rand() % 2000 - 1000) / 1000.0;
+                stars[i].z = 1.0;
+                stars[i].speed = 0.003 + (rand() % 100) / 10000.0;
+            }
+        }
+
+        // Update warp phase (0-255 cycle)
+        warpPhase = (warpPhase + 1) & 0xFF;
+
+        // Update credits (128-frame cycle per credit block)
+        creditFrame++;
+        if (creditFrame >= 128) {
+            creditFrame = 0;
+            creditIndex++;
+            if (creditIndex >= credits.size()) creditIndex = 0;
+            creditX = rand() % (width() / 2) + 20;
+            creditY = rand() % (height() / 3) + (height() / 3);
+        }
+
+        // FPS calculation
+        if (frameCount % 30 == 0) {
+            qint64 now = QDateTime::currentMSecsSinceEpoch();
+            if (lastFpsTime > 0)
+                currentFps = 30000.0 / (now - lastFpsTime);
+            lastFpsTime = now;
+        }
+
+        update();
+    }
+
+private:
+    static constexpr int NUM_STARS = 200;
+    struct Star { double x, y, z, speed; };
+    Star stars[NUM_STARS];
+
+    QImage splashImg, teamImg;
+    QList<QImage> teamFrames;
+    QStringList credits;
+
+    QTimer *animTimer;
+    int frameCount = 0;
+    int warpPhase = 0;
+    int sqTable[65536];
+
+    int creditIndex = 0;
+    int creditFrame = 0;
+    int creditX = 100, creditY = 150;
+
+    double currentFps = 0;
+    qint64 lastFpsTime = 0;
 };
 
 // Play Location Dialog
@@ -365,23 +631,23 @@ struct EqPreset {
 
 static const EqPreset builtinPresets[] = {
     {"Flat",                {32, 32, 32, 32, 32, 32, 32, 32, 32, 32}},
-    {"Classical",           {32, 32, 32, 32, 32, 32, 19, 19, 19, 15}},
-    {"Club",                {32, 32, 38, 42, 42, 42, 38, 32, 32, 32}},
-    {"Dance",               {49, 45, 36, 32, 32, 23, 20, 20, 32, 32}},
-    {"Full Bass",           {49, 49, 49, 42, 34, 26, 19, 15, 13, 13}},
-    {"Full Bass & Treble",  {45, 42, 32, 20, 26, 35, 47, 51, 55, 57}},
-    {"Full Treble",         {15, 15, 15, 26, 36, 51, 59, 59, 59, 61}},
-    {"Laptop Speakers",     {38, 51, 40, 27, 30, 34, 38, 48, 55, 59}},
-    {"Large Hall",          {49, 49, 42, 42, 32, 26, 26, 26, 32, 32}},
-    {"Live",                {26, 32, 38, 42, 42, 42, 38, 35, 35, 34}},
-    {"Party",               {45, 45, 32, 32, 32, 32, 32, 32, 45, 45}},
-    {"Pop",                 {30, 38, 45, 47, 42, 32, 30, 30, 30, 30}},
-    {"Reggae",              {32, 32, 31, 23, 32, 41, 41, 32, 32, 32}},
-    {"Rock",                {45, 38, 24, 20, 28, 37, 47, 51, 51, 51}},
-    {"Ska",                 {29, 26, 26, 31, 37, 40, 47, 48, 51, 48}},
-    {"Soft",                {38, 34, 31, 29, 31, 38, 47, 49, 51, 53}},
-    {"Soft Rock",           {38, 38, 35, 31, 26, 28, 34, 38, 41, 47}},
-    {"Techno",              {45, 42, 32, 24, 26, 32, 45, 48, 48, 47}},
+    {"Classical",           {32, 32, 32, 32, 32, 32, 44, 44, 44, 48}},
+    {"Club",                {32, 32, 25, 21, 21, 21, 25, 32, 32, 32}},
+    {"Dance",               {14, 18, 27, 32, 32, 40, 43, 43, 32, 32}},
+    {"Full Bass",           {14, 14, 14, 21, 29, 37, 44, 48, 50, 50}},
+    {"Full Bass & Treble",  {18, 21, 32, 43, 37, 28, 16, 12,  8,  6}},
+    {"Full Treble",         {48, 48, 48, 37, 27, 12,  4,  4,  4,  2}},
+    {"Laptop Speakers",     {25, 12, 23, 36, 33, 29, 25, 15,  8,  4}},
+    {"Large Hall",          {14, 14, 21, 21, 32, 37, 37, 37, 32, 32}},
+    {"Live",                {37, 32, 25, 21, 21, 21, 25, 28, 28, 29}},
+    {"Party",               {18, 18, 32, 32, 32, 32, 32, 32, 18, 18}},
+    {"Pop",                 {33, 25, 18, 16, 21, 32, 33, 33, 33, 33}},
+    {"Reggae",              {32, 32, 32, 40, 32, 22, 22, 32, 32, 32}},
+    {"Rock",                {18, 25, 39, 43, 35, 26, 16, 12, 12, 12}},
+    {"Ska",                 {34, 37, 37, 32, 26, 23, 16, 15, 12, 15}},
+    {"Soft",                {25, 29, 32, 34, 32, 25, 16, 14, 12, 10}},
+    {"Soft Rock",           {25, 25, 28, 32, 37, 35, 29, 25, 22, 16}},
+    {"Techno",              {18, 21, 32, 39, 37, 32, 18, 15, 15, 16}},
 };
 static const int numPresets = sizeof(builtinPresets) / sizeof(builtinPresets[0]);
 
@@ -838,10 +1104,32 @@ QPoint PlaylistWindow::getTextCharPos(QChar ch) {
 }
 
 void PlaylistWindow::mousePressEvent(QMouseEvent *event) {
+    int x = event->pos().x();
+    int y = event->pos().y();
+    int h = height();
+
+    // Playlist bottom buttons — respond to both left and right click
+    if (y >= h - 30 && y < h - 12) {
+        if (x >= 14 && x < 35) {
+            showAddMenu(event->globalPosition().toPoint());
+            event->accept();
+            return;
+        } else if (x >= 43 && x < 64) {
+            showRemMenu(event->globalPosition().toPoint());
+            event->accept();
+            return;
+        } else if (x >= 82 && x < 103) {
+            showSelMenu(event->globalPosition().toPoint());
+            event->accept();
+            return;
+        } else if (x >= 121 && x < 142) {
+            showMiscMenu(event->globalPosition().toPoint());
+            event->accept();
+            return;
+        }
+    }
+
     if (event->button() == Qt::LeftButton) {
-        int x = event->pos().x();
-        int y = event->pos().y();
-        
         // Close button: (w-11, 3) 9x9
         if (x >= width() - 11 && x < width() - 2 && y >= 3 && y < 12) {
             hide();
@@ -851,35 +1139,6 @@ void PlaylistWindow::mousePressEvent(QMouseEvent *event) {
         isDragging = true;
         dragPosition = event->globalPosition().toPoint() - frameGeometry().topLeft();
         event->accept();
-    } else if (event->button() == Qt::RightButton) {
-        int x = event->pos().x();
-        int y = event->pos().y();
-        int h = height();
-        
-        if (y >= h - 30 && y < h - 12) {
-            // Playlist buttons
-            if (x >= 14 && x < 35) {
-                // ADD button
-                showAddMenu(event->globalPosition().toPoint());
-                event->accept();
-                return;
-            } else if (x >= 43 && x < 64) {
-                // REM button
-                showRemMenu(event->globalPosition().toPoint());
-                event->accept();
-                return;
-            } else if (x >= 82 && x < 103) {
-                // SEL button
-                showSelMenu(event->globalPosition().toPoint());
-                event->accept();
-                return;
-            } else if (x >= 121 && x < 142) {
-                // MIS button
-                showMiscMenu(event->globalPosition().toPoint());
-                event->accept();
-                return;
-            }
-        }
     }
 }
 
@@ -1258,7 +1517,7 @@ public slots:
     }
 
     void onShowAbout() {
-        AboutDialog aboutDialog(this);
+        AboutDialog aboutDialog(WinampBitmaps::instance().basePath, this);
         aboutDialog.exec();
     }
 
@@ -1302,7 +1561,14 @@ public slots:
                 float maxVal = 0;
                 for (int j = startBin; j < endBin; j++)
                     if (magnitudes[j] > maxVal) maxVal = magnitudes[j];
-                spectrumData[i] = maxVal;
+                // Logarithmic scaling — matches the way real Winamp feels
+                // Raw magnitudes can be 0..~100+ for loud audio
+                // Convert to dB-like scale: log10(1 + val * boost) / log10(1 + boost)
+                float db = 0;
+                if (maxVal > 0.001f) {
+                    db = log10f(1.0f + maxVal * 5.0f) / log10f(1.0f + 5.0f * 50.0f);
+                }
+                spectrumData[i] = qBound(0.0f, db, 1.0f);
             }
         };
 
@@ -1410,6 +1676,10 @@ protected:
         if (!bmp.volume.isNull()) {
             int frame = qBound(0, (volume * 27) / 255, 27);
             p.drawPixmap(107, 57, bmp.volume, 0, frame * 15, 68, 13);
+            // Volume thumb: 14x11 at (0,422) normal, (15,422) pressed
+            int thumbX = 107 + (volume * 51) / 255; // 68-14=54 range, but visually ~51
+            int thumbSrcX = isDraggingVolume ? 15 : 0;
+            p.drawPixmap(thumbX, 58, bmp.volume, thumbSrcX, 422, 14, 11);
         }
 
         // Position bar
@@ -1441,8 +1711,8 @@ protected:
         p.fillRect(visX, visY, 75, visH, visColors[0]);
         // 19 bars, each 3px wide, 1px gap
         for (int i = 0; i < 19; i++) {
-            float val = spectrumData[i];
-            int target = (int)(val * 40.0f);
+            float val = spectrumData[i]; // 0.0 - 1.0 (log-scaled)
+            int target = (int)(val * 16.0f);
             if (target > 15) target = 15;
             // Smooth falloff
             if (target > saBarHeight[i]) saBarHeight[i] = target;
