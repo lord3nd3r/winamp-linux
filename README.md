@@ -190,6 +190,17 @@ All state saved to `~/.config/winamp/winamp.conf` (INI format) on exit, restored
 - **Draggable window** — frameless window with custom drag
 - **Menu toggle** — show/hide via Windows → Video window
 
+### Media Library
+
+- **File system browser** — QTreeView-based file/folder navigation starting at user's music directory
+- **gen.bmp/genex.bmp skinning** — authentic generic window frame rendering matching Windows plugin windows
+- **Audio file filtering** — shows only supported audio/video formats (MP3, FLAC, OGG, WAV, M4A, AAC, WMA, Opus, MP4, AVI, MKV, MOV, WebM)
+- **Add to playlist** — double-click file to add single track, double-click folder to add all audio files recursively
+- **Resizable** — drag edges and corners (8-direction resize support, minimum 275x200)
+- **Draggable window** — frameless window with titlebar drag
+- **Keyboard shortcuts** — Alt+L to toggle, Escape to close
+- **Menu toggle** — show/hide via Windows → Media library
+
 ### Bitmap Assets Used
 
 | File | Size | Purpose |
@@ -207,6 +218,8 @@ All state saved to `~/.config/winamp/winamp.conf` (INI format) on exit, restored
 | `SHUFREP.BMP` | 92x85 | Shuffle, repeat, EQ, PL button states |
 | `Eqmain.bmp` | 275x315 | Full EQ: background, buttons, sliders, graph |
 | `Pledit.bmp` | 280x186 | Playlist: titlebar, borders, bottom bar, buttons |
+| `gen.bmp` | 194x109 | Generic window frame + titlebar font for plugin windows |
+| `genex.bmp` | 130x75 | Generic window buttons, scrollbars, and color palette |
 | `WinampIcon.ico` | — | Application window icon |
 
 Bitmap loading searches multiple fallback paths and merges missing assets from all candidates.
@@ -245,7 +258,7 @@ Bitmap loading searches multiple fallback paths and merges missing assets from a
 
 ### Low Priority
 
-- [ ] Media Library window — general purpose window using `gen.bmp` / `genex.bmp`
+- [x] Media Library window — gen.bmp/genex.bmp-skinned file browser with recursive folder scanning, add-to-playlist via double-click
 - [ ] Mini-Browser window
 - [x] Video playback — QVideoWidget-based video window with frameless draggable window, video_logo.bmp display when idle, auto-show on video content detection, fullscreen support (F/double-click)
 - [ ] Plugin architecture — input, output, DSP, general purpose, visualization plugin APIs
