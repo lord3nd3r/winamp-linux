@@ -80,33 +80,89 @@ public:
 protected:
     void paintEvent(QPaintEvent *) override {
         QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, false);
         
-        // Use authentic Pledit.bmp if available
-        if (!WinampBitmaps::instance().pledit.isNull()) {
-            // Draw tiled/stretched playlist background
-            p.drawPixmap(0, 0, width(), 14, WinampBitmaps::instance().pledit, 0, 0, 275, 20);
-        } else {
-            // Fallback to gradient
-            QLinearGradient titleGrad(0, 0, 0, 14);
-            titleGrad.setColorAt(0, QColor(82, 90, 132));
-            titleGrad.setColorAt(1, QColor(58, 66, 107));
-            p.fillRect(0, 0, width(), 14, titleGrad);
+        auto &bmp = WinampBitmaps::instance();
+        int w = width();
+        int h = height();
+        
+        if (bmp.pledit.isNull()) {
+            p.fillRect(rect(), QColor(0, 0, 0));
+            p.setPen(QColor(0, 255, 0));
+            p.setFont(QFont("Tahoma", 7, QFont::Bold));
+            p.drawText(6, 10, "Winamp Playlist Editor");
+            return;
         }
         
-        p.setPen(QColor(0, 255, 0));
-        p.setFont(QFont("Tahoma", 7, QFont::Bold));
-        p.drawText(6, 10, "Winamp Playlist Editor");
+        // === Titlebar (20px tall) ===
+        // Active: y=0, Inactive: y=21 in Pledit.bmp
+        int tbY = isActiveWindow() ? 0 : 21;
         
-        // Close button
-        p.fillRect(width() - 12, 3, 9, 9, QColor(66, 74, 107));
-        p.setPen(QColor(198, 0, 0));
-        p.setFont(QFont("Arial", 7, QFont::Bold));
-        p.drawText(width() - 10, 10, "X");
+        // Left corner: (0,tbY) 25x20
+        p.drawPixmap(0, 0, bmp.pledit, 0, tbY, 25, 20);
+        
+        // Right corner: (153,tbY) 25x20
+        p.drawPixmap(w - 25, 0, bmp.pledit, 153, tbY, 25, 20);
+        
+        // Center title "PLAYLIST EDITOR": (26,tbY) 100x20
+        int centerX = (w - 100) / 2;
+        p.drawPixmap(centerX, 0, bmp.pledit, 26, tbY, 100, 20);
+        
+        // Fill between left corner and center with filler tile: (127,tbY) 25x20
+        for (int x = 25; x < centerX; x += 25) {
+            int tw = qMin(25, centerX - x);
+            p.drawPixmap(x, 0, bmp.pledit, 127, tbY, tw, 20);
+        }
+        
+        // Fill between center and right corner
+        for (int x = centerX + 100; x < w - 25; x += 25) {
+            int tw = qMin(25, w - 25 - x);
+            p.drawPixmap(x, 0, bmp.pledit, 127, tbY, tw, 20);
+        }
+        
+        // Close button: dest(w-11, 3), src(167,3) 9x9
+        p.drawPixmap(w - 11, 3, bmp.pledit, 167, 3, 9, 9);
+        
+        // Shade button: dest(w-20, 3), src(158,3) 9x9
+        p.drawPixmap(w - 20, 3, bmp.pledit, 158, 3, 9, 9);
+        
+        // === Side Borders (tiled 29px chunks) ===
+        for (int y = 20; y < h - 38; y += 29) {
+            int th = qMin(29, h - 38 - y);
+            // Left border: (0,42) 12x29
+            p.drawPixmap(0, y, bmp.pledit, 0, 42, 12, th);
+            // Right border: (31,42) 5x29 + (44,42) 7x29 = 12px total at right edge
+            p.drawPixmap(w - 12, y, bmp.pledit, 31, 42, 5, th);
+            p.drawPixmap(w - 7, y, bmp.pledit, 44, 42, 7, th);
+        }
+        
+        // Scrollbar track: (36,42) 8x29, at x=(w-15)
+        for (int y = 20; y < h - 38; y += 29) {
+            int th = qMin(29, h - 38 - y);
+            p.drawPixmap(w - 20, y, bmp.pledit, 36, 42, 8, th);
+        }
+        
+        // === Bottom Bar (38px tall) ===
+        // Bottom-left: (0,72) 125x38
+        p.drawPixmap(0, h - 38, bmp.pledit, 0, 72, 125, 38);
+        
+        // Bottom-right: (126,72) 150x38
+        p.drawPixmap(w - 150, h - 38, bmp.pledit, 126, 72, 150, 38);
+        
+        // Fill gap between bottom-left and bottom-right: (179,0) 25x38
+        for (int x = 125; x < w - 150; x += 25) {
+            int tw = qMin(25, w - 150 - x);
+            p.drawPixmap(x, h - 38, bmp.pledit, 179, 0, tw, 38);
+        }
     }
     
     void mousePressEvent(QMouseEvent *event) override {
-        if (event->pos().y() < 14) {
-            if (event->pos().x() > width() - 12) {
+        int x = event->pos().x();
+        int y = event->pos().y();
+        
+        if (y < 20) {
+            // Close button: (w-11, 3) 9x9
+            if (x >= width() - 11 && x < width() - 2 && y >= 3 && y < 12) {
                 hide();
                 return;
             }
@@ -153,49 +209,129 @@ protected:
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing, false);
         
-        // Use authentic Eqmain.bmp if available
-        if (!WinampBitmaps::instance().eqmain.isNull()) {
-            p.drawPixmap(0, 0, WinampBitmaps::instance().eqmain);
-        } else {
-            // Fallback
+        auto &bmp = WinampBitmaps::instance();
+        if (bmp.eqmain.isNull()) {
             p.fillRect(rect(), QColor(66, 66, 99));
-            
-            // Title bar
-            QLinearGradient titleGrad(0, 0, 0, 14);
-            titleGrad.setColorAt(0, QColor(82, 90, 132));
-            titleGrad.setColorAt(1, QColor(58, 66, 107));
-            p.fillRect(0, 0, width(), 14, titleGrad);
-            
             p.setPen(QColor(0, 255, 0));
             p.setFont(QFont("Tahoma", 7, QFont::Bold));
             p.drawText(6, 10, "Winamp Equalizer");
+            return;
         }
+        
+        // Fill with dark background first
+        p.fillRect(rect(), QColor(35, 36, 34));
+        
+        // Titlebar: active at (0,134), inactive at (0,149), 275x14
+        int tbY = isActiveWindow() ? 134 : 149;
+        p.drawPixmap(0, 0, bmp.eqmain, 0, tbY, 275, 14);
+        
+        // ON button: dest(14,18), 25x12
+        // States: OFF=(10,119), ON=(69,119), OFF pressed=(128,119), ON pressed=(187,119)
+        int onSrcX = eqEnabled ? 69 : 10;
+        p.drawPixmap(14, 18, bmp.eqmain, onSrcX, 119, 25, 12);
+        
+        // AUTO button: dest(39,18), 33x12
+        int autoSrcX = autoEnabled ? 94 : 35;
+        p.drawPixmap(39, 18, bmp.eqmain, autoSrcX, 119, 33, 12);
+        
+        // Presets button: dest(217,18), 44x12
+        p.drawPixmap(217, 18, bmp.eqmain, 224, 164, 44, 12);
+        
+        // EQ graph background: dest(86,17), src(0,294), 113x19
+        p.drawPixmap(86, 17, bmp.eqmain, 0, 294, 113, 19);
+        
+        // Draw slider grooves and thumbs
+        // Preamp at x=21, bands at x=78+n*18
+        drawEqSlider(p, 0, 21);  // Preamp
+        for (int i = 0; i < 10; i++) {
+            drawEqSlider(p, i + 1, 78 + i * 18);
+        }
+    }
+    
+    void drawEqSlider(QPainter &p, int which, int destX) {
+        auto &bmp = WinampBitmaps::instance();
+        int pos = (which == 0) ? preampValue : eqValues[which - 1];
+        
+        // Groove background: 28 images (14 per row)
+        // n = (pos * 28) / 64, clamped to 0-27
+        int n = (pos * 27) / 63;
+        if (n > 27) n = 27;
+        if (n < 0) n = 0;
+        
+        int grooveSrcX, grooveSrcY;
+        if (n < 14) {
+            grooveSrcX = 13 + n * 15;
+            grooveSrcY = 164;
+        } else {
+            grooveSrcX = 13 + (n - 14) * 15;
+            grooveSrcY = 229;
+        }
+        p.drawPixmap(destX, 38, bmp.eqmain, grooveSrcX, grooveSrcY, 14, 63);
+        
+        // Slider thumb (knob): 11x11 at src(0,164) unpressed
+        int thumbY = 38 + 63 - 12 - ((63 - pos) * 52) / 64;
+        p.drawPixmap(destX + 1, thumbY, bmp.eqmain, 0, 164, 11, 11);
     }
     
     void mousePressEvent(QMouseEvent *event) override {
         int x = event->pos().x();
         int y = event->pos().y();
         
-        // Title bar drag
+        // Title bar
         if (y < 14) {
-            if (x > width() - 12) {
-                hide();
-                return;
-            }
+            if (x >= 264) { hide(); return; }
             isDragging = true;
             dragPosition = event->globalPosition().toPoint() - frameGeometry().topLeft();
             return;
         }
         
-        // ON/OFF toggle (approximate position)
-        if (x >= 10 && x <= 40 && y >= 95 && y <= 110) {
+        // ON button: (14,18)-(39,30)
+        if (x >= 14 && x < 39 && y >= 18 && y < 30) {
             eqEnabled = !eqEnabled;
             update();
             return;
         }
+        
+        // AUTO button: (39,18)-(72,30)
+        if (x >= 39 && x < 72 && y >= 18 && y < 30) {
+            autoEnabled = !autoEnabled;
+            update();
+            return;
+        }
+        
+        // Slider dragging
+        // Preamp: x=21..34, bands: x=78+n*18..78+n*18+14
+        if (y >= 38 && y <= 101) {
+            if (x >= 21 && x <= 34) {
+                draggingSlider = 0;
+                updateSliderFromY(y);
+                return;
+            }
+            for (int i = 0; i < 10; i++) {
+                int sx = 78 + i * 18;
+                if (x >= sx && x <= sx + 14) {
+                    draggingSlider = i + 1;
+                    updateSliderFromY(y);
+                    return;
+                }
+            }
+        }
+    }
+    
+    void updateSliderFromY(int y) {
+        int pos = 63 - ((y - 38) * 63) / 52;
+        if (pos < 0) pos = 0;
+        if (pos > 63) pos = 63;
+        if (draggingSlider == 0) preampValue = pos;
+        else eqValues[draggingSlider - 1] = pos;
+        update();
     }
     
     void mouseMoveEvent(QMouseEvent *event) override {
+        if (draggingSlider >= 0) {
+            updateSliderFromY(event->pos().y());
+            return;
+        }
         if (isDragging) {
             QPoint newPos = event->globalPosition().toPoint() - dragPosition;
             move(newPos);
@@ -205,6 +341,7 @@ protected:
     
     void mouseReleaseEvent(QMouseEvent *event) override {
         isDragging = false;
+        draggingSlider = -1;
     }
     
     bool isSnapped() const { return isSnappedToMain; }
@@ -213,6 +350,8 @@ private:
     int eqValues[10];
     int preampValue;
     bool eqEnabled = true;
+    bool autoEnabled = false;
+    int draggingSlider = -1;
     QPoint dragPosition;
     bool isDragging = false;
     WinampWindow *mainWindow = nullptr;
@@ -225,23 +364,26 @@ PlaylistWindow::PlaylistWindow(WinampWindow *parent) : QWidget(nullptr), mainWin
     setWindowTitle("Winamp Playlist Editor");
     setWindowFlags(Qt::Tool | Qt::FramelessWindowHint);
     
-    QVBoxLayout *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(0, 14, 0, 0);
-    layout->setSpacing(0);
-    
+    // Position list widget manually within the skin frame
+    // Titlebar=20px, side borders=12px left + 20px right, bottom=38px
     listWidget = new QListWidget(this);
+    listWidget->setGeometry(12, 20, 275 - 12 - 20, 232 - 20 - 38);
     listWidget->setStyleSheet(
         "QListWidget {"
         "  background-color: #000000;"
         "  color: #00FF00;"
-        "  border: 1px solid #333333;"
-        "  font-family: 'Courier';"
-        "  font-size: 10pt;"
-        "  selection-background-color: #0000AA;"
+        "  border: none;"
+        "  font-family: 'Courier New', 'Courier';"
+        "  font-size: 8pt;"
+        "  selection-background-color: #0000C6;"
         "  selection-color: #00FF00;"
         "}"
+        "QListWidget::item {"
+        "  padding: 0px;"
+        "}"
     );
-    layout->addWidget(listWidget);
+    listWidget->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    listWidget->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 }
 
 // Equalizer Window Constructor
@@ -250,11 +392,11 @@ EqualizerWindow::EqualizerWindow(WinampWindow *parent) : QWidget(nullptr), mainW
     setWindowTitle("Winamp Equalizer");
     setWindowFlags(Qt::Tool | Qt::FramelessWindowHint);
     
-    // Initialize EQ bands to center (0)
+    // Initialize EQ bands to center position (32 out of 63)
     for (int i = 0; i < 10; i++) {
-        eqValues[i] = 50;
+        eqValues[i] = 32;
     }
-    preampValue = 50;
+    preampValue = 32;
 }
 
 // Main Winamp Window
