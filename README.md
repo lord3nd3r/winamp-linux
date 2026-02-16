@@ -153,11 +153,26 @@ All state saved to `~/.config/winamp/winamp.conf` (INI format) on exit, restored
 - **Fallback loading** — missing bitmaps in custom skins automatically filled from default skin assets
 - **Case-insensitive BMP loading** — handles mixed-case filenames across skin archives
 
+### Modern Skin Engine (Winamp 5)
+
+- **XML-based skin format** — full parser for Winamp 5 modern skins (`skin.xml` with recursive `<include>` support)
+- **ModernSkinEngine class** — loads `<bitmap>` sprite sheet definitions and sub-rectangle extraction from PNG images
+- **BitmapFont rendering** — grid-based text rendering for timer (BIGNUM), songticker, and songinfo fonts
+- **Dual-mode window** — WinampWindow switches between classic (fixed 275×116) and modern (resizable, min 354×144) modes
+- **Full player rendering** — titlebar with active/inactive states, 3-part tiled backgrounds (main + bg2 layers), display area with overlay effects, seek bar with thumb, volume slider, playback buttons with hover/pressed states
+- **13-button interaction system** — Previous, Play, Pause, Stop, Next, Eject, PL, ML, Mute, Repeat, Shuffle, Minimize, Close — all with bitmap hover/pressed states
+- **Modern Skins preferences page** — scan built-in resource skins (Winamp Modern, Bento, Big Bento) and user skins; `.wal` archive support
+- **LED indicators** — shuffle/repeat on/off LEDs from sprite sheet
+- **Visualization** — spectrum analyzer and oscilloscope rendered in the modern display area
+- **Scrolling songticker** — animated song title text using bitmap font with seamless looping
+- **Song info display** — bitrate (kbps), sample rate (khz), channel mode (mono/stereo/surround), EQ indicator
+- **Case-insensitive path resolution** — handles Windows-originated mixed-case filenames on Linux
+
 ### Dialogs
 
 - **About Winamp** — demoscene-style animated dialog: starfield background, warped splash2.bmp, orbiting team.bmp cube, fire spheres, fading credits at 33fps
 - **Play Location** — URL input for stream/remote playback
-- **Preferences** — full tree-based dialog matching Windows Options.cpp: Setup (General, File Types, Titles, Language), Skins (Classic Skins skin browser), Playback, Playlist, Bookmarks, Visualization, Plug-ins
+- **Preferences** — full tree-based dialog matching Windows Options.cpp: Setup (General, File Types, Titles, Language), Skins (Classic Skins browser, Modern Skins browser), Playback, Playlist, Bookmarks, Visualization, Plug-ins
 - **Jump to File** — search-within-playlist dialog with filter and play/queue (Ctrl+J, matching Windows `JSEARCH.cpp`)
 
 ### Milkdrop Visualization (projectM)
