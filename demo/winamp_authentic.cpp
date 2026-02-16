@@ -13,6 +13,9 @@
 #include <QImage>
 #include <QIcon>
 #include <QFile>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QMimeData>
 #include <QSettings>
 #include <QDir>
 #include <QMenu>
@@ -96,6 +99,7 @@ static const int numPresets = sizeof(builtinPresets) / sizeof(builtinPresets[0])
 
 // Playlist Window
 class PlaylistWindow : public QWidget {
+    Q_OBJECT
 public:
     PlaylistWindow(WinampWindow *parent = nullptr);
     
@@ -145,6 +149,9 @@ public:
         snapMode = s.value("snapMode", 0).toInt();
         s.endGroup();
     }
+    
+signals:
+    void trackDoubleClicked(const QString &file);
     
 protected:
     void paintEvent(QPaintEvent *) override {
@@ -251,6 +258,9 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override {
         isDragging = false;
     }
+    
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
     
     bool isSnapped() const { return snapMode > 0; }
     
@@ -511,6 +521,45 @@ PlaylistWindow::PlaylistWindow(WinampWindow *parent) : QWidget(nullptr), mainWin
     );
     listWidget->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     listWidget->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    
+    // Enable drag and drop for files
+    listWidget->setAcceptDrops(true);
+    listWidget->setDragEnabled(true);
+    listWidget->setDropIndicatorShown(true);
+    listWidget->setDragDropMode(QAbstractItemView::InternalMove);
+    
+    // Connect signals for drag and drop
+    connect(listWidget, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *item) {
+        if (item) {
+            int index = listWidget->row(item);
+            QString file = getTrack(index);
+            if (!file.isEmpty()) {
+                emit trackDoubleClicked(file);
+            }
+        }
+    });
+    
+    // Enable drag and drop
+    setAcceptDrops(true);
+}
+
+void PlaylistWindow::dragEnterEvent(QDragEnterEvent *event) {
+    if (event->mimeData()->hasUrls()) {
+        event->acceptProposedAction();
+    }
+}
+
+void PlaylistWindow::dropEvent(QDropEvent *event) {
+    const QMimeData *mimeData = event->mimeData();
+    if (mimeData->hasUrls()) {
+        for (const QUrl &url : mimeData->urls()) {
+            QString filePath = url.toLocalFile();
+            if (!filePath.isEmpty()) {
+                addTrack(filePath);
+            }
+        }
+        event->acceptProposedAction();
+    }
 }
 
 // Equalizer Window Constructor
@@ -562,6 +611,7 @@ public:
         
         // Create playlist and EQ windows
         playlistWindow = new PlaylistWindow(this);
+        connect(playlistWindow, &PlaylistWindow::trackDoubleClicked, this, &WinampWindow::playTrack);
         eqWindow = new EqualizerWindow(this);
         
         // Position windows: EQ below main, playlist below EQ
@@ -980,6 +1030,14 @@ protected:
         }
     }
     
+    void playTrack(const QString &fileName) {
+        if (!fileName.isEmpty() && QFile::exists(fileName)) {
+            currentFile = fileName;
+            player->setSource(QUrl::fromLocalFile(fileName));
+            player->play();
+        }
+    }
+    
     void updateDisplay() {
         update();
     }
@@ -1211,3 +1269,5 @@ int main(int argc, char *argv[]) {
     
     return app.exec();
 }
+
+#include "winamp_authentic.moc"
