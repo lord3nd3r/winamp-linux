@@ -12,7 +12,10 @@ A pixel-accurate recreation of the classic Winamp 2.x/5.x interface using Qt6 an
 
 ```bash
 # Install dependencies (Debian/Ubuntu)
-sudo apt-get install -y qt6-base-dev qt6-multimedia-dev cmake ninja-build
+sudo apt-get install -y qt6-base-dev qt6-multimedia-dev \
+  libgl-dev qt6-base-dev-tools \
+  libprojectm-dev projectm-data \
+  cmake ninja-build
 
 # Build
 cmake -B build -G Ninja
@@ -21,6 +24,8 @@ ninja -C build
 # Run
 ./build/winamp
 ```
+
+Milkdrop visualization (via projectM) is compiled in automatically — no extra flags needed.
 
 ---
 
@@ -121,6 +126,16 @@ All state saved to `~/.config/winamp/winamp.conf` (INI format) on exit, restored
 - **Play Location** — URL input for stream/remote playback
 - **Preferences** — tabbed dialog with General and Skins tabs
 
+### Milkdrop Visualization (projectM)
+
+- **Full Milkdrop preset support** — 274 `.milk` presets from `/usr/share/projectM/presets/`
+- **OpenGL rendering** — QOpenGLWidget with projectM engine at 33fps
+- **Real-time audio reactive** — PCM data from live audio buffer fed directly to projectM
+- **Preset navigation** — Space (next), Backspace (previous), R (toggle shuffle), L (lock/unlock)
+- **Fullscreen mode** — F/F11 or double-click to toggle; hides main/EQ/playlist windows; Escape to exit
+- **Launch from UI** — double-click the visualization area or right-click → "Milkdrop visualization"
+- **Auto-shuffle** — presets change every 30 seconds with smooth 5-second transitions
+
 ### Audio
 
 - **Qt Multimedia backend** (QMediaPlayer + QAudioOutput + QAudioBufferOutput)
@@ -165,19 +180,19 @@ Bitmap loading searches multiple fallback paths and merges missing assets from a
 
 ### Medium Priority
 
-- [ ] Keyboard shortcuts — Space (play/pause), V (stop), Z/B (prev/next), C (pause), L (open file), J (jump to time), arrows (seek +/-5s), +/- (volume)
-- [ ] Jump to time dialog (Ctrl+J)
+- [x] Keyboard shortcuts — Space (play/pause), V (stop), Z/B (prev/next), C (pause), L (open file), J (jump to time), arrows (seek +/-5s), +/- (volume)
+- [x] Jump to time dialog (Ctrl+J)
 - [ ] Jump to file dialog (J) — type-ahead search in playlist
 - [ ] File info dialog (Alt+3) — display/edit ID3 tags
-- [ ] Song title from metadata — read ID3/Vorbis tags instead of using filename
-- [ ] Time display toggle — click time area to switch between elapsed / remaining
+- [x] Song title from metadata — read ID3/Vorbis tags instead of using filename
+- [x] Time display toggle — click time area to switch between elapsed / remaining
 - [ ] Animated colon separator — use `nums_ex.bmp` if present
 - [ ] Double-size mode — 2x pixel scaling (Ctrl+D or clutterbar toggle)
 - [ ] Always on top — context menu toggle (slot exists, wiring incomplete)
 - [ ] EQ frequency response curve — draw the actual curve in the EQ graph area
 - [ ] EQ AUTO behavior — auto-load preset based on file/genre
-- [ ] Playlist track numbering — show "1. Artist - Title (3:45)" format per entry
-- [ ] Playlist keyboard — Delete removes selected, Enter plays selected
+- [x] Playlist track numbering — show "1. Artist - Title (3:45)" format per entry
+- [x] Playlist keyboard — Delete removes selected, Enter plays selected
 - [ ] Playlist info text from `pledit.txt` — skin-specific font colors and background
 
 ### Low Priority
@@ -186,7 +201,7 @@ Bitmap loading searches multiple fallback paths and merges missing assets from a
 - [ ] Mini-Browser window
 - [ ] Video playback — video window with `video.bmp` / `video_logo.bmp` skin
 - [ ] Plugin architecture — input, output, DSP, general purpose, visualization plugin APIs
-- [ ] Milkdrop / AVS visualization plugins
+- [x] Milkdrop visualization — projectM-powered with 274 presets, fullscreen, audio-reactive
 - [ ] Global hotkeys — system-wide media key support
 - [ ] SHOUTcast/Icecast streaming with metadata display
 - [ ] Crossfade / gapless playback between tracks
@@ -213,9 +228,9 @@ Bitmap loading searches multiple fallback paths and merges missing assets from a
 ## File Structure
 
 ```
-├── CMakeLists.txt              # Qt6 build configuration
+├── CMakeLists.txt              # Qt6 + OpenGL + projectM build configuration
 ├── README.md                   # This file
-├── winamp_authentic.cpp        # Main implementation (~2450 lines)
+├── winamp_authentic.cpp        # Main implementation (~3350 lines)
 ├── skins/default/              # Default skin bitmaps
 ├── Src/Winamp/resource/        # Additional bitmap assets
 └── build/
@@ -224,6 +239,7 @@ Bitmap loading searches multiple fallback paths and merges missing assets from a
 
 Skin bitmaps loaded from `skins/default/` and `Src/Winamp/resource/` with automatic fallback merging.
 Custom skins: place `.wsz`/`.zip` files or folders in `~/.winamp/skins/`.
+Milkdrop presets loaded from `/usr/share/projectM/presets/` (installed via `projectm-data`).
 
 ---
 

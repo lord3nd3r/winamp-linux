@@ -37,7 +37,16 @@
 #include <QFileInfo>
 #include <QDateTime>
 #include <QProcess>
+#include <QDesktopServices>
+#include <QMessageBox>
+#include <QSet>
+#include <QOpenGLWidget>
+#include <QOpenGLFunctions>
+#include <QKeyEvent>
 #include <type_traits>
+
+// projectM — Milkdrop-compatible visualization engine
+#include <libprojectM/projectM.hpp>
 
 // Extract a .wsz or .zip skin archive to a cache directory.
 // Returns the path to the extracted folder, or empty string on failure.
@@ -142,8 +151,9 @@ static const QColor visColors[24] = {
     QColor(150, 150, 150),   // 23: analyzer peak dot
 };
 
-// Forward declaration
+// Forward declarations
 class WinampWindow;
+class MilkdropWindow;
 
 // Shared text.bmp character lookup (5x6 per char)
 static QPoint getTextCharPos(QChar ch) {
@@ -771,6 +781,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent *) override;
     void dragEnterEvent(QDragEnterEvent *) override;
     void dropEvent(QDropEvent *) override;
+    bool eventFilter(QObject *obj, QEvent *event) override;
 
 private:
     void updateTotalTimeDisplay();
@@ -781,6 +792,29 @@ private:
     void showSelMenu(QPoint globalPos);
     void showMiscMenu(QPoint globalPos);
     void showListMenu(QPoint globalPos);
+    void showContextMenu(QPoint globalPos);
+    
+    // Playlist operations
+    void removeSelected();
+    void cropSelected();
+    void removeDeadFiles();
+    void moveSelectedUp();
+    void moveSelectedDown();
+    void sortByTitle();
+    void sortByFilename();
+    void sortByPath();
+    void reverseList();
+    void randomizeList();
+    void exploreFolderOfSelected();
+    void generateHtmlPlaylist();
+    QString trackDisplayName(int index, const QString &filePath) {
+        return QString("%1. %2").arg(index + 1).arg(QFileInfo(filePath).fileName());
+    }
+    void rebuildListDisplay() {
+        listWidget->clear();
+        for (int i = 0; i < tracks.size(); i++)
+            listWidget->addItem(trackDisplayName(i, tracks[i]));
+    }
 
     QListWidget *listWidget;
     QList<QString> tracks;
@@ -1063,6 +1097,328 @@ PlaylistWindow::PlaylistWindow(WinampWindow *parent) : QWidget(nullptr), mainWin
             trackDurations.move(start, row + i);
         }
     });
+
+    // Install event filter for keyboard shortcuts and right-click context menu
+    listWidget->installEventFilter(this);
+}
+
+bool PlaylistWindow::eventFilter(QObject *obj, QEvent *event) {
+    if (obj == listWidget) {
+        // Right-click on list widget → show context menu
+        if (event->type() == QEvent::ContextMenu) {
+            QContextMenuEvent *ce = static_cast<QContextMenuEvent*>(event);
+            showContextMenu(ce->globalPos());
+            return true;
+        }
+        if (event->type() == QEvent::KeyPress) {
+        QKeyEvent *ke = static_cast<QKeyEvent*>(event);
+        Qt::KeyboardModifiers mods = ke->modifiers();
+        int key = ke->key();
+
+        // Delete — remove selected
+        if (key == Qt::Key_Delete && mods == Qt::NoModifier) {
+            removeSelected(); return true;
+        }
+        // Ctrl+Delete — crop to selected
+        if (key == Qt::Key_Delete && mods == Qt::ControlModifier) {
+            cropSelected(); return true;
+        }
+        // Ctrl+Shift+Delete — clear playlist
+        if (key == Qt::Key_Delete && mods == (Qt::ControlModifier | Qt::ShiftModifier)) {
+            clearPlaylist(); return true;
+        }
+        // Alt+Delete — remove missing/dead files
+        if (key == Qt::Key_Delete && mods == Qt::AltModifier) {
+            removeDeadFiles(); return true;
+        }
+        // Enter — play selected
+        if (key == Qt::Key_Return || key == Qt::Key_Enter) {
+            int row = listWidget->currentRow();
+            if (row >= 0 && row < tracks.size())
+                emit trackDoubleClicked(tracks[row]);
+            return true;
+        }
+        // Ctrl+A — select all
+        if (key == Qt::Key_A && mods == Qt::ControlModifier) {
+            listWidget->selectAll(); return true;
+        }
+        // Ctrl+I — invert selection
+        if (key == Qt::Key_I && mods == Qt::ControlModifier) {
+            for (int i = 0; i < listWidget->count(); i++)
+                listWidget->item(i)->setSelected(!listWidget->item(i)->isSelected());
+            return true;
+        }
+        // Ctrl+R — reverse list
+        if (key == Qt::Key_R && mods == Qt::ControlModifier) {
+            reverseList(); return true;
+        }
+        // Ctrl+Shift+R — randomize list
+        if (key == Qt::Key_R && mods == (Qt::ControlModifier | Qt::ShiftModifier)) {
+            randomizeList(); return true;
+        }
+        // Ctrl+Shift+1 — sort by title
+        if (key == Qt::Key_1 && mods == (Qt::ControlModifier | Qt::ShiftModifier)) {
+            sortByTitle(); return true;
+        }
+        // Ctrl+Shift+2 — sort by filename
+        if (key == Qt::Key_2 && mods == (Qt::ControlModifier | Qt::ShiftModifier)) {
+            sortByFilename(); return true;
+        }
+        // Ctrl+Shift+3 — sort by path
+        if (key == Qt::Key_3 && mods == (Qt::ControlModifier | Qt::ShiftModifier)) {
+            sortByPath(); return true;
+        }
+        // Alt+Up — move selection up
+        if (key == Qt::Key_Up && mods == Qt::AltModifier) {
+            moveSelectedUp(); return true;
+        }
+        // Alt+Down — move selection down
+        if (key == Qt::Key_Down && mods == Qt::AltModifier) {
+            moveSelectedDown(); return true;
+        }
+        // Ctrl+F — explore folder
+        if (key == Qt::Key_F && mods == Qt::ControlModifier) {
+            exploreFolderOfSelected(); return true;
+        }
+        // Ctrl+N — new playlist
+        if (key == Qt::Key_N && mods == Qt::ControlModifier) {
+            clearPlaylist(); return true;
+        }
+        // Ctrl+O — open playlist
+        if (key == Qt::Key_O && mods == Qt::ControlModifier) {
+            showListMenu(QCursor::pos()); return true;
+        }
+        // Ctrl+S — save playlist
+        if (key == Qt::Key_S && mods == Qt::ControlModifier) {
+            // Trigger save directly
+            QString fileName = QFileDialog::getSaveFileName(this, "Save Playlist", "",
+                "M3U Playlist (*.m3u);;M3U8 Playlist (*.m3u8);;All Files (*)");
+            if (!fileName.isEmpty()) {
+                QFile file(fileName);
+                if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                    QTextStream out(&file);
+                    out << "#EXTM3U\n";
+                    for (int i = 0; i < tracks.size(); i++) {
+                        qint64 durSec = (i < trackDurations.size()) ? trackDurations[i] / 1000 : -1;
+                        QString title = QFileInfo(tracks[i]).baseName();
+                        out << "#EXTINF:" << durSec << "," << title << "\n";
+                        out << tracks[i] << "\n";
+                    }
+                    file.close();
+                }
+            }
+            return true;
+        }
+        // Ctrl+Alt+G — generate HTML playlist
+        if (key == Qt::Key_G && mods == (Qt::ControlModifier | Qt::AltModifier)) {
+            generateHtmlPlaylist(); return true;
+        }
+        // L — add file(s)
+        if (key == Qt::Key_L && mods == Qt::NoModifier) {
+            showAddMenu(QCursor::pos()); return true;
+        }
+        // Home — scroll to top
+        if (key == Qt::Key_Home && mods == Qt::NoModifier) {
+            listWidget->scrollToTop();
+            if (listWidget->count() > 0) listWidget->setCurrentRow(0);
+            return true;
+        }
+        // End — scroll to bottom
+        if (key == Qt::Key_End && mods == Qt::NoModifier) {
+            listWidget->scrollToBottom();
+            if (listWidget->count() > 0) listWidget->setCurrentRow(listWidget->count() - 1);
+            return true;
+        }
+        } // end KeyPress
+    } // end obj == listWidget
+    return QWidget::eventFilter(obj, event);
+}
+
+// ---- Playlist operation helpers (used by menus and keyboard shortcuts) ----
+
+void PlaylistWindow::removeSelected() {
+    QList<int> rows;
+    for (QListWidgetItem *item : listWidget->selectedItems())
+        rows.append(listWidget->row(item));
+    std::sort(rows.begin(), rows.end(), std::greater<int>());
+    for (int row : rows) {
+        if (row >= 0 && row < tracks.size()) {
+            tracks.removeAt(row);
+            if (row < trackDurations.size())
+                trackDurations.removeAt(row);
+        }
+    }
+    rebuildListDisplay();
+    updateTotalTimeDisplay();
+}
+
+void PlaylistWindow::cropSelected() {
+    QList<QListWidgetItem*> selectedItems = listWidget->selectedItems();
+    QStringList newTracks;
+    QList<qint64> newDurations;
+    for (QListWidgetItem *item : selectedItems) {
+        int row = listWidget->row(item);
+        if (row >= 0 && row < tracks.size()) {
+            newTracks.append(tracks[row]);
+            newDurations.append(row < trackDurations.size() ? trackDurations[row] : 0);
+        }
+    }
+    tracks = newTracks;
+    trackDurations = newDurations;
+    rebuildListDisplay();
+    updateTotalTimeDisplay();
+}
+
+void PlaylistWindow::removeDeadFiles() {
+    int removed = 0;
+    for (int i = tracks.size() - 1; i >= 0; i--) {
+        if (!QFile::exists(tracks[i])) {
+            tracks.removeAt(i);
+            if (i < trackDurations.size())
+                trackDurations.removeAt(i);
+            removed++;
+        }
+    }
+    rebuildListDisplay();
+    updateTotalTimeDisplay();
+}
+
+void PlaylistWindow::moveSelectedUp() {
+    QList<int> rows;
+    for (QListWidgetItem *item : listWidget->selectedItems())
+        rows.append(listWidget->row(item));
+    std::sort(rows.begin(), rows.end());
+    if (rows.isEmpty() || rows.first() == 0) return;
+    for (int row : rows) {
+        if (row > 0 && row < tracks.size()) {
+            tracks.swapItemsAt(row, row - 1);
+            if (row < trackDurations.size() && row - 1 < trackDurations.size())
+                trackDurations.swapItemsAt(row, row - 1);
+        }
+    }
+    rebuildListDisplay();
+    // Re-select moved items
+    for (int row : rows) {
+        if (row - 1 >= 0 && row - 1 < listWidget->count())
+            listWidget->item(row - 1)->setSelected(true);
+    }
+    listWidget->setCurrentRow(rows.first() - 1);
+}
+
+void PlaylistWindow::moveSelectedDown() {
+    QList<int> rows;
+    for (QListWidgetItem *item : listWidget->selectedItems())
+        rows.append(listWidget->row(item));
+    std::sort(rows.begin(), rows.end(), std::greater<int>());
+    if (rows.isEmpty() || rows.first() >= tracks.size() - 1) return;
+    for (int row : rows) {
+        if (row >= 0 && row + 1 < tracks.size()) {
+            tracks.swapItemsAt(row, row + 1);
+            if (row < trackDurations.size() && row + 1 < trackDurations.size())
+                trackDurations.swapItemsAt(row, row + 1);
+        }
+    }
+    rebuildListDisplay();
+    for (int row : rows) {
+        if (row + 1 < listWidget->count())
+            listWidget->item(row + 1)->setSelected(true);
+    }
+    std::sort(rows.begin(), rows.end());
+    listWidget->setCurrentRow(rows.first() + 1);
+}
+
+void PlaylistWindow::sortByTitle() {
+    // Sort by display filename (baseName)
+    QList<QPair<QString, qint64>> combined;
+    for (int i = 0; i < tracks.size(); i++)
+        combined.append({tracks[i], i < trackDurations.size() ? trackDurations[i] : 0});
+    std::sort(combined.begin(), combined.end(), [](const auto &a, const auto &b) {
+        return QFileInfo(a.first).baseName().toLower() < QFileInfo(b.first).baseName().toLower();
+    });
+    tracks.clear(); trackDurations.clear();
+    for (const auto &p : combined) { tracks.append(p.first); trackDurations.append(p.second); }
+    rebuildListDisplay();
+    updateTotalTimeDisplay();
+}
+
+void PlaylistWindow::sortByFilename() {
+    QList<QPair<QString, qint64>> combined;
+    for (int i = 0; i < tracks.size(); i++)
+        combined.append({tracks[i], i < trackDurations.size() ? trackDurations[i] : 0});
+    std::sort(combined.begin(), combined.end(), [](const auto &a, const auto &b) {
+        return QFileInfo(a.first).fileName().toLower() < QFileInfo(b.first).fileName().toLower();
+    });
+    tracks.clear(); trackDurations.clear();
+    for (const auto &p : combined) { tracks.append(p.first); trackDurations.append(p.second); }
+    rebuildListDisplay();
+    updateTotalTimeDisplay();
+}
+
+void PlaylistWindow::sortByPath() {
+    QList<QPair<QString, qint64>> combined;
+    for (int i = 0; i < tracks.size(); i++)
+        combined.append({tracks[i], i < trackDurations.size() ? trackDurations[i] : 0});
+    std::sort(combined.begin(), combined.end(), [](const auto &a, const auto &b) {
+        return a.first.toLower() < b.first.toLower();
+    });
+    tracks.clear(); trackDurations.clear();
+    for (const auto &p : combined) { tracks.append(p.first); trackDurations.append(p.second); }
+    rebuildListDisplay();
+    updateTotalTimeDisplay();
+}
+
+void PlaylistWindow::reverseList() {
+    std::reverse(tracks.begin(), tracks.end());
+    std::reverse(trackDurations.begin(), trackDurations.end());
+    rebuildListDisplay();
+    updateTotalTimeDisplay();
+}
+
+void PlaylistWindow::randomizeList() {
+    QList<QPair<QString, qint64>> combined;
+    for (int i = 0; i < tracks.size(); i++)
+        combined.append({tracks[i], i < trackDurations.size() ? trackDurations[i] : 0});
+    std::random_device rd;
+    std::mt19937 g(rd());
+    std::shuffle(combined.begin(), combined.end(), g);
+    tracks.clear(); trackDurations.clear();
+    for (const auto &p : combined) { tracks.append(p.first); trackDurations.append(p.second); }
+    rebuildListDisplay();
+    updateTotalTimeDisplay();
+}
+
+void PlaylistWindow::exploreFolderOfSelected() {
+    int row = listWidget->currentRow();
+    if (row >= 0 && row < tracks.size()) {
+        QString folder = QFileInfo(tracks[row]).absolutePath();
+        QDesktopServices::openUrl(QUrl::fromLocalFile(folder));
+    }
+}
+
+void PlaylistWindow::generateHtmlPlaylist() {
+    QString fileName = QFileDialog::getSaveFileName(this, "Generate HTML Playlist", "",
+        "HTML Files (*.html);;All Files (*)");
+    if (fileName.isEmpty()) return;
+    QFile file(fileName);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) return;
+    QTextStream out(&file);
+    out << "<html><head><title>Winamp Generated Playlist</title>\n";
+    out << "<style>body{background:#000;color:#0f0;font-family:monospace;}";
+    out << "table{border-collapse:collapse;width:100%;}";
+    out << "td{padding:2px 8px;border-bottom:1px solid #333;}";
+    out << "tr:hover{background:#003;}h1{color:#0f0;}</style></head>\n";
+    out << "<body><h1>Winamp Playlist</h1>\n";
+    out << "<p>" << tracks.size() << " tracks</p>\n";
+    out << "<table><tr><th>#</th><th>Title</th><th>File</th></tr>\n";
+    for (int i = 0; i < tracks.size(); i++) {
+        out << "<tr><td>" << (i+1) << "</td><td>" 
+            << QFileInfo(tracks[i]).baseName().toHtmlEscaped() 
+            << "</td><td>" << tracks[i].toHtmlEscaped() << "</td></tr>\n";
+    }
+    out << "</table></body></html>\n";
+    file.close();
+    // Open it in default browser
+    QDesktopServices::openUrl(QUrl::fromLocalFile(fileName));
 }
 
 void PlaylistWindow::updateTotalTimeDisplay() {
@@ -1089,7 +1445,7 @@ void PlaylistWindow::updateTotalTimeDisplay() {
 void PlaylistWindow::addTrack(const QString &filePath) {
     QFileInfo fileInfo(filePath);
     if (fileInfo.exists()) {
-        listWidget->addItem(fileInfo.fileName());
+        listWidget->addItem(trackDisplayName(tracks.size(), filePath));
         tracks.append(filePath);
 
         // Use a temporary media player to get the duration
@@ -1206,7 +1562,26 @@ void PlaylistWindow::mousePressEvent(QMouseEvent *event) {
     int y = event->pos().y();
     int h = height();
 
-    // Playlist bottom buttons — respond to both left and right click
+    // Right-click on playlist items shows context menu
+    if (event->button() == Qt::RightButton) {
+        // Bottom buttons still respond to right click
+        if (y >= h - 30 && y < h - 12) {
+            if (x >= 14 && x < 35) { showAddMenu(event->globalPosition().toPoint()); return; }
+            if (x >= 43 && x < 64) { showRemMenu(event->globalPosition().toPoint()); return; }
+            if (x >= 82 && x < 103) { showSelMenu(event->globalPosition().toPoint()); return; }
+            if (x >= 121 && x < 142) { showMiscMenu(event->globalPosition().toPoint()); return; }
+            if (x >= width() - 44 && x < width() - 22) { showListMenu(event->globalPosition().toPoint()); return; }
+        }
+        // Right-click on list area shows the full context menu
+        if (y >= 20 && y < h - 38) {
+            showContextMenu(event->globalPosition().toPoint());
+            event->accept();
+            return;
+        }
+        return;
+    }
+
+    // Left-click bottom buttons
     if (y >= h - 30 && y < h - 12) {
         if (x >= 14 && x < 35) {
             showAddMenu(event->globalPosition().toPoint());
@@ -1224,7 +1599,7 @@ void PlaylistWindow::mousePressEvent(QMouseEvent *event) {
             showMiscMenu(event->globalPosition().toPoint());
             event->accept();
             return;
-        } else if (x >= width() - 44 && x < width() - 44 + 22) {
+        } else if (x >= width() - 44 && x < width() - 22) {
             showListMenu(event->globalPosition().toPoint());
             event->accept();
             return;
@@ -1310,13 +1685,133 @@ void PlaylistWindow::loadSettings(QSettings &s) {
     for (const QString &track : savedTracks) {
         QString trimmed = track.trimmed();
         if (!trimmed.isEmpty() && QFile::exists(trimmed)) {
-            QFileInfo fi(trimmed);
-            listWidget->addItem(fi.fileName());
+            listWidget->addItem(trackDisplayName(tracks.size(), trimmed));
             tracks.append(trimmed);
             trackDurations.append(0); // Duration will be 0 until played
         }
     }
     updateTotalTimeDisplay();
+}
+
+// Right-click context menu on playlist items (matches Windows Winamp)
+void PlaylistWindow::showContextMenu(QPoint globalPos) {
+    static const char *menuStyle =
+        "QMenu { background-color: #2b2d3d; color: #00ff00; border: 1px solid #555; font-size: 9pt; }"
+        "QMenu::item:selected { background-color: #0000c6; }"
+        "QMenu::item:disabled { color: #666; }"
+        "QMenu::separator { height: 1px; background: #555; margin: 2px 4px; }";
+
+    QMenu menu;
+    menu.setStyleSheet(menuStyle);
+
+    bool hasSelection = !listWidget->selectedItems().isEmpty();
+
+    QAction *playAct = menu.addAction("Play item(s)");
+    playAct->setShortcut(QKeySequence(Qt::Key_Return));
+    playAct->setEnabled(hasSelection);
+    menu.addSeparator();
+
+    QAction *removeAct = menu.addAction("Remove item(s)");
+    removeAct->setShortcut(QKeySequence(Qt::Key_Delete));
+    removeAct->setEnabled(hasSelection);
+    QAction *cropAct = menu.addAction("Crop files");
+    cropAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Delete));
+    cropAct->setEnabled(hasSelection);
+    menu.addSeparator();
+
+    QAction *fileInfoAct = menu.addAction("View file info...");
+    fileInfoAct->setShortcut(QKeySequence(Qt::ALT | Qt::Key_3));
+    fileInfoAct->setEnabled(hasSelection);
+    QAction *editEntryAct = menu.addAction("Playlist entry...");
+    editEntryAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_E));
+    editEntryAct->setEnabled(hasSelection);
+    menu.addSeparator();
+
+    // Sort submenu
+    QMenu *sortMenu = menu.addMenu("Sort");
+    sortMenu->setStyleSheet(menuStyle);
+    QAction *sortTitleAct = sortMenu->addAction("Sort list by title");
+    sortTitleAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_1));
+    QAction *sortFilenameAct = sortMenu->addAction("Sort list by filename");
+    sortFilenameAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_2));
+    QAction *sortPathAct = sortMenu->addAction("Sort list by path + filename");
+    sortPathAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_3));
+    sortMenu->addSeparator();
+    QAction *reverseAct = sortMenu->addAction("Reverse list");
+    reverseAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_R));
+    QAction *randomizeAct = sortMenu->addAction("Randomize list");
+    randomizeAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_R));
+
+    menu.addSeparator();
+
+    QAction *exploreAct = menu.addAction("Explore item folder");
+    exploreAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_F));
+    exploreAct->setEnabled(hasSelection);
+
+    QAction *moveUpAct = menu.addAction("Move up");
+    moveUpAct->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Up));
+    moveUpAct->setEnabled(hasSelection);
+    QAction *moveDownAct = menu.addAction("Move down");
+    moveDownAct->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Down));
+    moveDownAct->setEnabled(hasSelection);
+
+    menu.addSeparator();
+
+    QAction *selAllAct = menu.addAction("Select all");
+    selAllAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_A));
+    QAction *selNoneAct = menu.addAction("Select none");
+    QAction *selInvAct = menu.addAction("Invert selection");
+    selInvAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_I));
+
+    QAction *sel = menu.exec(globalPos);
+    if (!sel) return;
+
+    if (sel == playAct) {
+        int row = listWidget->currentRow();
+        if (row >= 0 && row < tracks.size())
+            emit trackDoubleClicked(tracks[row]);
+    }
+    else if (sel == removeAct) removeSelected();
+    else if (sel == cropAct) cropSelected();
+    else if (sel == fileInfoAct) {
+        // Show basic file info dialog
+        int row = listWidget->currentRow();
+        if (row >= 0 && row < tracks.size()) {
+            QFileInfo fi(tracks[row]);
+            QString info = QString("File: %1\nPath: %2\nSize: %3 KB\nModified: %4")
+                .arg(fi.fileName())
+                .arg(fi.absolutePath())
+                .arg(fi.size() / 1024)
+                .arg(fi.lastModified().toString("yyyy-MM-dd hh:mm:ss"));
+            QMessageBox::information(this, "File Info", info);
+        }
+    }
+    else if (sel == editEntryAct) {
+        int row = listWidget->currentRow();
+        if (row >= 0 && row < tracks.size()) {
+            bool ok;
+            QString newPath = QInputDialog::getText(this, "Edit Playlist Entry",
+                "File path:", QLineEdit::Normal, tracks[row], &ok);
+            if (ok && !newPath.isEmpty()) {
+                tracks[row] = newPath;
+                rebuildListDisplay();
+            }
+        }
+    }
+    else if (sel == sortTitleAct) sortByTitle();
+    else if (sel == sortFilenameAct) sortByFilename();
+    else if (sel == sortPathAct) sortByPath();
+    else if (sel == reverseAct) reverseList();
+    else if (sel == randomizeAct) randomizeList();
+    else if (sel == exploreAct) exploreFolderOfSelected();
+    else if (sel == moveUpAct) moveSelectedUp();
+    else if (sel == moveDownAct) moveSelectedDown();
+    else if (sel == selAllAct) listWidget->selectAll();
+    else if (sel == selNoneAct) listWidget->clearSelection();
+    else if (sel == selInvAct) {
+        for (int i = 0; i < listWidget->count(); i++)
+            listWidget->item(i)->setSelected(!listWidget->item(i)->isSelected());
+    }
 }
 
 void PlaylistWindow::showAddMenu(QPoint globalPos) {
@@ -1326,9 +1821,9 @@ void PlaylistWindow::showAddMenu(QPoint globalPos) {
         "QMenu::item:selected { background-color: #0000c6; }"
     );
     
-    QAction *addFiles = menu.addAction("Add file(s)");
-    QAction *addDir = menu.addAction("Add directory");
-    QAction *addUrl = menu.addAction("Add location");
+    QAction *addFiles = menu.addAction("Add file(s)\tL");
+    QAction *addDir = menu.addAction("Add folder\tShift+L");
+    QAction *addUrl = menu.addAction("Add URL\tCtrl+L");
     
     QAction *selected = menu.exec(globalPos);
     if (selected == addFiles) {
@@ -1344,14 +1839,22 @@ void PlaylistWindow::showAddMenu(QPoint globalPos) {
         if (!dir.isEmpty()) {
             QDir directory(dir);
             QStringList filters = {"*.mp3", "*.wav", "*.flac", "*.ogg", "*.m4a", "*.aac"};
-            QStringList files = directory.entryList(filters, QDir::Files);
+            QStringList files = directory.entryList(filters, QDir::Files, QDir::Name);
             for (const QString &file : files) {
                 addTrack(directory.absoluteFilePath(file));
             }
         }
     } else if (selected == addUrl) {
-        // For now, just show a placeholder
-        // In real Winamp this would open a URL dialog
+        bool ok;
+        QString url = QInputDialog::getText(this, "Add URL",
+            "Enter URL:", QLineEdit::Normal, "http://", &ok);
+        if (ok && !url.isEmpty()) {
+            // Add URL as a track (QMediaPlayer can handle remote URLs)
+            listWidget->addItem(trackDisplayName(tracks.size(), url));
+            tracks.append(url);
+            trackDurations.append(0);
+            updateTotalTimeDisplay();
+        }
     }
 }
 
@@ -1360,55 +1863,34 @@ void PlaylistWindow::showRemMenu(QPoint globalPos) {
     menu.setStyleSheet(
         "QMenu { background-color: #2b2d3d; color: #00ff00; border: 1px solid #555; font-size: 9pt; }"
         "QMenu::item:selected { background-color: #0000c6; }"
+        "QMenu::separator { height: 1px; background: #555; margin: 2px 4px; }"
     );
     
-    QAction *removeSel = menu.addAction("Remove selected");
-    QAction *crop = menu.addAction("Crop");
-    QAction *clear = menu.addAction("Clear playlist");
-    QAction *removeMisc = menu.addAction("Remove misc");
+    QAction *removeSel = menu.addAction("Remove selected\tDel");
+    QAction *crop = menu.addAction("Crop selected\tCtrl+Del");
+    QAction *clear = menu.addAction("Clear playlist\tCtrl+Shift+Del");
+    menu.addSeparator();
+    QAction *removeDead = menu.addAction("Remove missing files\tAlt+Del");
+    QAction *removeDupes = menu.addAction("Remove duplicates");
     
     QAction *selected = menu.exec(globalPos);
-    if (selected == removeSel) {
-        // Remove selected items
-        QList<QListWidgetItem*> selectedItems = listWidget->selectedItems();
-        // Iterate backwards to avoid index shifting issues
-        for (int i = selectedItems.size() - 1; i >= 0; --i) {
-            QListWidgetItem *item = selectedItems[i];
-            int row = listWidget->row(item);
-            if (row >= 0 && row < tracks.size()) {
-                tracks.removeAt(row);
-                trackDurations.removeAt(row);
-            }
-            delete item;
-        }
-        updateTotalTimeDisplay();
-    } else if (selected == crop) {
-        // Remove all except selected
-        QList<QListWidgetItem*> selectedItems = listWidget->selectedItems();
-        QStringList newTracks;
-        QList<qint64> newDurations;
-        
-        for (QListWidgetItem *item : selectedItems) {
-            int row = listWidget->row(item);
-            if (row >= 0 && row < tracks.size()) {
-                newTracks.append(tracks[row]);
-                newDurations.append(trackDurations[row]);
+    if (selected == removeSel) removeSelected();
+    else if (selected == crop) cropSelected();
+    else if (selected == clear) clearPlaylist();
+    else if (selected == removeDead) removeDeadFiles();
+    else if (selected == removeDupes) {
+        // Remove duplicate entries (keep first occurrence)
+        QSet<QString> seen;
+        for (int i = tracks.size() - 1; i >= 0; i--) {
+            if (seen.contains(tracks[i])) {
+                tracks.removeAt(i);
+                if (i < trackDurations.size()) trackDurations.removeAt(i);
+            } else {
+                seen.insert(tracks[i]);
             }
         }
-        
-        listWidget->clear();
-        tracks = newTracks;
-        trackDurations = newDurations;
-
-        for (const QString &track : tracks) {
-            listWidget->addItem(QFileInfo(track).fileName());
-        }
+        rebuildListDisplay();
         updateTotalTimeDisplay();
-
-    } else if (selected == clear) {
-        clearPlaylist();
-    } else if (selected == removeMisc) {
-        // "Remove dead files" and "Remove duplicates" would go here
     }
 }
 
@@ -1419,9 +1901,9 @@ void PlaylistWindow::showSelMenu(QPoint globalPos) {
         "QMenu::item:selected { background-color: #0000c6; }"
     );
     
-    QAction *selectAll = menu.addAction("Select all");
+    QAction *selectAll = menu.addAction("Select all\tCtrl+A");
     QAction *selectNone = menu.addAction("Select none");
-    QAction *invertSel = menu.addAction("Invert selection");
+    QAction *invertSel = menu.addAction("Invert selection\tCtrl+I");
     
     QAction *selected = menu.exec(globalPos);
     if (selected == selectAll) {
@@ -1429,73 +1911,80 @@ void PlaylistWindow::showSelMenu(QPoint globalPos) {
     } else if (selected == selectNone) {
         listWidget->clearSelection();
     } else if (selected == invertSel) {
-        for (int i = 0; i < listWidget->count(); i++) {
-            QListWidgetItem *item = listWidget->item(i);
-            item->setSelected(!item->isSelected());
-        }
+        for (int i = 0; i < listWidget->count(); i++)
+            listWidget->item(i)->setSelected(!listWidget->item(i)->isSelected());
     }
 }
 
 void PlaylistWindow::showMiscMenu(QPoint globalPos) {
-    QMenu menu;
-    menu.setStyleSheet(
+    static const char *menuStyle =
         "QMenu { background-color: #2b2d3d; color: #00ff00; border: 1px solid #555; font-size: 9pt; }"
         "QMenu::item:selected { background-color: #0000c6; }"
-    );
-    
-    QAction *sortByTitle = menu.addAction("Sort by title");
-    QAction *sortByFilename = menu.addAction("Sort by filename");
-    QAction *sortByPath = menu.addAction("Sort by path");
-    QAction *reverseList = menu.addAction("Reverse list");
-    QAction *randomizeList = menu.addAction("Randomize list");
-    
+        "QMenu::separator { height: 1px; background: #555; margin: 2px 4px; }";
+
+    QMenu menu;
+    menu.setStyleSheet(menuStyle);
+
+    // File Info submenu (matches Windows MISC → File info)
+    QMenu *fileInfoMenu = menu.addMenu("File info");
+    fileInfoMenu->setStyleSheet(menuStyle);
+    QAction *fileInfoAct = fileInfoMenu->addAction("View file info...\tAlt+3");
+    QAction *editEntryAct = fileInfoMenu->addAction("Playlist entry...\tCtrl+E");
+
+    // Sort submenu (matches Windows MISC → Sort)
+    QMenu *sortMenu = menu.addMenu("Sort");
+    sortMenu->setStyleSheet(menuStyle);
+    QAction *sortTitleAct = sortMenu->addAction("Sort list by title\tCtrl+Shift+1");
+    QAction *sortFilenameAct = sortMenu->addAction("Sort list by filename\tCtrl+Shift+2");
+    QAction *sortPathAct = sortMenu->addAction("Sort list by path + filename\tCtrl+Shift+3");
+    sortMenu->addSeparator();
+    QAction *reverseAct = sortMenu->addAction("Reverse list\tCtrl+R");
+    QAction *randomizeAct = sortMenu->addAction("Randomize list\tCtrl+Shift+R");
+
+    // Misc submenu (matches Windows MISC → Misc)
+    QMenu *miscMenu = menu.addMenu("Misc");
+    miscMenu->setStyleSheet(menuStyle);
+    QAction *htmlAct = miscMenu->addAction("Generate HTML playlist...\tCtrl+Alt+G");
+    miscMenu->addSeparator();
+    QAction *moveUpAct = miscMenu->addAction("Move selected up\tAlt+Up");
+    QAction *moveDownAct = miscMenu->addAction("Move selected down\tAlt+Down");
+    miscMenu->addSeparator();
+    QAction *exploreAct = miscMenu->addAction("Explore item folder\tCtrl+F");
+
     QAction *selected = menu.exec(globalPos);
-    if (selected == sortByTitle) {
-        listWidget->sortItems(Qt::AscendingOrder);
-    } else if (selected == sortByFilename) {
-        // Since we only store filenames, this is the same as sort by title for now
-        listWidget->sortItems(Qt::AscendingOrder);
-    } else if (selected == sortByPath) {
-        // To sort by path, we need to rebuild the list widget based on the sorted `tracks` list
-        std::sort(tracks.begin(), tracks.end());
-        listWidget->clear();
-        trackDurations.clear(); // This will be incorrect until we re-fetch them
-        for (const QString &track : tracks) {
-            addTrack(track); // Re-adding will fetch duration but is slow
-        }
-    } else if (selected == reverseList) {
-        // Reverse the list
-        std::reverse(tracks.begin(), tracks.end());
-        std::reverse(trackDurations.begin(), trackDurations.end());
-        // Rebuild the list widget
-        listWidget->clear();
-        for (const QString &track : tracks) {
-            QFileInfo fi(track);
-            listWidget->addItem(fi.fileName());
-        }
-        updateTotalTimeDisplay();
-    } else if (selected == randomizeList) {
-        // We need to shuffle tracks and durations together
-        QList<QPair<QString, qint64>> combined;
-        for(int i = 0; i < tracks.size(); ++i) {
-            combined.append(qMakePair(tracks[i], trackDurations[i]));
-        }
+    if (!selected) return;
 
-        std::random_device rd;
-        std::mt19937 g(rd());
-        std::shuffle(combined.begin(), combined.end(), g);
-
-        tracks.clear();
-        trackDurations.clear();
-        listWidget->clear();
-
-        for(const auto& pair : combined) {
-            tracks.append(pair.first);
-            trackDurations.append(pair.second);
-            listWidget->addItem(QFileInfo(pair.first).fileName());
+    if (selected == fileInfoAct) {
+        int row = listWidget->currentRow();
+        if (row >= 0 && row < tracks.size()) {
+            QFileInfo fi(tracks[row]);
+            QString info = QString("File: %1\nPath: %2\nSize: %3 KB\nModified: %4")
+                .arg(fi.fileName()).arg(fi.absolutePath())
+                .arg(fi.size() / 1024).arg(fi.lastModified().toString("yyyy-MM-dd hh:mm:ss"));
+            QMessageBox::information(this, "File Info", info);
         }
-        updateTotalTimeDisplay();
     }
+    else if (selected == editEntryAct) {
+        int row = listWidget->currentRow();
+        if (row >= 0 && row < tracks.size()) {
+            bool ok;
+            QString newPath = QInputDialog::getText(this, "Edit Playlist Entry",
+                "File path:", QLineEdit::Normal, tracks[row], &ok);
+            if (ok && !newPath.isEmpty()) {
+                tracks[row] = newPath;
+                rebuildListDisplay();
+            }
+        }
+    }
+    else if (selected == sortTitleAct) sortByTitle();
+    else if (selected == sortFilenameAct) sortByFilename();
+    else if (selected == sortPathAct) sortByPath();
+    else if (selected == reverseAct) this->reverseList();
+    else if (selected == randomizeAct) this->randomizeList();
+    else if (selected == htmlAct) generateHtmlPlaylist();
+    else if (selected == moveUpAct) moveSelectedUp();
+    else if (selected == moveDownAct) moveSelectedDown();
+    else if (selected == exploreAct) exploreFolderOfSelected();
 }
 
 void PlaylistWindow::showListMenu(QPoint globalPos) {
@@ -1505,9 +1994,9 @@ void PlaylistWindow::showListMenu(QPoint globalPos) {
         "QMenu::item:selected { background-color: #0000c6; }"
     );
 
-    QAction *newPl = menu.addAction("New playlist");
-    QAction *openPl = menu.addAction("Open playlist...");
-    QAction *savePl = menu.addAction("Save playlist...");
+    QAction *newPl = menu.addAction("New playlist\tCtrl+N");
+    QAction *openPl = menu.addAction("Open playlist...\tCtrl+O");
+    QAction *savePl = menu.addAction("Save playlist...\tCtrl+S");
 
     QAction *selected = menu.exec(globalPos);
     if (selected == newPl) {
@@ -1567,6 +2056,175 @@ EqualizerWindow::EqualizerWindow(WinampWindow *parent) : QWidget(nullptr), mainW
     preampValue = 32;
 }
 
+// ============================================================
+// MilkdropWindow — projectM-powered Milkdrop visualization
+// ============================================================
+class MilkdropWindow : public QOpenGLWidget, protected QOpenGLFunctions {
+    Q_OBJECT
+public:
+    MilkdropWindow(QWidget *parent = nullptr) : QOpenGLWidget(parent) {
+        setWindowTitle("Milkdrop Visualization");
+        setWindowFlags(Qt::Window);
+        resize(640, 480);
+        setMinimumSize(320, 240);
+        setFocusPolicy(Qt::StrongFocus);
+        
+        // Timer driving projectM render at ~33fps
+        renderTimer = new QTimer(this);
+        connect(renderTimer, &QTimer::timeout, this, QOverload<>::of(&MilkdropWindow::update));
+    }
+    
+    ~MilkdropWindow() override {
+        makeCurrent();
+        if (pm) { delete pm; pm = nullptr; }
+        doneCurrent();
+    }
+    
+    void feedPCMInt16(const qint16 *data, int frames, int channels) {
+        if (!pm) return;
+        // Convert interleaved int16 stereo to the format projectM expects:
+        // addPCM16Data wants interleaved L,R,L,R... shorts
+        int n = qMin(frames, 512);
+        pm->pcm()->addPCM16Data(data, n);
+    }
+    
+    void feedPCMFloat(const float *data, int frames, int channels) {
+        if (!pm) return;
+        // Convert interleaved float to mono float for addPCMfloat
+        float mono[512];
+        int n = qMin(frames, 512);
+        for (int i = 0; i < n; i++)
+            mono[i] = data[i * channels];
+        pm->pcm()->addPCMfloat(mono, n);
+    }
+    
+    void nextPreset() { if (pm) pm->selectNext(true); }
+    void prevPreset() { if (pm) pm->selectPrevious(true); }
+    void randomPreset() { if (pm) pm->selectRandom(true); }
+    void toggleLock() {
+        if (!pm) return;
+        pm->setPresetLock(!pm->isPresetLocked());
+    }
+    
+protected:
+    void initializeGL() override {
+        initializeOpenGLFunctions();
+        glClearColor(0, 0, 0, 1);
+        
+        // Create projectM instance from settings struct
+        projectM::Settings s;
+        s.meshX = 32;
+        s.meshY = 24;
+        s.fps = 33;
+        s.textureSize = 1024;
+        s.windowWidth = width();
+        s.windowHeight = height();
+        s.presetURL = "/usr/share/projectM/presets";
+        s.smoothPresetDuration = 5;
+        s.presetDuration = 30;
+        s.beatSensitivity = 1.0f;
+        s.aspectCorrection = true;
+        s.easterEgg = 1.0f;
+        s.shuffleEnabled = true;
+        s.softCutRatingsEnabled = false;
+        
+        // Find fonts
+        std::string fontPath;
+        for (auto &candidate : {std::string("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+                                 std::string("/usr/share/fonts/truetype/ttf-dejavu/DejaVuSans.ttf"),
+                                 std::string("/usr/share/fonts/truetype/freefont/FreeSans.ttf")}) {
+            if (QFile::exists(QString::fromStdString(candidate))) { fontPath = candidate; break; }
+        }
+        s.titleFontURL = fontPath;
+        s.menuFontURL = fontPath;
+        
+        try {
+            pm = new projectM(s, projectM::FLAG_NONE);
+            pm->projectM_resetGL(width(), height());
+            pm->projectM_setTitle("");  // Clear the default "projectM" title overlay
+            pm->selectRandom(true);
+            qDebug() << "Milkdrop (projectM) initialized with" << pm->getPlaylistSize() << "presets";
+        } catch (const std::exception &e) {
+            qWarning() << "Failed to initialize projectM:" << e.what();
+            pm = nullptr;
+        } catch (...) {
+            qWarning() << "Failed to initialize projectM (unknown error)";
+            pm = nullptr;
+        }
+        
+        renderTimer->start(1000 / 33);
+    }
+    
+    void resizeGL(int w, int h) override {
+        if (pm) pm->projectM_resetGL(w, h);
+    }
+    
+    void paintGL() override {
+        if (pm) {
+            pm->renderFrame();
+        } else {
+            glClear(GL_COLOR_BUFFER_BIT);
+        }
+    }
+    
+    void keyPressEvent(QKeyEvent *e) override {
+        if (!pm) { QOpenGLWidget::keyPressEvent(e); return; }
+        switch (e->key()) {
+            case Qt::Key_Space: nextPreset(); break;
+            case Qt::Key_Backspace: prevPreset(); break;
+            case Qt::Key_L: toggleLock(); break;
+            case Qt::Key_R: pm->setShuffleEnabled(!pm->isShuffleEnabled()); break;
+            case Qt::Key_F:
+            case Qt::Key_F11:
+                toggleFullScreen();
+                break;
+            case Qt::Key_Escape:
+                if (isFullScreen()) toggleFullScreen();
+                else close();
+                break;
+            case Qt::Key_Q: close(); break;
+            default: QOpenGLWidget::keyPressEvent(e); return;
+        }
+        e->accept();
+    }
+    
+    void mouseDoubleClickEvent(QMouseEvent *e) override {
+        toggleFullScreen();
+    }
+    
+    void showEvent(QShowEvent *e) override {
+        QOpenGLWidget::showEvent(e);
+        setFocus();
+    }
+    
+    void closeEvent(QCloseEvent *e) override {
+        if (isFullScreen()) {
+            showNormal();
+            emit fullscreenChanged(false);
+        }
+        renderTimer->stop();
+        e->accept();
+    }
+    
+signals:
+    void fullscreenChanged(bool fs);
+    
+private:
+    void toggleFullScreen() {
+        if (isFullScreen()) {
+            showNormal();
+            emit fullscreenChanged(false);
+        } else {
+            showFullScreen();
+            emit fullscreenChanged(true);
+        }
+        setFocus();
+    }
+    
+    projectM *pm = nullptr;
+    QTimer *renderTimer;
+};
+
 // Main Winamp Window
 class WinampWindow : public QWidget {
     Q_OBJECT
@@ -1574,6 +2232,7 @@ public:
     WinampWindow(QWidget *parent = nullptr) : QWidget(parent), dragPosition(0,0), isDragging(false), 
                  volume(200), hoveredButton(-1), pressedButton(-1),
                  shuffleOn(false), repeatOn(false), eqBtnOn(false), plBtnOn(false),
+                 repeatTrack(false),
                  isDraggingVolume(false), isDraggingPos(false), scrollOffset(0),
                  visMode(1) {
         setFixedSize(275, 116);
@@ -1581,6 +2240,7 @@ public:
         setWindowFlags(Qt::FramelessWindowHint);
         setAttribute(Qt::WA_TranslucentBackground, false);
         setMouseTracking(true);
+        setFocusPolicy(Qt::StrongFocus);
         
         // Initialize visualization state
         memset(saBarHeight, 0, sizeof(saBarHeight));
@@ -1619,6 +2279,12 @@ public:
         // Auto-advance to next track when current one ends
         connect(player, &QMediaPlayer::mediaStatusChanged, this, [this](QMediaPlayer::MediaStatus status) {
             if (status == QMediaPlayer::EndOfMedia) {
+                // Repeat track (repeat one): replay same track
+                if (repeatOn && repeatTrack) {
+                    player->setPosition(0);
+                    player->play();
+                    return;
+                }
                 int curIdx = playlistWindow->currentTrackIndex();
                 int count = playlistWindow->trackCount();
                 if (count > 0) {
@@ -1632,6 +2298,7 @@ public:
                         playlistWindow->setCurrentTrackIndex(nextIdx);
                         playTrack(playlistWindow->trackAt(nextIdx));
                     } else if (repeatOn) {
+                        // Repeat all: wrap to beginning
                         playlistWindow->setCurrentTrackIndex(0);
                         playTrack(playlistWindow->trackAt(0));
                     }
@@ -1639,11 +2306,26 @@ public:
             }
         });
         
-        // Extract bitrate from metadata when available
+        // Extract bitrate and song metadata when available
         connect(player, &QMediaPlayer::metaDataChanged, this, [this]() {
-            QVariant br = player->metaData().value(QMediaMetaData::AudioBitRate);
+            QMediaMetaData md = player->metaData();
+            QVariant br = md.value(QMediaMetaData::AudioBitRate);
             if (br.isValid()) {
                 mediaBitrate = br.toInt() / 1000;  // bps -> kbps
+            }
+            // Extract title and artist for scrolling display
+            QString title = md.value(QMediaMetaData::Title).toString();
+            QString artist;
+            QVariant artistVar = md.value(QMediaMetaData::ContributingArtist);
+            if (artistVar.canConvert<QStringList>())
+                artist = artistVar.toStringList().join(", ");
+            else
+                artist = artistVar.toString();
+            if (!title.isEmpty()) {
+                if (!artist.isEmpty())
+                    metaTitle = artist + " - " + title;
+                else
+                    metaTitle = title;
             }
         });
         
@@ -1782,10 +2464,16 @@ public slots:
             }
         };
 
-        if (fmt.sampleFormat() == QAudioFormat::Int16)
+        if (fmt.sampleFormat() == QAudioFormat::Int16) {
             extractData(buffer.constData<qint16>());
-        else if (fmt.sampleFormat() == QAudioFormat::Float)
+            // Feed PCM to Milkdrop if open
+            if (milkdropWindow && milkdropWindow->isVisible())
+                milkdropWindow->feedPCMInt16(buffer.constData<qint16>(), sampleCount, channels);
+        } else if (fmt.sampleFormat() == QAudioFormat::Float) {
             extractData(buffer.constData<float>());
+            if (milkdropWindow && milkdropWindow->isVisible())
+                milkdropWindow->feedPCMFloat(buffer.constData<float>(), sampleCount, channels);
+        }
     }
 
 protected:
@@ -1823,9 +2511,20 @@ protected:
         // Time display — digits are 9x13 in numbers.bmp
         // Positions: mins_tens(36,26), mins_ones(48,26), secs_tens(78,26), secs_ones(90,26)
         // The colon is baked into MAIN.BMP background — no colon glyph in numbers.bmp
+        // Click the time area to toggle elapsed / remaining
         if (!bmp.numbers.isNull()) {
-            qint64 pos = player->position();
-            int sec = pos / 1000;
+            qint64 displayMs;
+            if (showRemainingTime && player->duration() > 0) {
+                displayMs = player->duration() - player->position();
+                // Draw minus indicator from numbers.bmp 12th glyph, or fallback dash
+                if (bmp.numbers.width() >= 108)
+                    p.drawPixmap(27, 26, bmp.numbers, 99, 0, 9, 13);
+                else
+                    p.fillRect(29, 32, 5, 1, QColor(0, 198, 0));
+            } else {
+                displayMs = player->position();
+            }
+            int sec = displayMs / 1000;
             int mins = sec / 60;
             sec %= 60;
             auto drawDigit = [&](int dx, int d) {
@@ -1839,9 +2538,13 @@ protected:
         }
 
         // Scrolling song title in text area (111,27) ~154x6
+        // Uses metadata (Artist - Title) when available, falls back to filename
         if (!bmp.text.isNull() && !currentFile.isEmpty()) {
-            QFileInfo fi(currentFile);
-            QString title = fi.baseName().toUpper();
+            QString title;
+            if (!metaTitle.isEmpty())
+                title = metaTitle.toUpper();
+            else
+                title = QFileInfo(currentFile).baseName().toUpper();
             QString scrollText = title + "  ***  " + title;
             int charW = 5;
             int totalW = (title.length() + 7) * charW;
@@ -1991,6 +2694,96 @@ protected:
         }
     }
 
+    void keyPressEvent(QKeyEvent *event) override {
+        switch (event->key()) {
+            case Qt::Key_Space:
+                if (player->playbackState() == QMediaPlayer::PlayingState)
+                    player->pause();
+                else if (!currentFile.isEmpty())
+                    player->play();
+                else
+                    openFile();
+                break;
+            case Qt::Key_V:
+                player->stop();
+                break;
+            case Qt::Key_C:
+                player->pause();
+                break;
+            case Qt::Key_Z: {
+                int curIdx = playlistWindow->currentTrackIndex();
+                if (curIdx > 0) {
+                    playlistWindow->setCurrentTrackIndex(curIdx - 1);
+                    playTrack(playlistWindow->trackAt(curIdx - 1));
+                } else {
+                    player->setPosition(0);
+                }
+                break;
+            }
+            case Qt::Key_B: {
+                int curIdx = playlistWindow->currentTrackIndex();
+                int count = playlistWindow->trackCount();
+                if (curIdx + 1 < count) {
+                    playlistWindow->setCurrentTrackIndex(curIdx + 1);
+                    playTrack(playlistWindow->trackAt(curIdx + 1));
+                }
+                break;
+            }
+            case Qt::Key_L:
+                openFile();
+                break;
+            case Qt::Key_J: {
+                // Jump to time dialog (J or Ctrl+J)
+                bool ok;
+                QString timeStr = QInputDialog::getText(this, "Jump to Time",
+                    "Enter time (MM:SS or seconds):", QLineEdit::Normal, "", &ok);
+                if (ok && !timeStr.isEmpty()) {
+                    qint64 jumpMs = 0;
+                    if (timeStr.contains(':')) {
+                        QStringList parts = timeStr.split(':');
+                        if (parts.size() >= 2)
+                            jumpMs = (parts[0].toInt() * 60 + parts[1].toInt()) * 1000;
+                    } else {
+                        jumpMs = timeStr.toInt() * 1000;
+                    }
+                    player->setPosition(qBound(0LL, jumpMs, player->duration()));
+                }
+                break;
+            }
+            case Qt::Key_Left:
+                player->setPosition(qMax(0LL, player->position() - 5000));
+                break;
+            case Qt::Key_Right:
+                player->setPosition(qMin(player->duration(), player->position() + 5000));
+                break;
+            case Qt::Key_Up:
+                volume = qMin(255, volume + 10);
+                audioOutput->setVolume(volume / 255.0f);
+                update();
+                break;
+            case Qt::Key_Down:
+                volume = qMax(0, volume - 10);
+                audioOutput->setVolume(volume / 255.0f);
+                update();
+                break;
+            case Qt::Key_Plus:
+            case Qt::Key_Equal:
+                volume = qMin(255, volume + 10);
+                audioOutput->setVolume(volume / 255.0f);
+                update();
+                break;
+            case Qt::Key_Minus:
+                volume = qMax(0, volume - 10);
+                audioOutput->setVolume(volume / 255.0f);
+                update();
+                break;
+            default:
+                QWidget::keyPressEvent(event);
+                return;
+        }
+        event->accept();
+    }
+
     void showContextMenu(QPoint globalPos) {
         QMenu menu;
         menu.setStyleSheet(
@@ -2000,6 +2793,8 @@ protected:
         QAction *playFileAct = menu.addAction("Play file...");
         QAction *playLocAct = menu.addAction("Play location...");
         menu.addSeparator();
+        QAction *milkdropAct = menu.addAction("Milkdrop visualization");
+        menu.addSeparator();
         QAction *prefsAct = menu.addAction("Preferences...");
         QAction *aboutAct = menu.addAction("About Winamp...");
         menu.addSeparator();
@@ -2008,6 +2803,7 @@ protected:
         QAction *sel = menu.exec(globalPos);
         if (sel == playFileAct) onPlayFile();
         else if (sel == playLocAct) onPlayLocation();
+        else if (sel == milkdropAct) openMilkdrop();
         else if (sel == prefsAct) {
             PreferencesDialog *prefs = new PreferencesDialog(this);
             connect(prefs, &PreferencesDialog::skinChanged, this, &WinampWindow::onSkinChanged);
@@ -2020,14 +2816,48 @@ protected:
 
     void mousePressEvent(QMouseEvent *event) override {
         if (event->button() == Qt::RightButton) {
+            int x = event->pos().x();
+            int y = event->pos().y();
+            // Right-click on repeat button: show repeat mode menu
+            if (x >= 210 && x < 238 && y >= 89 && y < 104) {
+                QMenu menu;
+                menu.setStyleSheet(
+                    "QMenu { background-color: #2b2d3d; color: #00ff00; border: 1px solid #555; font-size: 9pt; }"
+                    "QMenu::item:selected { background-color: #0000c6; }"
+                    "QMenu::item:checked { font-weight: bold; }"
+                );
+                QAction *repOffAct = menu.addAction("Repeat off");
+                repOffAct->setCheckable(true);
+                repOffAct->setChecked(!repeatOn);
+                QAction *repAllAct = menu.addAction("Repeat all");
+                repAllAct->setCheckable(true);
+                repAllAct->setChecked(repeatOn && !repeatTrack);
+                QAction *repOneAct = menu.addAction("Repeat track");
+                repOneAct->setCheckable(true);
+                repOneAct->setChecked(repeatOn && repeatTrack);
+                QAction *sel = menu.exec(event->globalPosition().toPoint());
+                if (sel == repOffAct) { repeatOn = false; repeatTrack = false; }
+                else if (sel == repAllAct) { repeatOn = true; repeatTrack = false; }
+                else if (sel == repOneAct) { repeatOn = true; repeatTrack = true; }
+                update();
+                return;
+            }
             showContextMenu(event->globalPosition().toPoint());
             return;
         }
         int x = event->pos().x();
         int y = event->pos().y();
         
-        // Visualization area click: (27,40)-(99,61) — cycle modes 0->1->2->0
-        // Matches Windows Ui.cpp inreg(27,40,99,61)
+        // Time display area click: toggle elapsed/remaining
+        if (x >= 36 && x < 99 && y >= 26 && y < 40) {
+            showRemainingTime = !showRemainingTime;
+            update();
+            return;
+        }
+        
+        // Visualization area click: (27,40)-(99,61)
+        // Single click: cycle modes 0->1->2->0
+        // (double-click opens Milkdrop — handled in mouseDoubleClickEvent)
         if (x >= 27 && x < 99 && y >= 40 && y < 61) {
             visMode++;
             if (visMode > 2) visMode = 0;
@@ -2205,6 +3035,7 @@ protected:
             mediaBitrate = 0;
             mediaSampleRate = 0;
             mediaChannels = 0;
+            metaTitle.clear();
             player->setSource(QUrl::fromLocalFile(fileName));
             player->play();
         }
@@ -2244,6 +3075,7 @@ protected:
         s.setValue("volume", volume);
         s.setValue("shuffle", shuffleOn);
         s.setValue("repeat", repeatOn);
+        s.setValue("repeatTrack", repeatTrack);
         s.setValue("eqVisible", eqBtnOn);
         s.setValue("plVisible", plBtnOn);
         if (!currentFile.isEmpty()) {
@@ -2274,6 +3106,7 @@ protected:
         audioOutput->setVolume(volume / 255.0f);
         shuffleOn = s.value("shuffle", false).toBool();
         repeatOn = s.value("repeat", false).toBool();
+        repeatTrack = s.value("repeatTrack", false).toBool();
         eqBtnOn = s.value("eqVisible", false).toBool();
         plBtnOn = s.value("plVisible", true).toBool();  // Show playlist by default for testing
         QString lastFile = s.value("lastFile").toString();
@@ -2309,6 +3142,7 @@ private:
     int hoveredButton;
     int pressedButton;
     bool shuffleOn, repeatOn, eqBtnOn, plBtnOn;
+    bool repeatTrack; // repeat-one mode (like Windows "manual playlist advance")
     bool isDraggingVolume, isDraggingPos;
     int scrollOffset;
     
@@ -2324,9 +3158,51 @@ private:
     int mediaBitrate = 0;    // in kbps
     int mediaSampleRate = 0; // in kHz (e.g. 44)
     int mediaChannels = 0;   // 1=mono, 2=stereo
+    bool showRemainingTime = false; // Toggle elapsed/remaining time display
+    QString metaTitle;              // Song title from metadata (Artist - Title)
     
     PlaylistWindow *playlistWindow;
     EqualizerWindow *eqWindow;
+    MilkdropWindow *milkdropWindow = nullptr;
+    
+    void openMilkdrop() {
+        if (!milkdropWindow) {
+            milkdropWindow = new MilkdropWindow();
+            connect(milkdropWindow, &MilkdropWindow::fullscreenChanged, this, [this](bool fs) {
+                if (fs) {
+                    // Hide all Winamp windows when Milkdrop goes fullscreen
+                    eqWasVisible = eqWindow && eqWindow->isVisible();
+                    plWasVisible = playlistWindow && playlistWindow->isVisible();
+                    mainWasVisible = isVisible();
+                    if (eqWindow) eqWindow->hide();
+                    if (playlistWindow) playlistWindow->hide();
+                    hide();
+                } else {
+                    // Restore windows when exiting fullscreen
+                    if (mainWasVisible) show();
+                    if (eqWasVisible && eqWindow) eqWindow->show();
+                    if (plWasVisible && playlistWindow) playlistWindow->show();
+                }
+            });
+        }
+        milkdropWindow->show();
+        milkdropWindow->raise();
+        milkdropWindow->activateWindow();
+    }
+    bool eqWasVisible = false;
+    bool plWasVisible = false;
+    bool mainWasVisible = true;
+    
+    void mouseDoubleClickEvent(QMouseEvent *event) override {
+        int x = event->pos().x();
+        int y = event->pos().y();
+        // Double-click on visualization area opens Milkdrop
+        if (x >= 27 && x < 99 && y >= 40 && y < 61) {
+            openMilkdrop();
+            return;
+        }
+        QWidget::mouseDoubleClickEvent(event);
+    }
 };
 
 // PlaylistWindow snap methods
