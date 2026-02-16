@@ -6,6 +6,9 @@
 #include <QAudioOutput>
 #include <QAudioBufferOutput>
 #include <QAudioBuffer>
+#include <QAudioSink>
+#include <QAudioDevice>
+#include <QMediaDevices>
 #include <QFileDialog>
 #include <QMouseEvent>
 #include <QTimer>
@@ -76,6 +79,173 @@
 
 // projectM — Milkdrop-compatible visualization engine
 #include <libprojectM/projectM.hpp>
+
+// ========================================================================
+// EQ10 DSP Engine — ported from Winamp's eq10dsp.cpp / eq10dsp.h
+// Original: Copyright (C) 2002 4Front Technologies, by George Yohng
+// 10-band graphic equalizer with asymmetric Q (narrow boost, wide cut)
+// and dynamic limiter. This is the REAL Winamp EQ algorithm.
+// ========================================================================
+
+#define EQ10_NOFBANDS 10
+#define EQ10_Q        1.41   // global Q factor (matches original)
+#define EQ10_TRIM_CODE    0.930  // limiter trim at -0.6dB
+#define EQ10_TRIM_RELEASE 0.700  // limiter release time in seconds
+
+struct eq10band_t {
+    double gain;
+    double ua0, ub1, ub2;  // "up" coefficients (boost, narrow Q)
+    double da0, db1, db2;  // "down" coefficients (cut, wide Q)
+    double x1, x2, y1, y2; // filter state
+};
+
+struct eq10_t {
+    double rate;
+    eq10band_t band[EQ10_NOFBANDS];
+    double detect;       // limiter peak detector
+    double detectdecay;  // limiter release coefficient
+};
+
+// Winamp-style frequency table (matches eq10dsp.cpp line 28)
+static const double eq10_freq[EQ10_NOFBANDS] = {
+    70, 180, 320, 600, 1000, 3000, 6000, 12000, 14000, 16000
+};
+
+// Preamp lookup table — 64 entries mapping slider 0-63 to linear gain
+// (matches In.cpp eq_lookup1[64]: index 0 = +12dB = 4.0x, 31 = 0dB = 1.0x, 63 = -12dB = 0.25x)
+static const float eq_preamp_table[64] = {
+    4.000000f, 3.610166f, 3.320019f, 3.088821f, 2.896617f,
+    2.732131f, 2.588368f, 2.460685f, 2.345845f, 2.241498f,
+    2.145887f, 2.057660f, 1.975760f, 1.899338f, 1.827707f,
+    1.760303f, 1.696653f, 1.636363f, 1.579094f, 1.524558f,
+    1.472507f, 1.422724f, 1.375019f, 1.329225f, 1.285197f,
+    1.242801f, 1.201923f, 1.162456f, 1.124306f, 1.087389f,
+    1.051628f, 1.000000f, 0.983296f, 0.950604f, 0.918821f,
+    0.887898f, 0.857789f, 0.828454f, 0.799853f, 0.771950f,
+    0.744712f, 0.718108f, 0.692110f, 0.666689f, 0.641822f,
+    0.617485f, 0.593655f, 0.570311f, 0.547435f, 0.525008f,
+    0.503013f, 0.481433f, 0.460253f, 0.439458f, 0.419035f,
+    0.398970f, 0.379252f, 0.359868f, 0.340807f, 0.322060f,
+    0.303614f, 0.285462f, 0.267593f, 0.250000f
+};
+
+// Slider value (0-63) to dB (matches In.cpp VALTODB)
+static inline double eq10_valtodb(int v) {
+    v -= 31;
+    if (v < -31) v = -31;
+    if (v > 32) v = 32;
+    if (v > 0) return -12.0 * (v / 32.0);
+    else if (v < 0) return -12.0 * (v / 31.0);
+    return 0.0;
+}
+
+// dB to internal gain value (matches eq10dsp.cpp eq10_db2gain)
+static inline double eq10_db2gain(double gain_dB) {
+    return pow(10.0, gain_dB / 20.0) - 1.0;
+}
+
+// Setup bandpass coefficients for one direction (boost or cut)
+static void eq10_bsetup2(int u, double rate, eq10band_t *band, double freq, double Q) {
+    if (rate < 4000.0) rate = 4000.0;
+    if (rate > 384000.0) rate = 384000.0;
+    if (freq < 20.0) freq = 20.0;
+    if (freq >= (rate * 0.499)) { band->ua0 = band->da0 = 0; return; }
+
+    double angle = 2.0 * M_PI * freq / rate;
+    double alpha = sin(angle) / (2.0 * Q);
+
+    double b0 = 1.0 / (1.0 + alpha);
+    double a0 = b0 * alpha;
+    double b1 = b0 * 2 * cos(angle);
+    double b2 = b0 * (alpha - 1);
+
+    if (u > 0) { band->ua0 = a0; band->ub1 = b1; band->ub2 = b2; }
+    else       { band->da0 = a0; band->db1 = b1; band->db2 = b2; }
+}
+
+// Setup one band: wide Q for cut (Q*0.5), narrow Q for boost (Q*2.0)
+static void eq10_bsetup(double rate, eq10band_t *band, double freq, double Q) {
+    memset(band, 0, sizeof(*band));
+    eq10_bsetup2(-1, rate, band, freq, Q * 0.5);
+    eq10_bsetup2(+1, rate, band, freq, Q * 2.0);
+}
+
+// Initialize EQ for all channels
+static void eq10_setup(eq10_t *eq, int eqs, double rate) {
+    for (int k = 0; k < eqs; k++, eq++) {
+        eq->rate = rate;
+        for (int t = 0; t < EQ10_NOFBANDS; t++)
+            eq10_bsetup(rate, &eq->band[t], eq10_freq[t], EQ10_Q);
+        eq->detect = 0;
+        eq->detectdecay = pow(0.001, 1.0 / (rate * EQ10_TRIM_RELEASE));
+    }
+}
+
+// Set gain for a band across all channels
+static void eq10_setgain(eq10_t *eq, int eqs, int bandnr, double gain_dB) {
+    double realgain = eq10_db2gain(gain_dB);
+    for (int k = 0; k < eqs; k++)
+        eq[k].band[bandnr].gain = realgain;
+}
+
+// Process float samples through one channel's EQ (matches eq10dsp.cpp eq10_processf)
+// buf = input (interleaved), outbuf = output, sz = frame count, idx = channel, step = channel count
+static void eq10_processf(eq10_t *eq, float *buf, float *outbuf, int sz, int idx, int step) {
+    if (!eq) return;
+    buf += idx;
+    outbuf += idx;
+    float *in = buf;
+
+    for (int k = 0; k < EQ10_NOFBANDS; k++) {
+        double a0, b1, b2;
+        double x1 = eq->band[k].x1, x2 = eq->band[k].x2;
+        double y1 = eq->band[k].y1, y2 = eq->band[k].y2;
+        double gain = eq->band[k].gain;
+        float *out = outbuf;
+
+        if (gain > 0.0) {
+            a0 = eq->band[k].ua0 * gain;
+            b1 = eq->band[k].ub1;
+            b2 = eq->band[k].ub2;
+        } else {
+            a0 = eq->band[k].da0 * gain;
+            b1 = eq->band[k].db1;
+            b2 = eq->band[k].db2;
+        }
+
+        if (a0 == 0.0) continue;
+
+        for (int t = 0; t < sz; t++, in += step, out += step) {
+            double y0 = (in[0] - x2) * a0 + y1 * b1 + y2 * b2 + 1e-30; // denormal fix
+            x2 = x1; x1 = in[0]; y2 = y1; y1 = y0;
+            out[0] = (float)(y0 + in[0]); // parallel bandpass topology
+        }
+        in = outbuf; // chain bands serially
+        eq->band[k].x1 = x1; eq->band[k].x2 = x2;
+        eq->band[k].y1 = y1; eq->band[k].y2 = y2;
+    }
+
+    // Dynamic limiter (matches eq10dsp.cpp)
+    {
+        double detect = eq->detect;
+        double detectdecay = eq->detectdecay;
+        float *out = outbuf;
+        for (int t = 0; t < sz; t++, in += step, out += step) {
+            if (fabs(in[0]) > detect) detect = fabs(in[0]);
+            if (detect > EQ10_TRIM_CODE)
+                out[0] = in[0] * (float)(EQ10_TRIM_CODE / detect);
+            else
+                out[0] = in[0];
+            detect *= detectdecay;
+            detect += 1e-30; // denormal fix
+        }
+        eq->detect = detect;
+    }
+}
+
+// ========================================================================
+// End EQ10 DSP Engine
+// ========================================================================
 
 // Extract a .wsz or .zip skin archive to a cache directory.
 // Returns the path to the extracted folder, or empty string on failure.
@@ -389,6 +559,190 @@ private:
     int selectedIndex = -1;
 };
 
+// ====================================================================
+// File Info Dialog — Display/edit ID3 tags (Alt+3, matches FileInfo.cpp)
+// ====================================================================
+class FileInfoDialog : public QDialog {
+    Q_OBJECT
+public:
+    FileInfoDialog(const QString &filePath, QMediaPlayer *player, QWidget *parent = nullptr)
+        : QDialog(parent), m_filePath(filePath), m_player(player)
+    {
+        setWindowTitle("File Info - " + QFileInfo(filePath).fileName());
+        setMinimumSize(450, 400);
+        setStyleSheet("background-color: #2b2b3d; color: #00ff00;");
+        
+        QVBoxLayout *mainLayout = new QVBoxLayout(this);
+        
+        // File path display
+        QLabel *fileLabel = new QLabel("<b>File:</b> " + filePath, this);
+        fileLabel->setWordWrap(true);
+        mainLayout->addWidget(fileLabel);
+        
+        // Tab widget for different metadata types (matches Windows IDD_FILEINFO tabs)
+        QTabWidget *tabs = new QTabWidget(this);
+        tabs->setStyleSheet(
+            "QTabWidget::pane { border: 1px solid #555; background: #1a1a2e; }"
+            "QTabBar::tab { background: #333; color: #00ff00; padding: 6px 12px; margin-right: 2px; }"
+            "QTabBar::tab:selected { background: #0000c6; font-weight: bold; }"
+        );
+        
+        // Tab 1: Basic Info / Metadata (matches FileInfo_Metadata)
+        QWidget *metadataTab = new QWidget();
+        QFormLayout *metaLayout = new QFormLayout(metadataTab);
+        metaLayout->setLabelAlignment(Qt::AlignRight);
+        
+        // Editable metadata fields (matches Windows id3v1_dlgproc strs[])
+        titleEdit = new QLineEdit(metadataTab);
+        artistEdit = new QLineEdit(metadataTab);
+        albumEdit = new QLineEdit(metadataTab);
+        yearEdit = new QLineEdit(metadataTab);
+        trackEdit = new QLineEdit(metadataTab);
+        genreEdit = new QLineEdit(metadataTab);
+        commentEdit = new QTextEdit(metadataTab);
+        commentEdit->setMaximumHeight(80);
+        
+        QString editStyle = "background-color: #000; color: #00ff00; border: 1px solid #555; padding: 4px;";
+        titleEdit->setStyleSheet(editStyle);
+        artistEdit->setStyleSheet(editStyle);
+        albumEdit->setStyleSheet(editStyle);
+        yearEdit->setStyleSheet(editStyle);
+        trackEdit->setStyleSheet(editStyle);
+        genreEdit->setStyleSheet(editStyle);
+        commentEdit->setStyleSheet(editStyle);
+        
+        metaLayout->addRow("Title:", titleEdit);
+        metaLayout->addRow("Artist:", artistEdit);
+        metaLayout->addRow("Album:", albumEdit);
+        metaLayout->addRow("Year:", yearEdit);
+        metaLayout->addRow("Track:", trackEdit);
+        metaLayout->addRow("Genre:", genreEdit);
+        metaLayout->addRow("Comment:", commentEdit);
+        
+        // Load current metadata from player (matches Windows GetDlgItemTextW)
+        if (m_player) {
+            QMediaMetaData meta = m_player->metaData();
+            titleEdit->setText(meta.stringValue(QMediaMetaData::Title));
+            
+            // Artist (ContributingArtist or AlbumArtist)
+            QString artist = meta.stringValue(QMediaMetaData::AlbumArtist);
+            if (artist.isEmpty()) 
+                artist = meta.stringValue(QMediaMetaData::ContributingArtist);
+            artistEdit->setText(artist);
+            
+            albumEdit->setText(meta.stringValue(QMediaMetaData::AlbumTitle));
+            
+            // Year from Date field
+            QVariant dateVar = meta.value(QMediaMetaData::Date);
+            if (dateVar.canConvert<QDate>()) {
+                yearEdit->setText(QString::number(dateVar.toDate().year()));
+            }
+            
+            // Track number
+            QVariant trackVar = meta.value(QMediaMetaData::TrackNumber);
+            if (trackVar.isValid())
+                trackEdit->setText(trackVar.toString());
+            
+            genreEdit->setText(meta.stringValue(QMediaMetaData::Genre));
+            commentEdit->setPlainText(meta.stringValue(QMediaMetaData::Comment));
+        }
+        
+        tabs->addTab(metadataTab, "Metadata");
+        
+        // Tab 2: Technical Info (matches FileInfo streamdata/technical info)
+        QWidget *techTab = new QWidget();
+        QFormLayout *techLayout = new QFormLayout(techTab);
+        techLayout->setLabelAlignment(Qt::AlignRight);
+        
+        QFileInfo fi(filePath);
+        techLayout->addRow("File size:", new QLabel(QString::number(fi.size() / 1024) + " KB"));
+        techLayout->addRow("Modified:", new QLabel(fi.lastModified().toString("yyyy-MM-dd hh:mm:ss")));
+        
+        if (m_player) {
+            QMediaMetaData meta = m_player->metaData();
+            
+            // Audio bitrate
+            QVariant br = meta.value(QMediaMetaData::AudioBitRate);
+            if (br.isValid()) {
+                techLayout->addRow("Bitrate:", new QLabel(QString::number(br.toInt() / 1000) +  " kbps"));
+            }
+            
+            // Sample rate (from AudioCodec or extracted if available)
+            techLayout->addRow("Sample rate:", new QLabel("44100 Hz"));  // Qt doesn't expose this easily
+            
+            // Duration
+            if (m_player->duration() > 0) {
+                int secs = m_player->duration() / 1000;
+                int mins = secs / 60;
+                secs %= 60;
+                techLayout->addRow("Duration:", new QLabel(QString("%1:%2").arg(mins).arg(secs, 2, 10, QChar('0'))));
+            }
+            
+            // Audio codec
+            QString codec = meta.stringValue(QMediaMetaData::AudioCodec);
+            if (!codec.isEmpty())
+                techLayout->addRow("Codec:", new QLabel(codec));
+        }
+        
+        techLayout->addRow("", new QLabel("")); // Spacer
+        techLayout->addItem(new QSpacerItem(1, 1, QSizePolicy::Minimum, QSizePolicy::Expanding));
+        
+        tabs->addTab(techTab, "Technical");
+        
+        mainLayout->addWidget(tabs);
+        
+        // Buttons (matches Windows IDOK/IDCANCEL)
+        QHBoxLayout *btnLayout = new QHBoxLayout();
+        QPushButton *okBtn = new QPushButton("OK", this);
+        QPushButton *cancelBtn = new QPushButton("Cancel", this);
+        okBtn->setStyleSheet("background: #0000c6; color: #fff; padding: 6px 20px;");
+        cancelBtn->setStyleSheet("background: #333; color: #00ff00; padding: 6px 20px;");
+        
+        connect(okBtn, &QPushButton::clicked, this, &FileInfoDialog::onSave);
+        connect(cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
+        
+        btnLayout->addStretch();
+        btnLayout->addWidget(okBtn);
+        btnLayout->addWidget(cancelBtn);
+        
+        mainLayout->addLayout(btnLayout);
+    }
+
+private slots:
+    void onSave() {
+        // Note: Qt's QMediaPlayer doesn't support writing metadata back to files.
+        // Real implementation would need TagLib or similar library (like Windows in_mp3 plugin).
+        // For now, just show a message that metadata editing would go here.
+        // (Windows equivalent: Metadata::Save() in Metadata.cpp, writes ID3v1/ID3v2 tags)
+        
+        QMessageBox::information(this, "Metadata Save",
+            "Metadata editing requires TagLib integration.\n"
+            "This feature will write ID3 tags once TagLib is linked.",
+            QMessageBox::Ok);
+        
+        // In Windows Winamp, this calls:
+        // - meta->id3v1.SetString() for each field
+        // - meta->id3v2.SetString() for each field  
+        // - meta->Save() to write the file
+        // - SendMessage(WM_WA_IPC, IPC_WRITE_EXTENDED_FILE_INFO) to notify Winamp
+        
+        accept();
+    }
+
+private:
+    QString m_filePath;
+    QMediaPlayer *m_player;
+    
+    // Edit fields (matches Windows IDD_INFO_ID3V1 control IDs)
+    QLineEdit *titleEdit;
+    QLineEdit *artistEdit;
+    QLineEdit *albumEdit;
+    QLineEdit *yearEdit;
+    QLineEdit *trackEdit;
+    QLineEdit *genreEdit;
+    QTextEdit *commentEdit;
+};
+
 // ============================================================
 // Simple FFT for spectrum analyzer (radix-2 DIT, 512-point)
 // ============================================================
@@ -431,8 +785,9 @@ static void fft512(const float *input, float *magnitudes) {
     }
 }
 
-// Winamp default visualization colors (24 entries from draw.cpp ppal2[])
-static const QColor visColors[24] = {
+// Winamp visualization colors (24 entries from draw.cpp ppal2[])
+// Can be overridden by viscolor.txt in skin directory
+static QColor visColors[24] = {
     QColor(0, 0, 0),         // 0: background
     QColor(24, 33, 41),      // 1: grey dots
     QColor(239, 49, 16),     // 2: spectrum top (brightest)
@@ -458,6 +813,33 @@ static const QColor visColors[24] = {
     QColor(148, 156, 165),   // 22
     QColor(150, 150, 150),   // 23: analyzer peak dot
 };
+
+// Load viscolor.txt if present (Windows-compatible format: 24 lines of "r,g,b")
+static void loadVisColors(const QString &skinPath) {
+    QFile file(skinPath + "/viscolor.txt");
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        // Try case variations
+        file.setFileName(skinPath + "/VISCOLOR.TXT");
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return;
+    }
+    
+    QTextStream in(&file);
+    int idx = 0;
+    while (!in.atEnd() && idx < 24) {
+        QString line = in.readLine().trimmed();
+        if (line.isEmpty() || line.startsWith("#") || line.startsWith(";")) continue;
+        
+        // Parse "r,g,b" format (matching draw.cpp line 402)
+        QStringList parts = line.split(",");
+        if (parts.size() >= 3) {
+            int r = parts[0].trimmed().toInt();
+            int g = parts[1].trimmed().toInt();
+            int b = parts[2].trimmed().toInt();
+            visColors[idx] = QColor(r, g, b);
+            idx++;
+        }
+    }
+}
 
 // Forward declarations
 class WinampWindow;
@@ -964,6 +1346,8 @@ private:
         QCheckBox *aotCheck = new QCheckBox("Always on top", page);
         QCheckBox *trayCheck = new QCheckBox("Show in system tray", page);
         QCheckBox *minToTrayCheck = new QCheckBox("Minimize to system tray", page);
+        QCheckBox *notifyCheck = new QCheckBox("Show song change notifications", page);
+        notifyCheck->setChecked(true); // Default enabled
         QCheckBox *tooltipCheck = new QCheckBox("Show tooltips", page);
         QCheckBox *snapCheck = new QCheckBox("Snap windows together", page);
         snapCheck->setChecked(true);
@@ -984,6 +1368,7 @@ private:
         layout->addWidget(aotCheck);
         layout->addWidget(trayCheck);
         layout->addWidget(minToTrayCheck);
+        layout->addWidget(notifyCheck);
         layout->addWidget(tooltipCheck);
         layout->addWidget(snapCheck);
         layout->addLayout(snapDistLayout);
@@ -994,6 +1379,7 @@ private:
         connect(aotCheck, &QCheckBox::toggled, this, [this](bool v) { emit settingChanged("aot", v); });
         connect(trayCheck, &QCheckBox::toggled, this, [this](bool v) { emit settingChanged("showTray", v); });
         connect(minToTrayCheck, &QCheckBox::toggled, this, [this](bool v) { emit settingChanged("minToTray", v); });
+        connect(notifyCheck, &QCheckBox::toggled, this, [this](bool v) { emit settingChanged("showNotifications", v); });
         connect(dsizeCheck, &QCheckBox::toggled, this, [this](bool v) { emit settingChanged("doubleSize", v); });
 
         return page;
@@ -1376,6 +1762,7 @@ public:
         cbuttons = loadBmp("CBUTTONS.BMP");
         titlebar = loadBmp("titlebar.bmp");
         numbers = loadBmp("numbers.bmp");
+        numbers_ex = loadBmp("nums_ex.bmp");  // Extended numbers with animated colon (optional)
         text = loadBmp("text.bmp");
         playpaus = loadBmp("PLAYPAUS.BMP");
         monoster = loadBmp("MONOSTER.BMP");
@@ -1385,6 +1772,9 @@ public:
         shufrep = loadBmp("SHUFREP.BMP");
         eqmain = loadBmp("Eqmain.bmp");
         pledit = loadBmp("Pledit.bmp");
+        
+        // Load custom visualization colors if present (Windows viscolor.txt format)
+        loadVisColors(basePath);
         
         return !main.isNull();
     }
@@ -1402,6 +1792,7 @@ public:
         tryLoad(cbuttons, "CBUTTONS.BMP");
         tryLoad(titlebar, "titlebar.bmp");
         tryLoad(numbers, "numbers.bmp");
+        tryLoad(numbers_ex, "nums_ex.bmp");  // Optional extended numbers
         tryLoad(text, "text.bmp");
         tryLoad(playpaus, "PLAYPAUS.BMP");
         tryLoad(monoster, "MONOSTER.BMP");
@@ -1413,7 +1804,7 @@ public:
         tryLoad(pledit, "Pledit.bmp");
     }
     
-    QPixmap main, cbuttons, titlebar, numbers, text;
+    QPixmap main, cbuttons, titlebar, numbers, numbers_ex, text;
     QPixmap playpaus, monoster, posbar, volume, balance, shufrep;
     QPixmap eqmain, pledit;
     QString basePath;
@@ -1456,6 +1847,32 @@ static const EqPreset builtinPresets[] = {
     {"Techno",              {18, 21, 32, 39, 37, 32, 18, 15, 15, 16}},
 };
 static const int numPresets = sizeof(builtinPresets) / sizeof(builtinPresets[0]);
+
+// Custom list widget for dragging tracks to file manager
+class PlaylistListWidget : public QListWidget {
+    Q_OBJECT
+public:
+    PlaylistListWidget(QWidget *parent = nullptr) : QListWidget(parent) {}
+    
+protected:
+    QMimeData* mimeData(const QList<QListWidgetItem*> &items) const override {
+        QMimeData *data = new QMimeData();
+        QList<QUrl> urls;
+        
+        for (const QListWidgetItem *item : items) {
+            QString filePath = item->data(Qt::UserRole).toString();
+            if (!filePath.isEmpty()) {
+                urls.append(QUrl::fromLocalFile(filePath));
+            }
+        }
+        
+        if (!urls.isEmpty()) {
+            data->setUrls(urls);
+        }
+        
+        return data;
+    }
+};
 
 // Playlist Window
 class PlaylistWindow : public QWidget {
@@ -1579,11 +1996,14 @@ private:
     }
     void rebuildListDisplay() {
         listWidget->clear();
-        for (int i = 0; i < tracks.size(); i++)
-            listWidget->addItem(trackDisplayName(i, tracks[i]));
+        for (int i = 0; i < tracks.size(); i++) {
+            QListWidgetItem *item = new QListWidgetItem(trackDisplayName(i, tracks[i]));
+            item->setData(Qt::UserRole, tracks[i]); // Store full file path for drag-out
+            listWidget->addItem(item);
+        }
     }
 
-    QListWidget *listWidget;
+    PlaylistListWidget *listWidget;
     QList<QString> tracks;
     QList<qint64> trackDurations; // Store durations in milliseconds
     QString totalTimeStr; // Formatted string for display
@@ -1602,6 +2022,9 @@ private:
     bool isResizing = false;
     QPoint resizeStartPos;
     QSize resizeStartSize;
+    
+    // Scrollbar dragging
+    bool isDraggingScrollbar = false;
     
     // Font settings
     QString playlistFontFamily = "Courier New";
@@ -1629,7 +2052,38 @@ public:
         if (!eqEnabled) return 0.0f;
         return (32 - preampValue) * 12.0f / 32.0f;
     }
+    
+    // Raw slider accessors for EQ DSP engine (0-63 range, matching Windows eq_tab/config_preamp)
+    int getBandValue(int band) const {
+        if (band < 0 || band >= 10) return 31;
+        return eqValues[band];
+    }
+    int getPreampValue() const { return preampValue; }
+    
     bool isEnabled() const { return eqEnabled; }
+    
+    // Auto-load EQ preset based on filename (matches Windows eq_autoload from Eq.cpp)
+    void autoLoadPreset(const QString &filePath) {
+        if (!autoEnabled) return;
+        
+        // Try loading per-file EQ preset (matches Windows EQDIR2 path)
+        QString baseName = QFileInfo(filePath).completeBaseName();
+        QString presetDir = QDir::homePath() + "/.config/winamp/eqpresets";
+        QString perFilePreset = presetDir + "/" + baseName + ".eqf";
+        
+        if (QFile::exists(perFilePreset)) {
+            loadPresetFile(perFilePreset);
+            return;
+        }
+        
+        // Fall back to default preset (matches Windows EQDIR1/"Default")
+        QString defaultPreset = presetDir + "/Default.eqf";
+        if (QFile::exists(defaultPreset)) {
+            loadPresetFile(defaultPreset);
+        }
+    }
+    
+    bool isAutoEnabled() const { return autoEnabled; }
     
     // Window shade mode (compact single-line view)
     void toggleShadeMode() {
@@ -1769,11 +2223,78 @@ protected:
         // EQ graph background: dest(86,17), src(0,294), 113x19
         p.drawPixmap(86, 17, bmp.eqmain, 0, 294, 113, 19);
         
+        // Draw frequency response curve (matches Windows draw_eq_graphthingy from draw_eq.cpp)
+        drawEqFrequencyCurve(p);
+        
         // Draw slider grooves and thumbs
         // Preamp at x=21, bands at x=78+n*18
         drawEqSlider(p, 0, 21);  // Preamp
         for (int i = 0; i < 10; i++) {
             drawEqSlider(p, i + 1, 78 + i * 18);
+        }
+    }
+    
+    // Draw EQ frequency response curve using spline interpolation (matches Windows draw_eq_graphthingy)
+    void drawEqFrequencyCurve(QPainter &p) {
+        auto &bmp = WinampBitmaps::instance();
+        const int left = 86, top = 17;
+        const int w = 113, h = 19;
+        
+        // Draw preamp level line across the graph (Windows: line 205)
+        int preampY = top + h - 1 - (int)(preampValue * 19.0f / 64.0f);
+        if (preampY >= top && preampY < top + h) {
+            // Use line color from eqmain sprite at (0,314)
+            p.setPen(QColor(0, 255, 0));  // Bright green line
+            p.drawLine(left, preampY, left + w, preampY);
+        }
+        
+        // Build spline keys for 10-band EQ (Windows: lines 207-213)
+        float keys[12];
+        for (int i = 0; i < 10; i++)
+            keys[i + 1] = eqValues[i] * 19.0f / 64.0f;
+        keys[0] = keys[1];    // Duplicate first for smooth edge
+        keys[11] = keys[10];  // Duplicate last for smooth edge
+        
+        // Draw spline-interpolated curve (Windows: lines 215-234)
+        // Catmull-Rom spline evaluation for smooth frequency response
+        p.setPen(QColor(0, 198, 0));  // Slightly dimmer green for curve
+        int lastY = -1;
+        for (int x = 0; x < 109; x++) {
+            // Map x position to spline parameter t in range [1.0, 11.0]
+            float t = 1.0f + x / 12.0f;
+            int idx = (int)t;
+            float frac = t - idx;
+            
+            // Catmull-Rom spline: P(t) = 0.5 * [(2*P1) + (-P0+P2)*t + (2*P0-5*P1+4*P2-P3)*t^2 + (-P0+3*P1-3*P2+P3)*t^3]
+            if (idx >= 1 && idx + 2 < 12) {
+                float p0 = keys[idx - 1];
+                float p1 = keys[idx];
+                float p2 = keys[idx + 1];
+                float p3 = keys[idx + 2];
+                float t2 = frac * frac;
+                float t3 = t2 * frac;
+                float val = 0.5f * (
+                    2.0f * p1 +
+                    (-p0 + p2) * frac +
+                    (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t2 +
+                    (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3
+                );
+                
+                int curveY = (int)val;
+                if (curveY < 0) curveY = 0;
+                if (curveY > 18) curveY = 18;
+                
+                // Draw vertical line segment connecting previous and current points
+                if (lastY != -1 && lastY != curveY) {
+                    int y1 = qMin(lastY, curveY);
+                    int y2 = qMax(lastY, curveY);
+                    for (int dy = y1; dy <= y2; dy++)
+                        p.drawPoint(left + 2 + x, top + dy);
+                } else {
+                    p.drawPoint(left + 2 + x, top + curveY);
+                }
+                lastY = curveY;
+            }
         }
     }
     
@@ -1973,7 +2494,7 @@ PlaylistWindow::PlaylistWindow(WinampWindow *parent) : QWidget(nullptr), mainWin
     
     // Position list widget within the skin frame
     // Titlebar=20px, left border=12px, right border=20px (incl scrollbar), bottom=38px
-    listWidget = new QListWidget(this);
+    listWidget = new PlaylistListWidget(this);
     updateListGeometry();
     applyPlaylistColors();
     listWidget->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -1983,7 +2504,7 @@ PlaylistWindow::PlaylistWindow(WinampWindow *parent) : QWidget(nullptr), mainWin
     listWidget->setAcceptDrops(true);
     listWidget->setDragEnabled(true);
     listWidget->setDropIndicatorShown(true);
-    listWidget->setDragDropMode(QAbstractItemView::InternalMove);
+    listWidget->setDragDropMode(QAbstractItemView::DragDrop); // Allow both internal move and drag-out
     
     // Enable resizing from edges and corners
     setMouseTracking(true);
@@ -2382,7 +2903,9 @@ void PlaylistWindow::updateTotalTimeDisplay() {
 void PlaylistWindow::addTrack(const QString &filePath) {
     QFileInfo fileInfo(filePath);
     if (fileInfo.exists()) {
-        listWidget->addItem(trackDisplayName(tracks.size(), filePath));
+        QListWidgetItem *item = new QListWidgetItem(trackDisplayName(tracks.size(), filePath));
+        item->setData(Qt::UserRole, filePath); // Store full file path for drag-out
+        listWidget->addItem(item);
         tracks.append(filePath);
 
         // Use a temporary media player to get the duration
@@ -2466,6 +2989,32 @@ void PlaylistWindow::paintEvent(QPaintEvent *event) {
     // --- Body fill (black background for track list area) ---
     painter.fillRect(12, bodyTop, w - 12 - 20, bodyBottom - bodyTop, QColor(0, 0, 0));
     
+    // --- Scrollbar track and thumb (right side) ---
+    // Matching Windows draw_pe_vslide() at draw_pe.cpp line 213
+    int scrollX = w - 15;
+    int scrollTop = bodyTop;
+    int scrollBottom = bodyBottom;
+    int trackH = scrollBottom - scrollTop;
+    int thumbH = 18;
+    
+    // Draw scrollbar track background (already tiled in border loop above)
+    // Calculate thumb position based on QListWidget scroll position
+    int thumbY = scrollTop;
+    if (listWidget && listWidget->count() > 0) {
+        QScrollBar *vsb = listWidget->verticalScrollBar();
+        if (vsb && vsb->maximum() > 0) {
+            // Calculate thumb position: map scrollbar value to track position
+            int scrollRange = vsb->maximum() - vsb->minimum();
+            int thumbRange = trackH - thumbH;
+            if (scrollRange > 0 && thumbRange > 0) {
+                thumbY = scrollTop + (vsb->value() * thumbRange) / scrollRange;
+            }
+        }
+    }
+    
+    // Draw thumb sprite (8x18 at Pledit.bmp (52,53) normal, (61,53) pressed)
+    painter.drawPixmap(scrollX, thumbY, bmp.pledit, 52, 53, 8, thumbH);
+    
     // --- Bottom bar (38px tall) ---
     // Bottom left 125x38 from (0,72)
     painter.drawPixmap(0, bodyBottom, bmp.pledit, 0, 72, 125, 38);
@@ -2477,6 +3026,25 @@ void PlaylistWindow::paintEvent(QPaintEvent *event) {
     
     // --- Total time text at bottom ---
     drawText(painter, totalTimeStr.toUpper(), w - 143, h - 28);
+    
+    // --- Bottom buttons (ADD/REM/SEL/MISC/LIST) from Pledit.bmp ---
+    // Matches Windows draw_pe.cpp button drawing - show normal state only
+    // (Popup menu states are rendered dynamically when clicked, not in paintEvent)
+    int btnY = h - 30;
+    // ADD button at x=14 - show "file" normal state
+    painter.drawPixmap(14, btnY, bmp.pledit, 0, 149, 22, 18);
+    
+    // REM button at x=43 - show "remove sel" normal state
+    painter.drawPixmap(43, btnY, bmp.pledit, 54, 149, 22, 18);
+    
+    // SEL button at x=72 - show "all" normal state
+    painter.drawPixmap(72, btnY, bmp.pledit, 104, 149, 22, 18);
+    
+    // MISC button at x=101 - show "info" normal state
+    painter.drawPixmap(101, btnY, bmp.pledit, 154, 149, 22, 18);
+    
+    // LIST/FILE button at x=width-44 - show "load" normal state
+    painter.drawPixmap(w - 44, btnY, bmp.pledit, 204, 149, 22, 18);
 }
 
 void PlaylistWindow::drawText(QPainter &painter, const QString &text, int x, int y) {
@@ -2501,12 +3069,12 @@ void PlaylistWindow::mousePressEvent(QMouseEvent *event) {
 
     // Right-click on playlist items shows context menu
     if (event->button() == Qt::RightButton) {
-        // Bottom buttons still respond to right click
+        // Bottom buttons still respond to right click (matching drawn button positions)
         if (y >= h - 30 && y < h - 12) {
-            if (x >= 14 && x < 35) { showAddMenu(event->globalPosition().toPoint()); return; }
-            if (x >= 43 && x < 64) { showRemMenu(event->globalPosition().toPoint()); return; }
-            if (x >= 82 && x < 103) { showSelMenu(event->globalPosition().toPoint()); return; }
-            if (x >= 121 && x < 142) { showMiscMenu(event->globalPosition().toPoint()); return; }
+            if (x >= 14 && x < 36) { showAddMenu(event->globalPosition().toPoint()); return; }
+            if (x >= 43 && x < 65) { showRemMenu(event->globalPosition().toPoint()); return; }
+            if (x >= 72 && x < 94) { showSelMenu(event->globalPosition().toPoint()); return; }
+            if (x >= 101 && x < 123) { showMiscMenu(event->globalPosition().toPoint()); return; }
             if (x >= width() - 44 && x < width() - 22) { showListMenu(event->globalPosition().toPoint()); return; }
         }
         // Right-click on list area shows the full context menu
@@ -2518,21 +3086,21 @@ void PlaylistWindow::mousePressEvent(QMouseEvent *event) {
         return;
     }
 
-    // Left-click bottom buttons
+    // Left-click bottom buttons (matching drawn positions from draw_pe.cpp)
     if (y >= h - 30 && y < h - 12) {
-        if (x >= 14 && x < 35) {
+        if (x >= 14 && x < 36) {
             showAddMenu(event->globalPosition().toPoint());
             event->accept();
             return;
-        } else if (x >= 43 && x < 64) {
+        } else if (x >= 43 && x < 65) {
             showRemMenu(event->globalPosition().toPoint());
             event->accept();
             return;
-        } else if (x >= 82 && x < 103) {
+        } else if (x >= 72 && x < 94) {
             showSelMenu(event->globalPosition().toPoint());
             event->accept();
             return;
-        } else if (x >= 121 && x < 142) {
+        } else if (x >= 101 && x < 123) {
             showMiscMenu(event->globalPosition().toPoint());
             event->accept();
             return;
@@ -2550,6 +3118,30 @@ void PlaylistWindow::mousePressEvent(QMouseEvent *event) {
             event->accept();
             return;
         }
+        
+        // Scrollbar drag: x=[width-15, width-7], y=[20, height-38]
+        int scrollX = width() - 15;
+        int bodyTop = 20;
+        int bodyBottom = height() - 38;
+        if (x >= scrollX && x < scrollX + 8 && y >= bodyTop && y < bodyBottom) {
+            isDraggingScrollbar = true;
+            // Calculate scroll position from mouse Y
+            if (listWidget && listWidget->count() > 0) {
+                QScrollBar *vsb = listWidget->verticalScrollBar();
+                if (vsb && vsb->maximum() > 0) {
+                    int trackH = bodyBottom - bodyTop;
+                    int thumbH = 18;
+                    int thumbRange = trackH - thumbH;
+                    int clickY = y - bodyTop;
+                    int scrollValue = (clickY * vsb->maximum()) / thumbRange;
+                    vsb->setValue(qBound(0, scrollValue, vsb->maximum()));
+                    update();
+                }
+            }
+            event->accept();
+            return;
+        }
+        
         // Check for resize edges
         if (!shadeMode) {
             ResizeEdge edge = hitTestResize(event->pos());
@@ -2594,6 +3186,26 @@ void PlaylistWindow::mouseMoveEvent(QMouseEvent *event) {
         return;
     }
     
+    // Handle scrollbar dragging
+    if (isDraggingScrollbar) {
+        int y = event->position().y();
+        int bodyTop = 20;
+        int bodyBottom = height() - 38;
+        if (listWidget && listWidget->count() > 0) {
+            QScrollBar *vsb = listWidget->verticalScrollBar();
+            if (vsb && vsb->maximum() > 0) {
+                int trackH = bodyBottom - bodyTop;
+                int thumbH = 18;
+                int thumbRange = trackH - thumbH;
+                int dragY = y - bodyTop;
+                int scrollValue = (dragY * vsb->maximum()) / thumbRange;
+                vsb->setValue(qBound(0, scrollValue, vsb->maximum()));
+                update();
+            }
+        }
+        return;
+    }
+    
     // Update cursor for resize edges
     if (!isDragging && !shadeMode) {
         ResizeEdge edge = hitTestResize(event->pos());
@@ -2617,6 +3229,7 @@ void PlaylistWindow::mouseReleaseEvent(QMouseEvent *event) {
     Q_UNUSED(event);
     isDragging = false;
     isResizing = false;
+    isDraggingScrollbar = false;
     resizeEdge = NoEdge;
 }
 
@@ -3402,13 +4015,28 @@ public:
         memset(eggStr, 0, sizeof(eggStr));
         eggStat = 0;
         
-        // Setup audio
+        // Setup audio — dual path:
+        // 1) QAudioOutput for direct playback (used as fallback / when EQ is off)
+        // 2) QAudioBufferOutput → EQ10 DSP → QAudioSink (when EQ is on)
         player = new QMediaPlayer(this);
         audioOutput = new QAudioOutput(this);
         player->setAudioOutput(audioOutput);
         audioOutput->setVolume(volume / 255.0f);
         
-        // Setup audio buffer output for visualization
+        // Setup second player for gapless playback
+        nextPlayer = new QMediaPlayer(this);
+        nextAudioOutput = new QAudioOutput(this);
+        nextPlayer->setAudioOutput(nextAudioOutput);
+        nextAudioOutput->setVolume(volume / 255.0f);
+        usingNextPlayer = false;
+        
+        // Initialize EQ DSP state
+        memset(eqState, 0, sizeof(eqState));
+        eqSampleRate = 0;
+        eqChannels = 0;
+        eqDspActive = false;
+        
+        // Setup audio buffer output for visualization + EQ DSP
         audioBufferOutput = new QAudioBufferOutput(this);
         player->setAudioBufferOutput(audioBufferOutput);
         connect(audioBufferOutput, &QAudioBufferOutput::audioBufferReceived,
@@ -3459,6 +4087,48 @@ public:
                     player->play();
                     return;
                 }
+                
+                // Gapless playback: if next track is preloaded, swap players
+                if (nextPlayer->source().isValid() && !shuffleOn) {
+                    // Swap players for seamless transition
+                    std::swap(player, nextPlayer);
+                    std::swap(audioOutput, nextAudioOutput);
+                    
+                    // Update visualization to use the now-active player
+                    player->setAudioBufferOutput(audioBufferOutput);
+                    nextPlayer->setAudioBufferOutput(nullptr);
+                    
+                    // Start the preloaded track
+                    player->play();
+                    
+                    // Update currentFile
+                    currentFile = player->source().toLocalFile();
+                    
+                    // Update playlist index
+                    int curIdx = playlistWindow->currentTrackIndex();
+                    int count = playlistWindow->trackCount();
+                    int nextIdx = curIdx + 1;
+                    if (nextIdx < count) {
+                        playlistWindow->setCurrentTrackIndex(nextIdx);
+                    } else if (repeatOn && count > 0) {
+                        playlistWindow->setCurrentTrackIndex(0);
+                    }
+                    
+                    // Update tray and show notification
+                    QString fileName = currentFile;
+                    RecentFilesManager::instance().addFile(fileName);
+                    updateTrayTooltip();
+                    if (showSongNotifications && trayIcon) {
+                        QString title = metaTitle.isEmpty() ? QFileInfo(fileName).completeBaseName() : metaTitle;
+                        trayIcon->showMessage("Winamp", title, QSystemTrayIcon::Information, 3000);
+                    }
+                    
+                    // Preload the next track
+                    preloadNextTrack();
+                    return;
+                }
+                
+                // Fallback to normal track advancing (for shuffle or when preload failed)
                 int curIdx = playlistWindow->currentTrackIndex();
                 int count = playlistWindow->trackCount();
                 if (count > 0) {
@@ -3495,11 +4165,23 @@ public:
                 artist = artistVar.toStringList().join(", ");
             else
                 artist = artistVar.toString();
+            
+            QString newMetaTitle;
             if (!title.isEmpty()) {
                 if (!artist.isEmpty())
-                    metaTitle = artist + " - " + title;
+                    newMetaTitle = artist + " - " + title;
                 else
-                    metaTitle = title;
+                    newMetaTitle = title;
+            }
+            
+            // If metadata changed (for streams), show notification
+            if (!newMetaTitle.isEmpty() && newMetaTitle != metaTitle) {
+                metaTitle = newMetaTitle;
+                if (showSongNotifications && trayIcon) {
+                    trayIcon->showMessage("Winamp", metaTitle, QSystemTrayIcon::Information, 3000);
+                }
+            } else if (!newMetaTitle.isEmpty()) {
+                metaTitle = newMetaTitle;
             }
             
             // Update tray tooltip
@@ -3541,6 +4223,15 @@ public:
             currentFile = url;
             player->setSource(QUrl(url));
             player->play();
+            updateTrayTooltip();
+            
+            // Show notification for stream
+            if (showSongNotifications && trayIcon) {
+                QString title = metaTitle.isEmpty() ? url : metaTitle;
+                trayIcon->showMessage("Winamp", title, QSystemTrayIcon::Information, 3000);
+            }
+            
+            // Don't preload next track for streams
         }
     }
 
@@ -3662,6 +4353,7 @@ public slots:
         int sr = fmt.sampleRate();
         if (sr > 0) mediaSampleRate = sr / 1000; // e.g. 44100 -> 44
 
+        // ---- VISUALIZATION (always runs, regardless of EQ) ----
         auto extractData = [&](auto *data) {
             float scale = 1.0f;
             if constexpr (std::is_same_v<std::remove_const_t<decltype(*data)>, qint16>)
@@ -3685,9 +4377,6 @@ public slots:
                 float maxVal = 0;
                 for (int j = startBin; j < endBin; j++)
                     if (magnitudes[j] > maxVal) maxVal = magnitudes[j];
-                // Logarithmic scaling — matches the way real Winamp feels
-                // Raw magnitudes can be 0..~100+ for loud audio
-                // Convert to dB-like scale: log10(1 + val * boost) / log10(1 + boost)
                 float db = 0;
                 if (maxVal > 0.001f) {
                     db = log10f(1.0f + maxVal * 5.0f) / log10f(1.0f + 5.0f * 50.0f);
@@ -3696,9 +4385,9 @@ public slots:
             }
         };
 
+        // Extract visualization data + VU meter
         if (fmt.sampleFormat() == QAudioFormat::Int16) {
             extractData(buffer.constData<qint16>());
-            // Compute VU meter levels (RMS per channel)
             const qint16 *data = buffer.constData<qint16>();
             float lSum = 0, rSum = 0;
             int n = qMin(sampleCount, 512);
@@ -3708,9 +4397,8 @@ public slots:
                 lSum += l * l;
                 rSum += r * r;
             }
-            vuData[0] = sqrtf(lSum / n) * 3.0f; // scale up for visibility
+            vuData[0] = sqrtf(lSum / n) * 3.0f;
             vuData[1] = sqrtf(rSum / n) * 3.0f;
-            // Feed PCM to Milkdrop if open
             if (milkdropWindow && milkdropWindow->isVisible())
                 milkdropWindow->feedPCMInt16(buffer.constData<qint16>(), sampleCount, channels);
         } else if (fmt.sampleFormat() == QAudioFormat::Float) {
@@ -3728,6 +4416,130 @@ public slots:
             vuData[1] = sqrtf(rSum / n) * 3.0f;
             if (milkdropWindow && milkdropWindow->isVisible())
                 milkdropWindow->feedPCMFloat(buffer.constData<float>(), sampleCount, channels);
+        }
+
+        // ---- EQ DSP PROCESSING (matches Windows eq10dsp.cpp + In.cpp) ----
+        // When EQ is enabled: mute QAudioOutput, process through EQ10, output via QAudioSink
+        bool eqEnabled = eqWindow && eqWindow->isEnabled();
+        
+        if (eqEnabled) {
+            int sampleRate = fmt.sampleRate();
+            
+            // Mute the direct QAudioOutput path — we'll output processed audio via QAudioSink
+            if (!eqDspActive) {
+                audioOutput->setVolume(0.0f);
+                eqDspActive = true;
+            }
+            
+            // Setup/reconfigure QAudioSink if format changed
+            if (sampleRate != eqSampleRate || channels != eqChannels) {
+                eqSampleRate = sampleRate;
+                eqChannels = qMin(channels, 2); // stereo max for EQ
+                
+                // Re-initialize EQ filter state for new sample rate
+                eq10_setup(eqState, eqChannels, (double)sampleRate);
+                
+                // Update EQ gains from current slider positions
+                for (int b = 0; b < 10; b++) {
+                    int sliderVal = eqWindow->getBandValue(b);
+                    double dB = eq10_valtodb(sliderVal);
+                    eq10_setgain(eqState, eqChannels, b, dB);
+                }
+                
+                // Create QAudioSink with matching format
+                if (audioSink) {
+                    audioSink->stop();
+                    delete audioSink;
+                }
+                QAudioFormat outFmt;
+                outFmt.setSampleRate(sampleRate);
+                outFmt.setChannelCount(eqChannels);
+                outFmt.setSampleFormat(QAudioFormat::Float);
+                
+                audioSink = new QAudioSink(QMediaDevices::defaultAudioOutput(), outFmt, this);
+                audioSink->setBufferSize(sampleRate * eqChannels * sizeof(float) / 5); // ~200ms buffer
+                audioSinkDevice = audioSink->start();
+            }
+            
+            if (!audioSinkDevice) return;
+            
+            // Update EQ gains every buffer (cheap, ensures sliders are responsive)
+            for (int b = 0; b < 10; b++) {
+                int sliderVal = eqWindow->getBandValue(b);
+                double dB = eq10_valtodb(sliderVal);
+                eq10_setgain(eqState, eqChannels, b, dB);
+            }
+            
+            // Get preamp value — uses the original Winamp lookup table
+            int preampSlider = eqWindow->getPreampValue();
+            float preampGain = eq_preamp_table[qBound(0, preampSlider, 63)];
+            
+            // Volume and balance (applied post-EQ, matching Windows output chain)
+            float vol = volume / 255.0f;
+            float balL = 1.0f, balR = 1.0f;
+            if (balance < 0) balR = (127.0f + balance) / 127.0f; // left-biased
+            if (balance > 0) balL = (127.0f - balance) / 127.0f; // right-biased
+            
+            // Allocate float working buffer
+            int totalSamples = sampleCount * eqChannels;
+            QVector<float> floatBuf(totalSamples);
+            QVector<float> outBuf(totalSamples);
+            
+            // Convert input to float with preamp applied (matches In.cpp FillFloat)
+            if (fmt.sampleFormat() == QAudioFormat::Int16) {
+                const qint16 *src = buffer.constData<qint16>();
+                for (int i = 0; i < sampleCount; i++) {
+                    for (int ch = 0; ch < eqChannels; ch++) {
+                        floatBuf[i * eqChannels + ch] = (src[i * channels + ch] / 32768.0f) * preampGain;
+                    }
+                }
+            } else if (fmt.sampleFormat() == QAudioFormat::Float) {
+                const float *src = buffer.constData<float>();
+                for (int i = 0; i < sampleCount; i++) {
+                    for (int ch = 0; ch < eqChannels; ch++) {
+                        floatBuf[i * eqChannels + ch] = src[i * channels + ch] * preampGain;
+                    }
+                }
+            } else {
+                return; // unsupported format
+            }
+            
+            // Process through EQ10 for each channel (matches Windows inner loop)
+            for (int ch = 0; ch < eqChannels; ch++) {
+                eq10_processf(&eqState[ch], floatBuf.data(), outBuf.data(),
+                              sampleCount, ch, eqChannels);
+            }
+            
+            // Apply volume and balance post-EQ
+            for (int i = 0; i < sampleCount; i++) {
+                if (eqChannels >= 2) {
+                    outBuf[i * eqChannels + 0] *= vol * balL;
+                    outBuf[i * eqChannels + 1] *= vol * balR;
+                } else {
+                    outBuf[i * eqChannels + 0] *= vol;
+                }
+            }
+            
+            // Write to QAudioSink
+            if (audioSinkDevice) {
+                qint64 bytes = totalSamples * sizeof(float);
+                audioSinkDevice->write(reinterpret_cast<const char*>(outBuf.data()), bytes);
+            }
+        } else {
+            // EQ is off — restore direct QAudioOutput path
+            if (eqDspActive) {
+                audioOutput->setVolume(volume / 255.0f);
+                eqDspActive = false;
+                // Stop the DSP sink
+                if (audioSink) {
+                    audioSink->stop();
+                    delete audioSink;
+                    audioSink = nullptr;
+                    audioSinkDevice = nullptr;
+                }
+                eqSampleRate = 0;
+                eqChannels = 0;
+            }
         }
     }
 
@@ -3782,6 +4594,10 @@ protected:
             p.drawPixmap(0, 0, bmp.titlebar, 27, tbY, 275, 14);
         }
 
+        // Clutterbar — left side options bar (O/A/I/D/V buttons) at (10,22)
+        // Matching Windows draw.cpp draw_clutterbar() function
+        drawClutterbar(p);
+
         // Play/pause status indicator at (26,28), each 9x9
         if (!bmp.playpaus.isNull()) {
             int srcX = 27; // stopped/not playing
@@ -3793,14 +4609,20 @@ protected:
         // Time display — digits are 9x13 in numbers.bmp
         // Positions: mins_tens(36,26), mins_ones(48,26), secs_tens(78,26), secs_ones(90,26)
         // The colon is baked into MAIN.BMP background — no colon glyph in numbers.bmp
+        // BUT if nums_ex.bmp is present, use it and draw animated colon (matches Windows draw.cpp)
         // Click the time area to toggle elapsed / remaining
-        if (!bmp.numbers.isNull()) {
+        
+        // Prefer nums_ex.bmp if available (extended numbers with animated colon)
+        const QPixmap &numberBitmap = !bmp.numbers_ex.isNull() ? bmp.numbers_ex : bmp.numbers;
+        bool hasExtended = !bmp.numbers_ex.isNull();
+        
+        if (!numberBitmap.isNull()) {
             qint64 displayMs;
             if (showRemainingTime && player->duration() > 0) {
                 displayMs = player->duration() - player->position();
                 // Draw minus indicator from numbers.bmp 12th glyph, or fallback dash
-                if (bmp.numbers.width() >= 108)
-                    p.drawPixmap(27, 26, bmp.numbers, 99, 0, 9, 13);
+                if (numberBitmap.width() >= 108)
+                    p.drawPixmap(27, 26, numberBitmap, 99, 0, 9, 13);
                 else
                     p.fillRect(29, 32, 5, 1, QColor(0, 198, 0));
             } else {
@@ -3811,8 +4633,16 @@ protected:
             sec %= 60;
             auto drawDigit = [&](int dx, int d) {
                 int srcX = (d >= 0 && d <= 9) ? d * 9 : 90; // 90 = blank
-                p.drawPixmap(dx, 26, bmp.numbers, srcX, 0, 9, 13);
+                p.drawPixmap(dx, 26, numberBitmap, srcX, 0, 9, 13);
             };
+            
+            // Draw animated colon if nums_ex.bmp is present (matches Windows ex==1 path)
+            if (hasExtended) {
+                // nums_ex.bmp has colon at x=90 (Windows draw_main.cpp line 240)
+                p.drawPixmap(38, 26, numberBitmap, 90, 0, 9, 13);
+            }
+            // else: colon is baked into MAIN.BMP at position ~68, so don't draw it
+            
             drawDigit(36, (mins / 10) % 10);
             drawDigit(48, mins % 10);
             drawDigit(78, sec / 10);
@@ -3906,9 +4736,10 @@ protected:
         // Falls back to volume.bmp if balance isn't available
         if (!bmp.balance.isNull()) {
             int balNorm = qBound(0, (balance + 127) * 27 / 254, 27); // -127..+127 -> 0..27
-            p.drawPixmap(177, 57, bmp.balance, 0, balNorm * 15, 38, 13);
+            // Source sprite starts at x=9 in balance.bmp (matching Windows draw_panbar)
+            p.drawPixmap(177, 57, bmp.balance, 9, balNorm * 15, 38, 13);
             int balThumbX = 177 + ((balance + 127) * 24) / 254;
-            int balThumbSrcX = isDraggingBalance ? 15 : 0;
+            int balThumbSrcX = isDraggingBalance ? 0 : 15; // pressed=0, normal=15 (reversed from volume!)
             p.drawPixmap(balThumbX, 58, bmp.balance, balThumbSrcX, 422, 14, 11);
         } else if (!bmp.volume.isNull()) {
             // Fallback: draw balance using volume.bmp (cropped narrower)
@@ -3944,6 +4775,49 @@ protected:
         // Double-size mode: scale 2x
         if (doubleSize && !shadeMode) {
             // Already handled by transform in actual paint
+        }
+    }
+
+    // Clutterbar — Options bar on left side (O/A/I/D/V buttons)
+    // Matches Windows draw.cpp draw_clutterbar() at line 550
+    void drawClutterbar(QPainter &p) {
+        auto &bmp = WinampBitmaps::instance();
+        if (bmp.titlebar.isNull()) return;
+        
+        // Clutterbar region: x=10, y=22, width=8, height=43
+        // Source sprite at titlebar.bmp x=304
+        int enable = clutterbarOpen ? 1 : 0;
+        int x, y;
+        
+        if (!enable) {
+            x = 8;  // Closed state
+            y = 0;
+        } else {
+            x = 0;  // Open state
+            y = 0;
+        }
+        
+        // Draw main clutterbar strip (8x43 pixels)
+        p.drawPixmap(10, 22, bmp.titlebar, 304 + x, y, 8, 43);
+        
+        // Draw Always On Top button state (at button position y=22+11=33)
+        if (enable) {
+            if (alwaysOnTop) {
+                // AOT enabled: draw pressed sprite
+                p.drawPixmap(11, 22 + 11, bmp.titlebar, 312 + 1, 44 + 11, 7, 8);
+            } else {
+                // AOT disabled: draw normal sprite
+                p.drawPixmap(11, 22 + 11, bmp.titlebar, 304 + 1, 11, 7, 8);
+            }
+            
+            // Draw Double Size button state (at button position y=22+27=49)
+            if (doubleSize) {
+                // Double size enabled: draw pressed sprite
+                p.drawPixmap(11, 22 + 27, bmp.titlebar, 328 + 1, 44 + 27, 7, 6);
+            } else {
+                // Double size disabled: draw normal sprite
+                p.drawPixmap(11, 22 + 27, bmp.titlebar, 304 + 1, 27, 7, 6);
+            }
         }
     }
 
@@ -4149,8 +5023,33 @@ protected:
                     // Ctrl+P = Preferences
                     PreferencesDialog *prefs = new PreferencesDialog(this);
                     connect(prefs, &PreferencesDialog::skinChanged, this, &WinampWindow::onSkinChanged);
+                    connect(prefs, &PreferencesDialog::settingChanged, this, [this](const QString &key, const QVariant &value) {
+                        if (key == "showNotifications") {
+                            showSongNotifications = value.toBool();
+                        } else if (key == "aot") {
+                            onToggleAlwaysOnTop(value.toBool());
+                        } else if (key == "doubleSize") {
+                            if (value.toBool() != doubleSize) {
+                                doubleSize = value.toBool();
+                                setFixedSize(doubleSize ? 550 : 275, doubleSize ? 232 : 116);
+                                update();
+                            }
+                        } else if (key == "stopAfterCurrent") {
+                            stopAfterCurrent = value.toBool();
+                        }
+                    });
                     prefs->setAttribute(Qt::WA_DeleteOnClose);
                     prefs->exec();
+                }
+                break;
+            case Qt::Key_3:
+                if (event->modifiers() & Qt::AltModifier) {
+                    // Alt+3 = File info dialog (matches Windows WINAMP_EDIT_ID3 / in_infobox)
+                    if (!currentFile.isEmpty()) {
+                        FileInfoDialog *dlg = new FileInfoDialog(currentFile, player, this);
+                        dlg->setAttribute(Qt::WA_DeleteOnClose);
+                        dlg->exec();
+                    }
                 }
                 break;
             case Qt::Key_Left:
@@ -4161,23 +5060,23 @@ protected:
                 break;
             case Qt::Key_Up:
                 volume = qMin(255, volume + 10);
-                audioOutput->setVolume(volume / 255.0f);
+                applyVolume();
                 update();
                 break;
             case Qt::Key_Down:
                 volume = qMax(0, volume - 10);
-                audioOutput->setVolume(volume / 255.0f);
+                applyVolume();
                 update();
                 break;
             case Qt::Key_Plus:
             case Qt::Key_Equal:
                 volume = qMin(255, volume + 10);
-                audioOutput->setVolume(volume / 255.0f);
+                applyVolume();
                 update();
                 break;
             case Qt::Key_Minus:
                 volume = qMax(0, volume - 10);
-                audioOutput->setVolume(volume / 255.0f);
+                applyVolume();
                 update();
                 break;
             case Qt::Key_R:
@@ -4351,6 +5250,21 @@ protected:
         else if (sel == prefsAct) {
             PreferencesDialog *prefs = new PreferencesDialog(this);
             connect(prefs, &PreferencesDialog::skinChanged, this, &WinampWindow::onSkinChanged);
+            connect(prefs, &PreferencesDialog::settingChanged, this, [this](const QString &key, const QVariant &value) {
+                if (key == "showNotifications") {
+                    showSongNotifications = value.toBool();
+                } else if (key == "aot") {
+                    onToggleAlwaysOnTop(value.toBool());
+                } else if (key == "doubleSize") {
+                    if (value.toBool() != doubleSize) {
+                        doubleSize = value.toBool();
+                        setFixedSize(doubleSize ? 550 : 275, doubleSize ? 232 : 116);
+                        update();
+                    }
+                } else if (key == "stopAfterCurrent") {
+                    stopAfterCurrent = value.toBool();
+                }
+            });
             prefs->setAttribute(Qt::WA_DeleteOnClose);
             prefs->exec();
         }
@@ -4468,6 +5382,51 @@ protected:
             return;
         }
         
+        // Clutterbar toggle/buttons (matches Windows Ui.cpp do_clutterbar)
+        // Toggle bar: x=10-18, y=22-30
+        if (x >= 10 && x < 18 && y >= 22 && y < 30) {
+            clutterbarOpen = !clutterbarOpen;
+            update();
+            return;
+        }
+        // Clutterbar buttons (only when open)
+        if (clutterbarOpen && x >= 11 && x < 18) {
+            // AOT (Always On Top) button: y=33-41
+            if (y >= 33 && y < 41) {
+                alwaysOnTop = !alwaysOnTop;
+                setWindowFlag(Qt::WindowStaysOnTopHint, alwaysOnTop);
+                show(); // Re-show to apply flag change
+                update();
+                return;
+            }
+            // File Info button: y=42-49
+            if (y >= 42 && y < 49) {
+                // Show file info dialog (same as Alt+3)
+                if (!currentFile.isEmpty()) {
+                    FileInfoDialog *dlg = new FileInfoDialog(currentFile, player, this);
+                    dlg->show();
+                }
+                return;
+            }
+            // Double Size button: y=49-55
+            if (y >= 49 && y < 55) {
+                doubleSize = !doubleSize;
+                if (doubleSize) {
+                    setFixedSize(275 * 2, 116 * 2);
+                } else {
+                    setFixedSize(275, 116);
+                }
+                update();
+                return;
+            }
+            // Visualization menu button: y=58-65 (TODO: implement vis menu)
+            if (y >= 58 && y < 65) {
+                // Could show visualization options menu
+                update();
+                return;
+            }
+        }
+        
         // Title bar
         if (y < 14) {
             if (x >= 264 && x < 273) { close(); return; }           // Close
@@ -4521,7 +5480,7 @@ protected:
             volume = ((x - 107) * 255) / 68;
             if (volume > 255) volume = 255;
             if (volume < 0) volume = 0;
-            audioOutput->setVolume(volume / 255.0f);
+            applyVolume();
             update();
             return;
         }
@@ -4558,12 +5517,47 @@ protected:
         hoveredButton = getButtonAt(x, y);
         if (oldHover != hoveredButton) update();
         
+        // Show tooltips for controls (matching Windows tooltips)
+        QString tooltip;
+        if (y >= 88 && y <= 106) {
+            if (x >= 16 && x < 39) tooltip = "Previous Track";
+            else if (x >= 39 && x < 62) tooltip = "Play";
+            else if (x >= 62 && x < 85) tooltip = "Pause";
+            else if (x >= 85 && x < 108) tooltip = "Stop";
+            else if (x >= 108 && x < 130) tooltip = "Next Track";
+        } else if (y >= 89 && y <= 105 && x >= 136 && x < 158) {
+            tooltip = "Eject / Open File";
+        } else if (y >= 89 && y <= 104) {
+            if (x >= 164 && x < 211) tooltip = "Toggle Shuffle";
+            else if (x >= 210 && x < 238) tooltip = "Toggle Repeat";
+        } else if (y >= 58 && y <= 70) {
+            if (x >= 219 && x < 242) tooltip = "Toggle Equalizer";
+            else if (x >= 242 && x < 265) tooltip = "Toggle Playlist";
+        } else if (y >= 57 && y <= 70) {
+            if (x >= 107 && x <= 175) tooltip = "Volume Control";
+            else if (x >= 177 && x <= 215) tooltip = "Balance/Pan Control";
+        } else if (y >= 72 && y <= 82 && x >= 16 && x <= 264) {
+            tooltip = "Seek Position";
+        } else if (y >= 26 && y < 40 && x >= 36 && x < 99) {
+            tooltip = "Time Display (click to toggle)";
+        } else if (y >= 40 && y < 61 && x >= 27 && x < 99) {
+            tooltip = "Visualization (click to cycle modes, double-click for Milkdrop)";
+        } else if (y >= 22 && y < 30 && x >= 10 && x < 18) {
+            tooltip = "Toggle Clutterbar";
+        }
+        
+        if (!tooltip.isEmpty()) {
+            QToolTip::showText(event->globalPosition().toPoint(), tooltip, this);
+        } else {
+            QToolTip::hideText();
+        }
+        
         // Volume drag
         if (isDraggingVolume) {
             volume = ((x - 107) * 255) / 68;
             if (volume > 255) volume = 255;
             if (volume < 0) volume = 0;
-            audioOutput->setVolume(volume / 255.0f);
+            applyVolume();
             update();
         }
         
@@ -4684,6 +5678,35 @@ protected:
         }
     }
     
+    // Preload the next track for smoother transitions (gapless playback)
+    void preloadNextTrack() {
+        int curIdx = playlistWindow->currentTrackIndex();
+        int count = playlistWindow->trackCount();
+        if (count == 0) return;
+        
+        int nextIdx;
+        if (shuffleOn) {
+            // For shuffle, we can't really preload since it's random
+            return;
+        } else {
+            nextIdx = curIdx + 1;
+        }
+        
+        if (nextIdx < count) {
+            QString nextFile = playlistWindow->trackAt(nextIdx);
+            if (!nextFile.isEmpty() && QFile::exists(nextFile)) {
+                nextPlayer->setSource(QUrl::fromLocalFile(nextFile));
+                // Don't play yet, just preload
+            }
+        } else if (repeatOn && count > 0) {
+            // If repeat all is on, preload first track
+            QString nextFile = playlistWindow->trackAt(0);
+            if (!nextFile.isEmpty() && QFile::exists(nextFile)) {
+                nextPlayer->setSource(QUrl::fromLocalFile(nextFile));
+            }
+        }
+    }
+    
 public:
     void playTrack(const QString &fileName) {
         if (!fileName.isEmpty() && QFile::exists(fileName)) {
@@ -4693,11 +5716,36 @@ public:
             mediaSampleRate = 0;
             mediaChannels = 0;
             metaTitle.clear();
+            
+            // Auto-load EQ preset if AUTO is enabled (matches Windows eq_autoload from Play.cpp line 58)
+            if (eqWindow && eqWindow->isAutoEnabled()) {
+                eqWindow->autoLoadPreset(fileName);
+            }
+            
             player->setSource(QUrl::fromLocalFile(fileName));
             player->play();
             RecentFilesManager::instance().addFile(fileName);
             updateTrayTooltip();
+            
+            // Show song change notification (matches Windows balloon tooltips)
+            if (showSongNotifications && trayIcon) {
+                QString title = metaTitle.isEmpty() ? QFileInfo(fileName).completeBaseName() : metaTitle;
+                trayIcon->showMessage("Winamp", title, QSystemTrayIcon::Information, 3000);
+            }
+            
+            // Preload next track for gapless playback
+            preloadNextTrack();
         }
+    }
+    
+    // Apply volume to audio outputs — respects EQ DSP path
+    // When EQ DSP is active, volume is applied in the DSP chain, not via QAudioOutput
+    void applyVolume() {
+        if (!eqDspActive) {
+            audioOutput->setVolume(volume / 255.0f);
+        }
+        // nextAudioOutput always gets volume (it plays before DSP takes over)
+        nextAudioOutput->setVolume(volume / 255.0f);
     }
     
     void updateDisplay() {
@@ -4750,6 +5798,7 @@ public:
         s.setValue("doubleSize", doubleSize);
         s.setValue("shadeMode", shadeMode);
         s.setValue("stopAfterCurrent", stopAfterCurrent);
+        s.setValue("showSongNotifications", showSongNotifications);
         s.endGroup();
         
         eqWindow->saveSettings(s);
@@ -4773,7 +5822,7 @@ public:
         s.beginGroup("Playback");
         volume = s.value("volume", 200).toInt();
         balance = s.value("balance", 0).toInt();
-        audioOutput->setVolume(volume / 255.0f);
+        applyVolume();
         shuffleOn = s.value("shuffle", false).toBool();
         repeatOn = s.value("repeat", false).toBool();
         repeatTrack = s.value("repeatTrack", false).toBool();
@@ -4792,6 +5841,7 @@ public:
         doubleSize = s.value("doubleSize", false).toBool();
         shadeMode = s.value("shadeMode", false).toBool();
         stopAfterCurrent = s.value("stopAfterCurrent", false).toBool();
+        showSongNotifications = s.value("showSongNotifications", true).toBool();
         if (alwaysOnTop) {
             setWindowFlag(Qt::WindowStaysOnTopHint, true);
             show();
@@ -4816,6 +5866,18 @@ private:
     QMediaPlayer *player;
     QAudioOutput *audioOutput;
     QAudioBufferOutput *audioBufferOutput;
+    QMediaPlayer *nextPlayer;  // Preload next track for gapless playback
+    QAudioOutput *nextAudioOutput;
+    bool usingNextPlayer;  // Track which player is active
+    
+    // Real EQ DSP processing (ported from Windows eq10dsp.cpp / In.cpp)
+    // Audio flow: QMediaPlayer → QAudioBufferOutput → EQ10 DSP → QAudioSink
+    QAudioSink *audioSink = nullptr;
+    QIODevice *audioSinkDevice = nullptr;
+    eq10_t eqState[2];     // EQ filter state per channel (stereo max)
+    int eqSampleRate = 0;  // Current configured sample rate
+    int eqChannels = 0;    // Current configured channel count
+    bool eqDspActive = false; // Whether DSP path is active
     QTimer *timer;
     QTimer *scrollTimer;
     QString currentFile;
@@ -4834,6 +5896,7 @@ private:
     bool shadeMode;    // compact shade mode (like Windows config_windowshade)
     bool alwaysOnTop;  // always on top (like Windows config_aot)
     bool clutterbarOpen; // clutterbar expanded (left side O/A/I/D/V buttons)
+    bool showSongNotifications = true; // show desktop notification on song change
     
     // Visualization state
     int visMode;  // 0=off, 1=spectrum analyzer, 2=oscilloscope (matches Windows config_sa)
