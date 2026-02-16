@@ -3739,11 +3739,12 @@ protected:
     }
     
     void keyPressEvent(QKeyEvent *event) override {
-        // F or F11 toggles fullscreen, Escape exits fullscreen
+        // F or F11 toggles fullscreen, Escape exits fullscreen or closes window
         if (event->key() == Qt::Key_F || event->key() == Qt::Key_F11) {
             toggleFullscreen();
-        } else if (event->key() == Qt::Key_Escape && isFullScreen()) {
-            exitFullscreen();
+        } else if (event->key() == Qt::Key_Escape) {
+            if (isFullScreen()) exitFullscreen();
+            else hide();
         } else {
             QWidget::keyPressEvent(event);
         }
@@ -4359,6 +4360,7 @@ public:
                 videoWindow->raise();
             } else if (videoWindow) {
                 videoWindow->setHasVideo(false);
+                videoWindow->hide();
             }
         });
         
