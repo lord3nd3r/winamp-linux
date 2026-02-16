@@ -407,7 +407,7 @@ class WinampWindow : public QWidget {
 public:
     WinampWindow(QWidget *parent = nullptr) : QWidget(parent), dragPosition(0,0), isDragging(false), 
                  volume(200), hoveredButton(-1), pressedButton(-1),
-                 shuffleOn(false), repeatOn(false), eqBtnOn(true), plBtnOn(true),
+                 shuffleOn(false), repeatOn(false), eqBtnOn(false), plBtnOn(false),
                  isDraggingVolume(false), isDraggingPos(false), scrollOffset(0) {
         setFixedSize(275, 116);
         setWindowTitle("Winamp 5.666 for Linux");
