@@ -132,6 +132,17 @@ All state saved to `~/.config/winamp/winamp.conf` (INI format) on exit, restored
 - Full EQ state: enabled, auto, preamp, all 10 band values, snap state
 - Playlist: position, snap mode, dimensions, complete track list
 - Skin path
+- Language preference
+
+### Language Packs
+
+- **Multi-language support** — simple `.lang` file format (KEY=Value pairs) for UI string translation
+- **Built-in languages** — English (default), German (de.lang), Spanish (es.lang) included
+- **Custom language files** — place `.lang` files in `~/.winamp/lang/` or `lang/` directory
+- **Language selector** — Preferences > Setup > Language for choosing interface language
+- **UTF-8 encoding** — full Unicode support for international characters
+- **Extensible system** — translation files can be easily created or modified with any text editor
+- **Restart required** — language changes take effect on next launch
 
 ### Skin System
 
@@ -273,7 +284,7 @@ Bitmap loading searches multiple fallback paths and merges missing assets from a
 - [x] System tray — minimize to tray with tooltip and controls
 - [x] Command-line interface — `-play`, `-pause`, `-stop`, `-enqueue`, files and directories
 - [x] Song change notifications — desktop notification popup when track changes (toggleable in preferences)
-- [ ] Localization — language pack support
+- [x] Localization — .lang file-based language pack system with UTF-8 support; English, German, Spanish included; extensible via ~/.winamp/lang/
 - [ ] Modern skin support — Winamp 3/5 XML-based skins
 - [x] Drag tracks out of playlist to file manager — export via file:// MIME data for external apps
 

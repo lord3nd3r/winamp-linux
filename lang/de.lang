@@ -1,0 +1,28 @@
+# German Language Pack for Winamp
+# Encoding: UTF-8
+
+# Window titles
+win.main.title=Winamp 5.666 für Linux
+win.playlist.title=Winamp Wiedergabelisten-Editor
+win.equalizer.title=Winamp Equalizer
+win.video.title=Winamp Video
+win.library.title=Winamp Medienbibliothek
+win.milkdrop.title=Milkdrop Visualisierung
+win.preferences.title=Winamp Einstellungen
+win.about.title=Über Winamp
+win.fileinfo.title=Dateiinformationen
+win.jumpto.title=Gehe zu Datei
+win.playlocation.title=Adresse abspielen
+win.plgen.title=Wiedergabelisten-Generator
+
+# Common buttons
+button.ok=OK
+button.cancel=Abbrechen
+button.apply=Anwenden
+button.close=Schließen
+button.generate=Generieren
+
+# Playlist generator
+plgen.numtracks=Anzahl der Titel:
+plgen.replace=Aktuelle Wiedergabeliste ersetzen (sonst hinzufügen)
+plgen.nofound=Keine Audiodateien gefunden in
