@@ -104,7 +104,7 @@ Milkdrop visualization (via projectM) is compiled in automatically — no extra 
 - **REM menu** — Remove selected, Crop, Clear playlist, Remove misc
 - **SEL menu** — Select all, Select none, Invert selection
 - **MISC menu** — Sort by title, Sort by filename, Sort by path, Reverse list, Randomize list
-- **LIST menu** — New playlist (clear), Open playlist (.m3u/.m3u8/.pls), Save playlist (.m3u with #EXTM3U/#EXTINF metadata)
+- **LIST menu** — New playlist (clear), Open playlist (.m3u/.m3u8/.pls), Save playlist (.m3u with #EXTM3U/#EXTINF metadata), Generate playlist (random selection from music library with customizable track count)
 - **Track persistence** — full track list saved/restored across sessions
 - **Resizable** — drag edges and corners to resize (minimum 275x116); dynamic re-tiling of skin pieces
 - **Shade mode** — compact single-line view (double-click titlebar)
@@ -268,7 +268,7 @@ Bitmap loading searches multiple fallback paths and merges missing assets from a
 - [x] Crossfade / gapless playback between tracks — dual-player preloading for seamless transitions
 - [x] Bookmarks — save/recall favorite files and streams (persistent at `~/.config/winamp/bookmarks.txt`)
 - [x] EQ preset files — import/export `.eqf` format (load/save/delete from presets menu)
-- [ ] Playlist generator — auto-generate from library
+- [x] Playlist generator — random playlist generation from music library with customizable track count, add or replace mode
 - [ ] CD playback and ripping
 - [x] System tray — minimize to tray with tooltip and controls
 - [x] Command-line interface — `-play`, `-pause`, `-stop`, `-enqueue`, files and directories
