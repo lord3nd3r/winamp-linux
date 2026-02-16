@@ -3670,6 +3670,7 @@ public:
         setAttribute(Qt::WA_DeleteOnClose, false);  // Don't delete on close, just hide
         resize(320, 240);
         setMinimumSize(160, 120);
+        setFocusPolicy(Qt::StrongFocus);  // Accept keyboard focus for F/Escape keys
         
         // Create video widget for actual video rendering
         videoWidget = new QVideoWidget(this);
@@ -3680,6 +3681,7 @@ public:
         loadLogo();
         
         isDragging = false;
+        wasFullscreen = false;
     }
     
     QVideoWidget* getVideoWidget() { return videoWidget; }
@@ -3693,6 +3695,9 @@ public:
         }
         update();
     }
+    
+signals:
+    void fullscreenChanged(bool isFullscreen);
     
 protected:
     void paintEvent(QPaintEvent*) override {
@@ -3713,8 +3718,28 @@ protected:
         videoWidget->setGeometry(0, 0, width(), height());
     }
     
+    void showEvent(QShowEvent*) override {
+        // Track fullscreen state when shown
+        bool nowFullscreen = isFullScreen();
+        if (nowFullscreen != wasFullscreen) {
+            wasFullscreen = nowFullscreen;
+            emit fullscreenChanged(nowFullscreen);
+        }
+    }
+    
+    void keyPressEvent(QKeyEvent *event) override {
+        // F or F11 toggles fullscreen, Escape exits fullscreen
+        if (event->key() == Qt::Key_F || event->key() == Qt::Key_F11) {
+            toggleFullscreen();
+        } else if (event->key() == Qt::Key_Escape && isFullScreen()) {
+            exitFullscreen();
+        } else {
+            QWidget::keyPressEvent(event);
+        }
+    }
+    
     void mousePressEvent(QMouseEvent *event) override {
-        if (event->button() == Qt::LeftButton) {
+        if (event->button() == Qt::LeftButton && !isFullScreen()) {
             isDragging = true;
             dragStartPos = event->globalPosition().toPoint() - frameGeometry().topLeft();
         } else if (event->button() == Qt::RightButton) {
@@ -3723,7 +3748,7 @@ protected:
     }
     
     void mouseMoveEvent(QMouseEvent *event) override {
-        if (isDragging) {
+        if (isDragging && !isFullScreen()) {
             move(event->globalPosition().toPoint() - dragStartPos);
         }
     }
@@ -3735,15 +3760,30 @@ protected:
     }
     
     void mouseDoubleClickEvent(QMouseEvent*) override {
-        // Toggle fullscreen on double-click
-        if (isFullScreen()) {
-            showNormal();
-        } else {
-            showFullScreen();
-        }
+        toggleFullscreen();
     }
     
 private:
+    void toggleFullscreen() {
+        if (isFullScreen()) {
+            exitFullscreen();
+        } else {
+            enterFullscreen();
+        }
+    }
+    
+    void enterFullscreen() {
+        showFullScreen();
+        wasFullscreen = true;
+        emit fullscreenChanged(true);
+    }
+    
+    void exitFullscreen() {
+        showNormal();
+        wasFullscreen = false;
+        emit fullscreenChanged(false);
+    }
+    
     void loadLogo() {
         // Try to load video_logo.bmp from skin
         QStringList paths = {
@@ -3765,6 +3805,7 @@ private:
     QPixmap logoPixmap;
     bool hasActiveVideo = false;
     bool isDragging = false;
+    bool wasFullscreen = false;
     QPoint dragStartPos;
 };
 
@@ -4322,6 +4363,21 @@ public:
         videoWindow = new VideoWindow(this);
         videoWindow->hide();
         player->setVideoOutput(videoWindow->getVideoWidget());
+        
+        // Hide EQ and playlist when video goes fullscreen (like Milkdrop)
+        connect(videoWindow, &VideoWindow::fullscreenChanged, this, [this](bool fs) {
+            if (fs) {
+                // Entering fullscreen - hide main, EQ, and playlist
+                hide();
+                eqWindow->hide();
+                playlistWindow->hide();
+            } else {
+                // Exiting fullscreen - restore visibility based on previous state
+                show();
+                if (eqBtnOn) eqWindow->show();
+                if (plBtnOn) playlistWindow->show();
+            }
+        });
         
         // Position windows: EQ below main, playlist to the right of main
         playlistWindow->move(x() + width(), y());  // right of main
