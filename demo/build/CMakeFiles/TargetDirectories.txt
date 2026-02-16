@@ -1,9 +1,0 @@
-/home/ender/winamp/demo/build/CMakeFiles/winamp_demo.dir
-/home/ender/winamp/demo/build/CMakeFiles/edit_cache.dir
-/home/ender/winamp/demo/build/CMakeFiles/rebuild_cache.dir
-/home/ender/winamp/demo/build/CMakeFiles/list_install_components.dir
-/home/ender/winamp/demo/build/CMakeFiles/install.dir
-/home/ender/winamp/demo/build/CMakeFiles/install/local.dir
-/home/ender/winamp/demo/build/CMakeFiles/install/strip.dir
-/home/ender/winamp/demo/build/CMakeFiles/winamp_demo_autogen_timestamp_deps.dir
-/home/ender/winamp/demo/build/CMakeFiles/winamp_demo_autogen.dir
