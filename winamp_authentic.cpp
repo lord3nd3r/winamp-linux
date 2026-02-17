@@ -26,6 +26,7 @@
 #include <QMimeData>
 #include <QSettings>
 #include <QDir>
+#include <QDirIterator>
 #include <QMenu>
 #include <QAction>
 #include <QCloseEvent>
@@ -2139,6 +2140,8 @@ struct ModernBitmapDef {
     QString file;
     int x = 0, y = 0, w = 0, h = 0;
     QString gammagroup;
+    QString baseDir;    // Directory of the XML file that defined this bitmap
+    QColor solidColor;  // For $solid pseudo-bitmaps
 };
 
 struct ModernBitmapFontDef {
@@ -2185,15 +2188,31 @@ public:
     }
 
     QPixmap getBitmap(const QString &id) const {
-        return loadedBitmaps.value(id);
+        if (loadedBitmaps.contains(id)) return loadedBitmaps.value(id);
+        // Try Bento-style alias (handles Big Bento / Bento skins that use
+        // different bitmap ID naming conventions from Winamp Modern)
+        QString alias = bentoAlias(id);
+        if (!alias.isEmpty() && loadedBitmaps.contains(alias))
+            return loadedBitmaps.value(alias);
+        return QPixmap();
     }
 
     bool hasBitmap(const QString &id) const {
-        return loadedBitmaps.contains(id);
+        if (loadedBitmaps.contains(id)) return true;
+        QString alias = bentoAlias(id);
+        return !alias.isEmpty() && loadedBitmaps.contains(alias);
     }
 
     bool isValid() const { return valid; }
     QString getSkinName() const { return skinName; }
+
+    // Resolve a bitmap font ID with fallback to Bento naming
+    QString resolveFontId(const QString &fontId) const {
+        if (bitmapFonts.contains(fontId)) return fontId;
+        QString alias = bentoFontAlias(fontId);
+        if (!alias.isEmpty() && bitmapFonts.contains(alias)) return alias;
+        return fontId;
+    }
 
     // Map a character to (x, y) source coordinates in a bitmap font image.
     // Follows the Wasabi BitmapFont::getXYfromChar layout:
@@ -2272,7 +2291,8 @@ public:
     // Draw text using a skin bitmap font (e.g. player.BIGNUM, player.songticker.font)
     void drawBitmapText(QPainter &p, const QString &fontId, const QString &text,
                         int x, int y, int maxWidth = -1) const {
-        auto it = bitmapFonts.constFind(fontId);
+        QString resolved = resolveFontId(fontId);
+        auto it = bitmapFonts.constFind(resolved);
         if (it == bitmapFonts.constEnd()) return;
 
         const ModernBitmapFontDef &font = it.value();
@@ -2297,27 +2317,151 @@ public:
     }
 
     int measureText(const QString &fontId, const QString &text) const {
-        auto it = bitmapFonts.constFind(fontId);
+        QString resolved = resolveFontId(fontId);
+        auto it = bitmapFonts.constFind(resolved);
         if (it == bitmapFonts.constEnd()) return text.length() * 8;
         const ModernBitmapFontDef &font = it.value();
         return text.length() * (font.charWidth + font.hSpacing);
     }
 
     int fontHeight(const QString &fontId) const {
-        auto it = bitmapFonts.constFind(fontId);
+        QString resolved = resolveFontId(fontId);
+        auto it = bitmapFonts.constFind(resolved);
         if (it == bitmapFonts.constEnd()) return 10;
         return it.value().charHeight;
     }
 
 private:
+    // Bitmap ID alias mapping: translates Winamp Modern renderer IDs to
+    // Bento/Big Bento equivalents. Returns empty string if no alias exists.
+    static QString bentoAlias(const QString &id) {
+        // Build a static mapping table on first use
+        static const QMap<QString, QString> map = {
+            // === Frame / Titlebar ===
+            {"wasabi.frame.basetexture",          "window.background.center"},
+            {"wasabi.frame.top",                  "window.background.top"},
+            {"wasabi.frame.top.left",             "window.background.topleft"},
+            {"wasabi.frame.top.right",            "window.background.topright"},
+            {"wasabi.titlebar.left.active",       "window.titlebar.grid.left"},
+            {"wasabi.titlebar.center.active",     "window.titlebar.grid.middle"},
+            {"wasabi.titlebar.right.active",      "window.titlebar.grid.right"},
+            {"wasabi.titlebar.left.inactive",     "window.titlebar.grid.left"},
+            {"wasabi.titlebar.center.inactive",   "window.titlebar.grid.middle"},
+            {"wasabi.titlebar.right.inactive",    "window.titlebar.grid.right"},
+            // Window buttons
+            {"wasabi.button.minimize",            "window.titlebar.button.minimize.normal"},
+            {"wasabi.button.minimize.hover",      "window.titlebar.button.minimize.hover"},
+            {"wasabi.button.minimize.pressed",    "window.titlebar.button.minimize.down"},
+            {"wasabi.button.exit",                "window.titlebar.button.close.normal"},
+            {"wasabi.button.exit.hover",          "window.titlebar.button.close.hover"},
+            {"wasabi.button.exit.pressed",        "window.titlebar.button.close.down"},
+
+            // === Display ===
+            {"player.display.bg.left",            "player.display.background.left"},
+            {"player.display.bg.center",          "player.display.background.center"},
+            {"player.display.bg.right",           "player.display.background.right"},
+            {"player.display.left",               "player.display.foreground.left"},
+            {"player.display.center",             "player.display.foreground.center"},
+            {"player.display.right",              "player.display.foreground.right"},
+
+            // === Status icons ===
+            {"player.status.play",                "player.display.status.playing"},
+            {"player.status.pause",               "player.display.status.paused"},
+            {"player.status.stop",                "player.display.status.stopped"},
+
+            // === Song info ===
+            {"player.songinfo.kbps",              "player.songinfo.bitrate"},
+            {"player.songinfo.khz",               "player.songinfo.frequency"},
+            {"player.songinfo.none",              "player.songinfo.na"},
+
+            // === Seek bar ===
+            {"player.seekbar.left",               "player.slider.background.left"},
+            {"player.seekbar.center",             "player.slider.background.center"},
+            {"player.seekbar.right",              "player.slider.background.right"},
+            {"player.button.seek",                "player.posbar.thumb.normal"},
+            {"player.button.seek.hover",          "player.posbar.thumb.hover"},
+            {"player.button.seek.pressed",        "player.posbar.thumb.down"},
+
+            // === Playback buttons (bare name → .normal, .pressed → .down) ===
+            {"player.button.previous",            "player.button.previous.normal"},
+            {"player.button.previous.pressed",    "player.button.previous.down"},
+            {"player.button.previous.bg",         "player.button.previous.placeholder"},
+            {"player.button.play",                "player.button.play.normal"},
+            {"player.button.play.pressed",        "player.button.play.down"},
+            {"player.button.play.bg",             "player.button.pps.glow"},
+            {"player.button.pause",               "player.button.pause.normal"},
+            {"player.button.pause.pressed",       "player.button.pause.down"},
+            {"player.button.pause.bg",            "player.button.pps.glow"},
+            {"player.button.stop",                "player.button.stop.normal"},
+            {"player.button.stop.pressed",        "player.button.stop.down"},
+            {"player.button.stop.bg",             "player.button.pps.glow"},
+            {"player.button.next",                "player.button.next.normal"},
+            {"player.button.next.pressed",        "player.button.next.down"},
+            {"player.button.next.bg",             "player.button.next.placeholder"},
+            {"player.button.eject",               "player.button.eject.normal"},
+            {"player.button.eject.pressed",       "player.button.eject.down"},
+
+            // === Volume ===
+            {"player.button.volume",              "player.volume.thumb.normal"},
+            {"player.button.volume.pressed",      "player.volume.thumb.down"},
+            {"player.button.mute.bg",             "player.button.mute.placeholder"},
+            {"player.button.mute.on",             "player.button.mute.active"},
+            {"player.button.mute.on.pressed",     "player.button.mute.down"},
+            {"player.button.mute.off",            "player.button.demute.normal"},
+            {"player.button.mute.off.pressed",    "player.button.demute.down"},
+
+            // === Repeat / Shuffle ===
+            {"player.button.repeat",              "player.button.repeat.normal0"},
+            {"player.button.repeat.hover",        "player.button.repeat.hover0"},
+            {"player.button.repeat.pressed",      "player.button.repeat.down0"},
+            {"player.button.repeat.bg",           "player.button.repeat.glow"},
+            {"player.button.shuffle",             "player.button.shuffle.normal0"},
+            {"player.button.shuffle.hover",       "player.button.shuffle.hover0"},
+            {"player.button.shuffle.pressed",     "player.button.shuffle.down0"},
+            {"player.button.shuffle.bg",          "player.button.shuffle.glow"},
+
+            // === Bolt ===
+            {"player.button.bolt",                "player.button.bolt.normal"},
+            {"player.button.bolt.bg",             "player.button.bolt.glow"},
+
+            // === Resizer ===
+            {"player.resizer",                    "window.background.resizer"},
+
+            // === Main area (use window background as fallback) ===
+            {"player.main.left",                  "window.background.left"},
+            {"player.main.center",                "window.background.center"},
+            {"player.main.right",                 "window.background.right"},
+        };
+        return map.value(id);
+    }
+
+    // Font ID alias mapping: Winamp Modern → Bento
+    static QString bentoFontAlias(const QString &fontId) {
+        static const QMap<QString, QString> map = {
+            {"player.BIGNUM",           "player.bitmapfont.nums"},
+            {"player.songticker.font",  "player.bitmapfont.songinfo"},
+            {"player.songinfo.font",    "player.bitmapfont.songinfo"},
+            {"player.pe.time.font",     "player.bitmapfont.songinfo"},
+        };
+        return map.value(fontId);
+    }
+
     void parseFile(const QString &filePath) {
         // Case-insensitive file open for Linux
-        QString resolved = resolveCasePath(filePath);
+        QString resolved = resolveCasePathDeep(filePath);
         QFile file(resolved);
         if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return;
 
         QXmlStreamReader xml(&file);
         QString baseDir = QFileInfo(resolved).absolutePath();
+
+        // Determine the skin root for this XML file.
+        // Wasabi resolves bitmap file= paths relative to the skin root (the
+        // directory containing skin.xml), NOT relative to the XML file itself.
+        // When Bento includes ../Big Bento/xml/system-elements.xml, those
+        // bitmaps with file="window/scrollbars.png" must resolve against
+        // Big Bento's root, not Bento's.
+        QString rootDir = findSkinRoot(resolved);
 
         while (!xml.atEnd()) {
             xml.readNext();
@@ -2325,8 +2469,10 @@ private:
                 if (xml.name() == u"include") {
                     QString includeFile = xml.attributes().value("file").toString();
                     if (!includeFile.isEmpty()) {
+                        // Normalize Windows backslashes
+                        includeFile.replace('\\', '/');
                         // Resolve include path case-insensitively
-                        QString includePath = resolveCasePath(baseDir + "/" + includeFile);
+                        QString includePath = resolveCasePathDeep(baseDir + "/" + includeFile);
                         parseFile(includePath);
                     }
                 } else if (xml.name() == u"skininfo") {
@@ -2337,7 +2483,7 @@ private:
                         }
                     }
                 } else if (xml.name() == u"bitmap") {
-                    parseBitmapElement(xml);
+                    parseBitmapElement(xml, rootDir);
                 } else if (xml.name() == u"bitmapfont") {
                     parseBitmapFontElement(xml);
                 }
@@ -2345,18 +2491,39 @@ private:
         }
     }
 
-    void parseBitmapElement(QXmlStreamReader &xml) {
+    void parseBitmapElement(QXmlStreamReader &xml, const QString &skinRootDir) {
         QXmlStreamAttributes attrs = xml.attributes();
         QString id = attrs.value("id").toString();
         if (id.isEmpty()) return;
 
         ModernBitmapDef def;
         def.file = attrs.value("file").toString();
+        // Normalize Windows backslashes to forward slashes
+        def.file.replace('\\', '/');
         def.x = attrs.value("x").toInt();
         def.y = attrs.value("y").toInt();
         def.w = attrs.value("w").toInt();
         def.h = attrs.value("h").toInt();
         def.gammagroup = attrs.value("gammagroup").toString();
+        // Track the skin root directory for this bitmap definition.
+        // Wasabi resolves bitmap file= paths relative to the skin root (the
+        // directory containing skin.xml). When Bento includes XMLs from
+        // ../Big Bento/, the rootDir for those bitmaps is Big Bento's root,
+        // so file="window/scrollbars.png" resolves to Big Bento/window/scrollbars.png.
+        def.baseDir = skinRootDir;
+
+        // Handle $solid pseudo-bitmaps (synthetic solid-color rectangles)
+        if (def.file == "$solid") {
+            QString colorStr = attrs.value("color").toString();
+            QStringList parts = colorStr.split(',');
+            if (parts.size() >= 3) {
+                def.solidColor = QColor(parts[0].trimmed().toInt(),
+                                        parts[1].trimmed().toInt(),
+                                        parts[2].trimmed().toInt());
+            } else {
+                def.solidColor = QColor(0, 0, 0);
+            }
+        }
 
         bitmapDefs[id] = def;
     }
@@ -2376,16 +2543,36 @@ private:
         bitmapFonts[id] = font;
     }
 
+    // Find the skin root directory for an XML file by walking up the directory
+    // tree until we find a directory containing skin.xml. Falls back to skinDir.
+    QString findSkinRoot(const QString &xmlFilePath) const {
+        QString dir = QFileInfo(xmlFilePath).absolutePath();
+        // Walk up at most 5 levels
+        for (int i = 0; i < 5; i++) {
+            if (QFile::exists(dir + "/skin.xml")) return dir;
+            // Also check case-insensitively
+            QDir d(dir);
+            QStringList entries = d.entryList(QDir::Files);
+            for (const QString &e : entries) {
+                if (e.compare("skin.xml", Qt::CaseInsensitive) == 0)
+                    return dir;
+            }
+            QString parent = QFileInfo(dir).absolutePath();
+            if (parent == dir) break; // reached filesystem root
+            dir = parent;
+        }
+        return skinDir; // fallback
+    }
+
     // Case-insensitive file lookup for Linux (Winamp skins come from Windows with mixed case)
+    // This version only resolves one directory level — kept for backward compat.
     static QString resolveCasePath(const QString &fullPath) {
         if (QFile::exists(fullPath)) return fullPath;
 
-        // Split into directory and filename parts, do case-insensitive match
         QFileInfo fi(fullPath);
         QString dirPath = fi.absolutePath();
         QString fileName = fi.fileName();
 
-        // First resolve the directory case-insensitively
         QDir dir(dirPath);
         if (!dir.exists()) {
             QFileInfo dirFi(dirPath);
@@ -2406,20 +2593,99 @@ private:
                     return dir.absolutePath() + "/" + entry;
             }
         }
-        return fullPath; // Return original path as fallback
+        return fullPath;
     }
 
-    QString resolveFilePath(const QString &relPath) const {
+    // Deep case-insensitive path resolution — resolves EACH path component
+    // against the filesystem case-insensitively. Handles multi-level mismatches
+    // like "window/Scrollgrips.png" when the actual dir or file has different case.
+    static QString resolveCasePathDeep(const QString &fullPath) {
+        if (QFile::exists(fullPath)) return fullPath;
+
+        // Canonicalize: resolve ".." segments first
+        QString cleaned = QDir::cleanPath(fullPath);
+        if (QFile::exists(cleaned)) return cleaned;
+
+        // Split into components. We walk from root down, resolving each.
+        QStringList components = cleaned.split('/');
+        if (components.isEmpty()) return fullPath;
+
+        // Start from root
+        QString resolved;
+        if (cleaned.startsWith('/')) {
+            resolved = "/";
+            components.removeFirst(); // remove empty first element
+        }
+
+        for (int i = 0; i < components.size(); i++) {
+            const QString &comp = components[i];
+            if (comp.isEmpty()) continue;
+
+            QString candidate = resolved.isEmpty() ? comp : (resolved.endsWith('/') ? resolved + comp : resolved + "/" + comp);
+
+            if (QFileInfo(candidate).exists()) {
+                resolved = candidate;
+            } else {
+                // Case-insensitive search in parent directory
+                QDir parent(resolved);
+                if (!parent.exists()) return fullPath; // parent doesn't exist, give up
+
+                bool found = false;
+                // Check both dirs and files
+                QStringList entries = parent.entryList(QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot);
+                for (const QString &entry : entries) {
+                    if (entry.compare(comp, Qt::CaseInsensitive) == 0) {
+                        resolved = resolved.endsWith('/') ? resolved + entry : resolved + "/" + entry;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) return fullPath; // component not found
+            }
+        }
+
+        return resolved;
+    }
+
+    // Resolve a bitmap file path against the bitmap's skin root directory,
+    // with the loading skin's skinDir as fallback. The bitmapSkinRoot is
+    // the root of the skin that defined this bitmap (found by walking up
+    // to find skin.xml), which may differ from skinDir when including
+    // XMLs from another skin (e.g., Bento includes from ../Big Bento/).
+    QString resolveFilePath(const QString &relPath, const QString &bitmapSkinRoot) const {
+        // First try resolving against the bitmap's skin root
+        if (!bitmapSkinRoot.isEmpty()) {
+            QString path = resolveCasePathDeep(bitmapSkinRoot + "/" + relPath);
+            if (QFile::exists(path)) return path;
+        }
+        // Fallback: resolve against the loading skin's skinDir
+        QString path = resolveCasePathDeep(skinDir + "/" + relPath);
+        if (QFile::exists(path)) return path;
+        // Last resort: old single-level resolution
         return resolveCasePath(skinDir + "/" + relPath);
     }
 
     void loadAllBitmaps() {
         for (auto it = bitmapDefs.constBegin(); it != bitmapDefs.constEnd(); ++it) {
             const ModernBitmapDef &def = it.value();
-            if (def.file.isEmpty()) continue;
+
+            // Handle $solid pseudo-bitmaps — generate a solid color rectangle
+            if (def.file == "$solid") {
+                int w = def.w > 0 ? def.w : 1;
+                int h = def.h > 0 ? def.h : 1;
+                QPixmap solidPx(w, h);
+                solidPx.fill(def.solidColor.isValid() ? def.solidColor : QColor(0, 0, 0));
+                loadedBitmaps[it.key()] = solidPx;
+                continue;
+            }
+
+            if (def.file.isEmpty() || def.file.startsWith('$')) continue;
 
             // Load the full image file (cached per path, case-insensitive)
-            QString fullPath = resolveFilePath(def.file);
+            // Use the bitmap's own baseDir for resolution (critical for Bento
+            // skins where included XMLs from ../Big Bento/ define bitmaps
+            // with paths relative to Big Bento, not the loading skin)
+            QString fullPath = resolveFilePath(def.file, def.baseDir);
             if (!imageCache.contains(fullPath)) {
                 QImage img(fullPath);
                 if (!img.isNull()) {
@@ -2499,11 +2765,14 @@ static const EqPreset builtinPresets[] = {
 };
 static const int numPresets = sizeof(builtinPresets) / sizeof(builtinPresets[0]);
 
-// Custom list widget for dragging tracks to file manager
+// Custom list widget for dragging tracks to file manager and accepting drops
 class PlaylistListWidget : public QListWidget {
     Q_OBJECT
 public:
     PlaylistListWidget(QWidget *parent = nullptr) : QListWidget(parent) {}
+    
+signals:
+    void filesDropped(const QStringList &paths);
     
 protected:
     QMimeData* mimeData(const QList<QListWidgetItem*> &items) const override {
@@ -2522,6 +2791,60 @@ protected:
         }
         
         return data;
+    }
+    
+    // Accept external file drops (from file manager, etc.)
+    void dragEnterEvent(QDragEnterEvent *event) override {
+        if (event->mimeData()->hasUrls()) {
+            event->acceptProposedAction();
+        } else {
+            QListWidget::dragEnterEvent(event);
+        }
+    }
+    
+    void dragMoveEvent(QDragMoveEvent *event) override {
+        if (event->mimeData()->hasUrls()) {
+            event->acceptProposedAction();
+        } else {
+            QListWidget::dragMoveEvent(event);
+        }
+    }
+    
+    // Forward file drops to the parent PlaylistWindow which knows how to addTrack()
+    void dropEvent(QDropEvent *event) override {
+        if (event->mimeData()->hasUrls()) {
+            // Extract URLs here rather than forwarding the event, to avoid
+            // re-entrant event loop crashes from addTrack's duration probing.
+            QStringList paths;
+            QStringList audioExts = {"mp3", "wav", "flac", "ogg", "m4a", "aac", "wma", "opus",
+                                     "mp4", "avi", "mkv", "mov", "webm"};
+            for (const QUrl &url : event->mimeData()->urls()) {
+                QString path = url.toLocalFile();
+                if (path.isEmpty()) continue;
+                QFileInfo fi(path);
+                if (fi.isDir()) {
+                    QDirIterator it(path, QDir::Files, QDirIterator::Subdirectories);
+                    while (it.hasNext()) {
+                        it.next();
+                        if (audioExts.contains(it.fileInfo().suffix().toLower()))
+                            paths << it.filePath();
+                    }
+                } else if (fi.isFile()) {
+                    paths << path;
+                }
+            }
+            event->acceptProposedAction();
+            if (!paths.isEmpty()) {
+                // Emit signal — connected to PlaylistWindow::addTrack in constructor.
+                // Use a queued single-shot to defer past the drag session cleanup.
+                QStringList captured = paths;
+                QTimer::singleShot(0, this, [this, captured]() {
+                    emit filesDropped(captured);
+                });
+            }
+            return;
+        }
+        QListWidget::dropEvent(event);
     }
 };
 
@@ -3404,6 +3727,7 @@ PlaylistWindow::PlaylistWindow(WinampWindow *parent) : QWidget(nullptr), mainWin
     resize(275, 232);
     setWindowTitle(TR("win.playlist.title", "Winamp Playlist Editor"));
     setWindowFlags(Qt::Tool | Qt::FramelessWindowHint);
+    setAcceptDrops(true);  // Accept file drops on playlist window borders/titlebar
     
     // Position list widget within the skin frame
     // Titlebar=20px, left border=12px, right border=20px (incl scrollbar), bottom=38px
@@ -3428,6 +3752,12 @@ PlaylistWindow::PlaylistWindow(WinampWindow *parent) : QWidget(nullptr), mainWin
             int index = listWidget->row(item);
             emit trackDoubleClicked(tracks[index]);
         }
+    });
+
+    // Connect file drop signal from the list widget
+    connect(listWidget, &PlaylistListWidget::filesDropped, this, [this](const QStringList &paths) {
+        for (const QString &p : paths)
+            addTrack(p);
     });
 
     connect(listWidget->model(), &QAbstractItemModel::rowsMoved, this, [this](const QModelIndex &parent, int start, int end, const QModelIndex &destination, int row) {
@@ -3840,30 +4170,27 @@ void PlaylistWindow::updateTotalTimeDisplay() {
 
 void PlaylistWindow::addTrack(const QString &filePath) {
     QFileInfo fileInfo(filePath);
-    if (fileInfo.exists()) {
+    if (fileInfo.exists() && fileInfo.isFile()) {
         QListWidgetItem *item = new QListWidgetItem(trackDisplayName(tracks.size(), filePath));
         item->setData(Qt::UserRole, filePath); // Store full file path for drag-out
         listWidget->addItem(item);
         tracks.append(filePath);
+        trackDurations.append(0); // placeholder until async probe completes
 
-        // Use a temporary media player to get the duration
-        QMediaPlayer tempPlayer;
-        tempPlayer.setSource(QUrl::fromLocalFile(filePath));
-        
-        // We need to wait for it to load the media to get duration
-        QEventLoop loop;
-        QObject::connect(&tempPlayer, &QMediaPlayer::mediaStatusChanged, [&](QMediaPlayer::MediaStatus status){
-            if(status == QMediaPlayer::LoadedMedia) {
-                trackDurations.append(tempPlayer.duration());
-                updateTotalTimeDisplay();
-                loop.quit();
-            } else if (status == QMediaPlayer::InvalidMedia) {
-                trackDurations.append(0); // Add 0 if media is invalid
-                updateTotalTimeDisplay();
-                loop.quit();
+        // Probe duration asynchronously to avoid re-entrant event loop crashes
+        // (the old blocking QEventLoop could crash when called during drag-drop)
+        int trackIndex = tracks.size() - 1;
+        QMediaPlayer *probe = new QMediaPlayer(this);
+        probe->setSource(QUrl::fromLocalFile(filePath));
+        connect(probe, &QMediaPlayer::mediaStatusChanged, this, [this, probe, trackIndex](QMediaPlayer::MediaStatus status){
+            if (status == QMediaPlayer::LoadedMedia || status == QMediaPlayer::InvalidMedia) {
+                if (trackIndex < trackDurations.size()) {
+                    trackDurations[trackIndex] = (status == QMediaPlayer::LoadedMedia) ? probe->duration() : 0;
+                    updateTotalTimeDisplay();
+                }
+                probe->deleteLater();
             }
         });
-        loop.exec();
     }
 }
 
@@ -4249,10 +4576,22 @@ void PlaylistWindow::mousePressEvent(QMouseEvent *event) {
 void PlaylistWindow::dropEvent(QDropEvent *event) {
     const QMimeData *mimeData = event->mimeData();
     if (mimeData->hasUrls()) {
+        QStringList audioExts = {"mp3", "wav", "flac", "ogg", "m4a", "aac", "wma", "opus",
+                                 "mp4", "avi", "mkv", "mov", "webm"};
         for (const QUrl &url : mimeData->urls()) {
-            QString filePath = url.toLocalFile();
-            if (!filePath.isEmpty()) {
-                addTrack(filePath);
+            QString path = url.toLocalFile();
+            if (path.isEmpty()) continue;
+            QFileInfo fi(path);
+            if (fi.isDir()) {
+                // Recursively add audio files from dropped directory
+                QDirIterator it(path, QDir::Files, QDirIterator::Subdirectories);
+                while (it.hasNext()) {
+                    it.next();
+                    if (audioExts.contains(it.fileInfo().suffix().toLower()))
+                        addTrack(it.filePath());
+                }
+            } else if (fi.isFile()) {
+                addTrack(path);
             }
         }
         event->acceptProposedAction();
