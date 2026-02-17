@@ -31,287 +31,249 @@ Milkdrop visualization (via projectM) is compiled in automatically — no extra 
 
 ## Implemented Features
 
-### Main Player Window (275x116 px)
+### Main Player Window
 
-- **Authentic MAIN.BMP background** — pixel-exact base image from the original skin
-- **Skinned titlebar** — active/inactive states from `titlebar.bmp` (sprite offset 27,0 / 27,15), 275x14
-- **Close and minimize buttons** — clickable hit zones in the titlebar
-- **Play/Pause/Stop status indicator** — 9x9 icon at (26,28) from `PLAYPAUS.BMP` with 3 states
-- **LED time display** — MM:SS rendered with `numbers.bmp` (9x13 glyphs) at correct digit positions (36,26 / 48,26 / 78,26 / 90,26); colon baked into `MAIN.BMP`; if `nums_ex.bmp` present, uses animated colon separator (matching Windows enhanced number display)
-- **Scrolling song title** — bitmap font rendering from `text.bmp` (5x6 per character) in a clipped 154x6 region at (111,27); scrolls at 150ms with `***` separator wrap
-- **Mono/Stereo indicator** — `MONOSTER.BMP` at (212,41); dynamically reflects actual channel count (mono/stereo on/off states)
-- **Bitrate display** — kbps shown at (111,43) using `text.bmp` font, from `QMediaMetaData::AudioBitRate`
-- **Sample rate display** — kHz shown at (156,43) using `text.bmp` font, from audio buffer format
-- **Transport buttons** — Previous, Play, Pause, Stop, Next, Eject from `CBUTTONS.BMP` with normal/pressed sprite rows; actions fire on mouse release
-- **Previous/Next navigate playlist** — Previous goes to prior track (or seeks to 0 if first), Next advances to next track
-- **Auto-advance** — automatically plays next track when current one ends; respects shuffle (random) and repeat (wrap) modes
-- **Volume slider** — 28-frame sprite animation from `volume.bmp` (68x13 each, 15px stride); click and drag, range 0-255
-- **Position/seek bar** — background + thumb from `POSBAR.BMP` (248x10 bar, 29x10 thumb); draggable seek with distinct pressed thumb sprite
-- **Shuffle and Repeat toggles** — `SHUFREP.BMP` on/off states (47x15 and 28x15)
-- **EQ and PL toggle buttons** — `SHUFREP.BMP` on/off states (23x12 each); show/hide child windows
-- **Frameless window** with custom titlebar dragging
-- **Right-click context menu** — full submenu hierarchy matching Windows: Play (file/location), Bookmarks (add/open), Options (always on top, double size, shade, prefs), Playback (stop after current, jump to time/file, shuffle, repeat off/all/one), Windows (EQ/PL/Milkdrop), Visualization (off/spectrum/oscilloscope/VU/Milkdrop), Recent Files, About, Exit
-- **Tooltips** — hover over buttons and controls to see function descriptions (Previous/Play/Pause/Stop/Next, Volume, Balance, Seek, EQ/PL buttons, time display, visualization, clutterbar)
-- **Balance/pan slider** — `BALANCE.BMP` skin support (falls back to `volume.bmp`); range -127 to +127 matching Windows `pan127`
-- **Double-size mode** — 2x pixel scaling (Ctrl+D toggle), authentic scaled rendering
-- **Shade mode** — compact 275x14 titlebar-only view with scrolling title (Ctrl+W toggle)
+- **Authentic skin rendering** — pixel-exact background, titlebar (active/inactive states), and all UI elements from the original Winamp skin bitmaps
+- **Transport controls** — Previous, Play, Pause, Stop, Next, Eject with skinned button states
+- **LED time display** — MM:SS with bitmap digit font; animated colon separator when `nums_ex.bmp` is present
+- **Scrolling song title** — bitmap font rendering with smooth scrolling and wrap
+- **Play/Pause/Stop indicator** — status icon reflecting current playback state
+- **Mono/Stereo indicator** — dynamically reflects actual channel count
+- **Bitrate and sample rate display** — kbps and kHz from media metadata
+- **Volume slider** — 28-frame skinned animation with click and drag
+- **Balance/pan slider** — range -127 to +127 with skin support
+- **Position/seek bar** — draggable seek with skinned thumb
+- **Shuffle and Repeat toggles** — with skin-accurate on/off states
+- **EQ and PL toggle buttons** — show/hide equalizer and playlist windows
+- **Clutterbar** — clickable O/A/I/D/V options bar (Options, Always On Top, File Info, Double Size, Visualization)
+- **Double-size mode** — 2x pixel scaling (Ctrl+D)
+- **Shade mode** — compact titlebar-only view (Ctrl+W)
 - **Always on top** — Ctrl+T toggle, persisted across sessions
-- **Clutterbar** — left-side options bar (10,22-65) from `titlebar.bmp` sprite (x=304); clickable O/A/I/D/V buttons: Options, Always On Top, File Info, Double Size, Visualization; toggle by clicking top button; AAT and Double Size show pressed state when active
-- **VU meter** — dual-channel RMS level visualization as vis mode 3
-- **Easter eggs** — type "NULLSOFT" or "WINAMP" for hidden messages (matching Windows `eggstat`)
-- **Drag-and-drop** — drop audio files or directories onto main window to play
-- **Stop after current** — plays current track then stops (matching Windows `g_stopaftercur`)
-- **System tray icon** — minimize to tray, tray context menu (prev/play/stop/next/open/exit), tooltip shows current song
-- **Splash screen** — shows SPLASH.BMP on startup (matching Windows `SPLASH.cpp`)
-- **Extended keyboard shortcuts** — X (play), V (stop), C (pause), Z/B (prev/next), Space (play/pause), J (jump to time), Ctrl+J (jump to file), Ctrl+D (double size), Ctrl+W (shade), Ctrl+T (always on top), Ctrl+P (preferences), Ctrl+L (play location), Alt+3 (file info), R (repeat), S (shuffle), L (open file), arrows (seek), +/- (volume)
-- **File info dialog** — Alt+3 shows tabbed dialog with metadata (Title, Artist, Album, Year, Track, Genre, Comment) and technical info (bitrate, sample rate, duration); matches Windows IDD_FILEINFO
+- **Right-click context menu** — full submenu hierarchy matching Windows Winamp
+- **Tooltips** on all interactive controls
+- **VU meter** — dual-channel RMS level visualization
+- **Easter eggs** — type "NULLSOFT" or "WINAMP" for hidden messages
+- **Drag-and-drop** — drop audio files or directories to play
+- **Stop after current** — plays current track then stops
+- **Auto-advance** — next track on end; respects shuffle and repeat
+- **System tray icon** — minimize to tray with context menu and tooltip
+- **Splash screen** on startup
+- **File info dialog** — Alt+3 for metadata viewing/editing and technical info
+- **Keyboard shortcuts** — X/V/C/Z/B/Space (transport), J (jump to time), Ctrl+J (jump to file), Ctrl+D/W/T/P/L, Alt+3, R/S/L, arrows, +/-
 
 ### Spectrum Analyzer and Oscilloscope
 
-- **4 visualization modes** — Off / Spectrum Analyzer / Oscilloscope / VU Meter, cycled by clicking the viz area
-- **Real-time audio analysis** — `QAudioBufferOutput` captures live PCM data (Int16 and Float sample formats)
-- **512-point radix-2 FFT** — custom Cooley-Tukey implementation for spectrum computation
-- **19-bar spectrum analyzer** — 3px-wide bars with 1px gaps in a 75x16 area; color gradient from green (bottom) to red (top) matching the original `ppal2[]` palette from `draw.cpp`; smooth falloff (1 unit/frame at 20fps); gravity-based peak dots
-- **75-sample oscilloscope** — connected waveform drawn as vertical line segments
-- **Authentic 24-entry color palette** — `visColors[]` matching Windows Winamp defaults
-- **VU meter** — dual-channel (L/R) RMS level bars with color gradient, computed from live audio buffer
+- **4 visualization modes** — Off / Spectrum Analyzer / Oscilloscope / VU Meter (click to cycle)
+- **Real-time audio analysis** — live PCM capture with 512-point FFT
+- **19-bar spectrum analyzer** — color gradient bars with smooth falloff and gravity-based peak dots
+- **75-sample oscilloscope** — connected waveform display
+- **Skin-aware color palette** — loads `viscolor.txt` per skin; falls back to authentic Winamp defaults
 
-### 10-Band Graphic Equalizer (275x116 px)
+### 10-Band Graphic Equalizer
 
-- **Full Eqmain.bmp skin rendering** — background, titlebar (active/inactive), button sprites
-- **ON/OFF toggle** — enables/disables EQ with sprite state feedback
-- **AUTO toggle** — auto EQ mode flag; when enabled, automatically loads per-file EQ presets from `~/.config/winamp/eqpresets/{filename}.eqf` or falls back to `Default.eqf` (matches Windows eq_autoload behavior)
-- **Preamp slider** — 0-63 range with 28-frame groove animation and 11x11 thumb from Eqmain sprite sheet
-- **10 frequency band sliders** — 60Hz through 16kHz, same groove/thumb rendering as preamp
-- **18 built-in presets** — Flat, Classical, Club, Dance, Full Bass, Full Bass & Treble, Full Treble, Laptop Speakers, Large Hall, Live, Party, Pop, Reggae, Rock, Ska, Soft, Soft Rock, Techno
-- **Presets popup menu** — clickable button opens menu; applies preset values to all sliders; load/save/delete `.eqf` preset files
-- **EQ graph background** — 113x19 from sprite (0,294)
-- **Frequency response curve** — real-time spline-interpolated curve visualization showing combined effect of preamp and 10 bands; uses Catmull-Rom spline (matching Windows draw_eq_graphthingy)
-- **Shade mode** — compact single-line view (double-click titlebar)
+- **Full skin rendering** — background, titlebar, and all controls from skin bitmaps
+- **ON/OFF and AUTO toggles** — AUTO auto-loads per-file presets from `~/.config/winamp/eqpresets/`
+- **Preamp + 10 frequency band sliders** — 60Hz through 16kHz with skinned groove and thumb
+- **18 built-in presets** — Flat, Classical, Club, Dance, Full Bass, Full Treble, and more
+- **Presets menu** — load/save/delete `.eqf` preset files
+- **Frequency response curve** — real-time spline-interpolated visualization
+- **Real DSP processing** — 4Front EQ10 engine (10-band IIR biquad with preamp and dynamic limiter)
+- **Shade mode** — compact single-line view
 - **Draggable** with snap-to-main support
-- **Close button** in titlebar
 
-### Playlist Editor (275x232 px)
+### Playlist Editor
 
-- **Composited skin frame from Pledit.bmp** — titlebar (corner + title + filler + corner pieces, active/inactive), tiled left/right borders with scrollbar track, black body fill, bottom bar (left + filler + right)
-- **Track list** — green-on-black Courier 8pt with blue selection highlight (#0000C6)
-- **Total time display** — bitmap font rendering at bottom showing track count + total duration
-- **Track duration detection** — probes each file with temporary QMediaPlayer on add
-- **Internal drag reorder** — drag tracks within the list to rearrange; tracks and durations stay in sync
-- **External file drop** — drag audio files from file manager into the playlist
-- **Double-click to play** — plays the selected track
-- **ADD menu** — Add file(s), Add directory (recursive scan), Add location
-- **REM menu** — Remove selected, Crop, Clear playlist, Remove misc
-- **SEL menu** — Select all, Select none, Invert selection
-- **MISC menu** — Sort by title, Sort by filename, Sort by path, Reverse list, Randomize list
-- **LIST menu** — New playlist (clear), Open playlist (.m3u/.m3u8/.pls), Save playlist (.m3u with #EXTM3U/#EXTINF metadata), Generate playlist (random selection from music library with customizable track count)
-- **Track persistence** — full track list saved/restored across sessions
-- **Resizable** — drag edges and corners to resize (minimum 275x116); dynamic re-tiling of skin pieces
-- **Shade mode** — compact single-line view (double-click titlebar)
-- **Skin-aware colors** — reads `PLEDIT.TXT` for playlist background, text, and selection colors
+- **Skinned frame** — composited from skin bitmaps with tiled borders and scrollbar
+- **Track list** — skin-colored text with selection highlighting
+- **Track duration display** — total time shown at bottom; per-track durations probed on add
+- **Internal drag reorder** — rearrange tracks within the list
+- **External file drop** — drag audio files from file manager
+- **Double-click to play** selected track
+- **ADD/REM/SEL/MISC/LIST menus** — add files/folders/URLs, remove/crop/clear, select all/none/invert, sort/reverse/randomize, open/save .m3u playlists, generate random playlists
+- **Track persistence** — full playlist saved/restored across sessions
+- **Resizable** — drag edges and corners with dynamic skin re-tiling
+- **Shade mode** — compact single-line view
+- **Skin-aware colors** — reads `PLEDIT.TXT` for playlist colors
 - **Draggable** with multi-mode snapping
-- **Close button** in titlebar
 
 ### Window Management
 
-- **Magnetic window snapping** (15px snap distance):
-  - EQ snaps below main window
-  - Playlist snaps to right of main, below EQ, or below main
+- **Magnetic window snapping** (15px snap distance) — EQ below main, playlist to right/below
 - **Synchronized movement** — dragging main window moves all snapped children
-- **Snap mode tracking** — 4 modes: free, right of main, below EQ, below main
+- **4 snap modes** — free, right of main, below EQ, below main
 
 ### Settings Persistence
 
 All state saved to `~/.config/winamp/winamp.conf` (INI format) on exit, restored on startup:
 
-- Main window position
-- Volume, balance, shuffle, repeat, EQ/PL visibility
+- Window positions, volume, balance, shuffle, repeat, EQ/PL visibility
 - Visualization mode, time display mode (elapsed/remaining)
 - Always on top, double-size, shade mode, stop-after-current
-- Last played file (restored on startup)
-- Full EQ state: enabled, auto, preamp, all 10 band values, snap state
-- Playlist: position, snap mode, dimensions, complete track list
-- Skin path
-- Language preference
+- Full EQ state (enabled, auto, preamp, all 10 bands, snap)
+- Playlist (position, snap mode, dimensions, complete track list)
+- Skin path and language preference
 
 ### Language Packs
 
-- **Multi-language support** — simple `.lang` file format (KEY=Value pairs) for UI string translation
-- **Built-in languages** — English (default), German (de.lang), Spanish (es.lang) included
-- **Custom language files** — place `.lang` files in `~/.winamp/lang/` or `lang/` directory
-- **Language selector** — Preferences > Setup > Language for choosing interface language
-- **UTF-8 encoding** — full Unicode support for international characters
-- **Extensible system** — translation files can be easily created or modified with any text editor
-- **Restart required** — language changes take effect on next launch
+- **Multi-language support** — `.lang` file format (KEY=Value pairs)
+- **Built-in languages** — English (default), German, Spanish
+- **Custom language files** — place `.lang` files in `~/.winamp/lang/` or `lang/`
+- **Language selector** in Preferences > Setup > Language
+- **UTF-8 encoding** with full Unicode support
 
 ### Skin System
 
-- **WSZ/ZIP skin support** — place `.wsz` or `.zip` skin archives in `~/.winamp/skins/`; auto-extracted to `~/.cache/winamp/skins/` via `unzip`; cached for subsequent loads
-- **Folder skins** — unzipped skin directories in `~/.winamp/skins/` also supported
-- **"Winamp Default" entry** — always available in skin list to restore the stock skin
-- **Skin browser** — Preferences > Skins tab lists all available skins; double-click to apply
-- **Fallback loading** — missing bitmaps in custom skins automatically filled from default skin assets
-- **Case-insensitive BMP loading** — handles mixed-case filenames across skin archives
+- **WSZ/ZIP skin support** — place archives in `~/.winamp/skins/`; auto-extracted and cached
+- **Folder skins** — unzipped directories also supported
+- **Skin browser** in Preferences > Skins; double-click to apply
+- **Fallback loading** — missing bitmaps filled from default skin
+- **Case-insensitive BMP loading** for cross-platform compatibility
 
 ### Modern Skin Engine (Winamp 5)
 
-- **XML-based skin format** — full parser for Winamp 5 modern skins (`skin.xml` with recursive `<include>` support)
-- **ModernSkinEngine class** — loads `<bitmap>` sprite sheet definitions and sub-rectangle extraction from PNG images
-- **BitmapFont rendering** — Wasabi-compatible `getXYfromChar` character mapping for timer (BIGNUM), songticker, songinfo, playlist time, and small fonts; 3-row layout (A-Z / digits+punctuation / specials) matching original bitmap font grid
-- **Dual-mode window** — WinampWindow switches between classic (fixed 275×116) and modern (resizable, min 354×144) modes
-- **Full player rendering** — titlebar with active/inactive states, 3-part tiled backgrounds (main + bg2 layers), display area with overlay effects, seek bar with thumb, volume slider, playback buttons with hover/pressed states
-- **13-button interaction system** — Previous, Play, Pause, Stop, Next, Eject, PL, ML, Mute, Repeat, Shuffle, Minimize, Close — all with bitmap hover/pressed states
-- **Modern Skins preferences page** — scan built-in resource skins (Winamp Modern, Bento, Big Bento) and user skins; `.wal` archive support
-- **LED indicators** — shuffle/repeat on/off LEDs from sprite sheet
-- **Visualization** — spectrum analyzer and oscilloscope rendered in the modern display area
-- **Scrolling songticker** — animated song title text using bitmap font with seamless looping
-- **Song info display** — bitrate (kbps), sample rate (khz), channel mode (mono/stereo/surround), EQ indicator
-- **Modern EQ window** — 354×113 with centered 318×89 drawer content from `configdrawer.xml`; preamp + 10-band sliders, ON/AUTO/PRESETS buttons, ISO frequency labels, EQ curve graph
-- **Modern Playlist window** — 354px wide (resizable height) with frame borders, scrollbar, bottom bar with ADD/REM/SEL/MISC/LIST buttons, and bitmap font time display
-- **Unified window sizing** — all three windows (main, EQ, playlist) render at 354px width with correct snap/follow behavior
-- **Case-insensitive path resolution** — handles Windows-originated mixed-case filenames on Linux
+- **XML-based skin format** — full parser for Winamp 5 modern skins with recursive `<include>` support
+- **BitmapFont rendering** — Wasabi-compatible character mapping for timer, songticker, songinfo, and playlist fonts
+- **Dual-mode window** — switches between classic (275×116) and modern (resizable) layouts
+- **Full player rendering** — titlebar, tiled backgrounds, display area, seek bar, volume, playback buttons with hover/pressed states
+- **13-button interaction system** — all player controls with bitmap states
+- **Modern Skins preferences** — scan built-in and user skins; `.wal` archive support
+- **Modern EQ and Playlist windows** — full skinned rendering with all controls
+- **Visualization** — spectrum analyzer and oscilloscope in the modern display area
+- **Scrolling songticker and song info display**
+- **Case-insensitive path resolution** for Linux compatibility
 
 ### Dialogs
 
-- **About Winamp** — demoscene-style animated dialog: starfield background, warped splash2.bmp, orbiting team.bmp cube, fire spheres, fading credits at 33fps
+- **About Winamp** — demoscene-style animated dialog with starfield, orbiting cube, fire spheres, and fading credits
 - **Play Location** — URL input for stream/remote playback
-- **Preferences** — full tree-based dialog matching Windows Options.cpp: Setup (General, File Types, Titles, Language), Skins (Classic Skins browser, Modern Skins browser), Playback, Playlist, Bookmarks, Visualization, Plug-ins
-- **Jump to File** — search-within-playlist dialog with filter and play/queue (Ctrl+J, matching Windows `JSEARCH.cpp`)
-
-### Milkdrop Visualization (projectM)
-
-- **Full Milkdrop preset support** — 274 `.milk` presets from `/usr/share/projectM/presets/`
-- **OpenGL rendering** — QOpenGLWidget with projectM engine at 33fps
-- **Real-time audio reactive** — PCM data from live audio buffer fed directly to projectM
-- **Preset navigation** — Space (next), Backspace (previous), R (toggle shuffle), L (lock/unlock)
-- **Fullscreen mode** — F/F11 or double-click to toggle; hides main/EQ/playlist windows; Escape to exit
-- **Launch from UI** — double-click the visualization area or right-click → "Milkdrop visualization"
-- **Auto-shuffle** — presets change every 30 seconds with smooth 5-second transitions
-
-### Bookmarks & Recent Files
-
-- **Bookmark manager** — add current track to bookmarks, open bookmarked files from context menu; persisted at `~/.config/winamp/bookmarks.txt`
-- **Recent files** — last 15 played files tracked and shown in context menu (matching Windows recent files)
-
-### System Integration
-
-- **MPRIS2 D-Bus** — full Linux desktop media player integration: play/pause/next/prev/seek via media keys, KDE Connect, GNOME/KDE panel widgets. Implements `org.mpris.MediaPlayer2` and `org.mpris.MediaPlayer2.Player` interfaces
-- **System tray icon** — minimize to tray with context menu (prev/play-pause/stop/next/open/exit); click to show/hide; tooltip shows current song
-- **Song change notifications** — desktop notification popup when track changes (using Qt tray messages); toggleable in Preferences > Setup > General
-- **Command-line arguments** — pass files/directories on startup, `-play`, `-pause`, `-stop`, `-enqueue` flags (matching Windows `cmdline.cpp`)
-- **Splash screen** — shows `SPLASH.BMP` from skin on startup
+- **Preferences** — tree-based dialog: Setup (General, File Types, Titles, Language), Skins (Classic, Modern), Playback, Playlist, Bookmarks, Visualization, Plug-ins
+- **Jump to File** — search-within-playlist with filter and play/queue (Ctrl+J)
 
 ### Audio
 
 - **Qt Multimedia backend** (QMediaPlayer + QAudioOutput + QAudioBufferOutput)
-- **Supported formats**: MP3, WAV, FLAC, OGG, M4A, AAC, WMA, Opus
+- **Supported formats** — MP3, WAV, FLAC, OGG, M4A, AAC, WMA, Opus
 - **URL playback** — play remote streams via URL dialog
-- **Real-time audio buffer capture** for visualization (Int16 and Float sample formats)
+- **SHOUTcast/Icecast streaming** with metadata display and notifications
+- **Crossfade / gapless playback** — dual-player preloading for seamless transitions
+- **Real-time audio buffer capture** for visualization
 
 ### Video
 
 - **Video playback** — QVideoWidget rendering within frameless window
-- **Supported formats**: MP4, AVI, MKV, MOV, WebM (all formats supported by Qt6 Multimedia + system codecs)
-- **Auto-show window** — video window appears automatically when video content is detected
-- **Logo display** — video_logo.bmp shown when no video is playing
-- **Fullscreen mode** — F key or double-click to toggle fullscreen; hides main/EQ/playlist windows
-- **Resizable** — drag all 8 edges and corners to resize (minimum 160x120)
-- **Draggable window** — frameless window with custom drag
-- **Menu toggle** — show/hide via Windows → Video window
+- **Supported formats** — MP4, AVI, MKV, MOV, WebM (Qt6 Multimedia + system codecs)
+- **Auto-show** when video content is detected; logo display when idle
+- **Fullscreen mode** — F key or double-click to toggle
+- **Resizable and draggable** frameless window
+
+### Milkdrop Visualization (projectM)
+
+- **Full Milkdrop preset support** — 274 `.milk` presets
+- **OpenGL rendering** — QOpenGLWidget with projectM engine
+- **Real-time audio reactive** — PCM data fed directly to projectM
+- **Preset navigation** — Space/Backspace (next/prev), R (shuffle), L (lock)
+- **Fullscreen mode** — F/F11 or double-click; Escape to exit
+- **Auto-shuffle** — presets change every 30 seconds with smooth transitions
 
 ### Media Library
 
-- **File system browser** — QTreeView-based file/folder navigation starting at user's music directory
-- **gen.bmp/genex.bmp skinning** — authentic generic window frame rendering matching Windows plugin windows
-- **Audio file filtering** — shows only supported audio/video formats (MP3, FLAC, OGG, WAV, M4A, AAC, WMA, Opus, MP4, AVI, MKV, MOV, WebM)
-- **Add to playlist** — double-click file to add single track, double-click folder to add all audio files recursively
-- **Resizable** — drag edges and corners (8-direction resize support, minimum 275x200)
-- **Draggable window** — frameless window with titlebar drag
-- **Keyboard shortcuts** — Alt+L to toggle, Escape to close
-- **Menu toggle** — show/hide via Windows → Media library
+- **File system browser** — QTreeView-based file/folder navigation from user's music directory
+- **Skinned window frame** — authentic generic window rendering
+- **Audio file filtering** — shows only supported formats
+- **Add to playlist** — double-click file or folder to add
+- **Resizable and draggable** with keyboard shortcuts (Alt+L, Escape)
 
-### Bitmap Assets Used
+### Bookmarks & Recent Files
 
-| File | Size | Purpose |
-|------|------|---------|
-| `MAIN.BMP` | 275x116 | Main window background |
-| `titlebar.bmp` | 344x87 | Titlebar active/inactive + buttons + windowshade sprites |
-| `numbers.bmp` | 99x13 | LED digit font 0-9 + blank |
-| `text.bmp` | 155x74 | Bitmap character font (A-Z, 0-9, symbols, extended) |
-| `CBUTTONS.BMP` | 136x36 | Transport button sprites (normal + pressed) |
-| `PLAYPAUS.BMP` | 42x9 | Play/pause/stop status icons |
-| `MONOSTER.BMP` | 58x24 | Mono/stereo indicators |
-| `POSBAR.BMP` | 307x10 | Seek bar background + thumb (normal + pressed) |
-| `volume.bmp` | 68x433 | Volume slider 28 frames |
-| `BALANCE.BMP` | 38x433 | Balance/pan slider 28 frames |
-| `SHUFREP.BMP` | 92x85 | Shuffle, repeat, EQ, PL button states |
-| `Eqmain.bmp` | 275x315 | Full EQ: background, buttons, sliders, graph |
-| `Pledit.bmp` | 280x186 | Playlist: titlebar, borders, bottom bar, buttons |
-| `gen.bmp` | 194x109 | Generic window frame + titlebar font for plugin windows |
-| `genex.bmp` | 130x75 | Generic window buttons, scrollbars, and color palette |
-| `WinampIcon.ico` | — | Application window icon |
+- **Bookmark manager** — add/open bookmarked files from context menu; persisted at `~/.config/winamp/bookmarks.txt`
+- **Recent files** — last 15 played files in context menu
 
-Bitmap loading searches multiple fallback paths and merges missing assets from all candidates.
+### System Integration
+
+- **MPRIS2 D-Bus** — Linux desktop media player integration (media keys, KDE Connect, GNOME/KDE panel widgets)
+- **System tray icon** — minimize to tray with context menu and tooltip
+- **Song change notifications** — desktop popups on track change (toggleable)
+- **Command-line interface** — `-play`, `-pause`, `-stop`, `-enqueue`, files and directories
+- **Drag tracks out of playlist** to file manager via file:// MIME data
+
+---
+
+## Architecture
+
+The codebase is organized into focused modules under `src/`:
+
+| Module | Purpose |
+|--------|---------|
+| `main.cpp` | Application entry point, command-line parsing, splash screen |
+| `winampwindow` | Main player window — transport, display, menus, drag/drop, skin rendering |
+| `winampbitmaps` | Bitmap/skin asset loading with multi-path fallback and case-insensitive search |
+| `skinutils` | Shared skin utilities — bitmap rendering helpers, color parsing, region calculations |
+| `equalizerwindow` | 10-band graphic equalizer window with sliders and curve display |
+| `eq10dsp` | 4Front EQ10 DSP engine — 10-band IIR biquad processing with preamp and limiter |
+| `eqpresets` | EQ preset management — load/save/delete `.eqf` files, 18 built-in presets |
+| `playlistwindow` | Playlist editor window — track list, menus, scrollbar, resize, drag reorder |
+| `videowindow` | Video playback window — QVideoWidget, fullscreen, resize |
+| `milkdropwindow` | Milkdrop visualization — projectM OpenGL rendering with preset navigation |
+| `medialibrarywindow` | Media library file browser — QTreeView with skinned frame |
+| `modernskinengine` | Winamp 5 modern skin XML parser and bitmap font renderer |
+| `dialogs` | All dialogs — About, Preferences, Jump to Time/File, File Info, Play Location |
+| `bookmarkmanager` | Bookmark persistence and menu integration |
+| `recentfilesmanager` | Recent files tracking (last 15 played) |
+| `mpris2` | MPRIS2 D-Bus interface for Linux desktop integration |
+| `translator` | Multi-language `.lang` file loader and string lookup |
+
+Each module has a `.h` and `.cpp` pair. The legacy monolithic `winamp_authentic.cpp` is retained for reference.
 
 ---
 
 ## TODO — Road to 1:1 Windows Parity
 
-### High Priority
+### Remaining
 
-- [x] Real EQ DSP processing — 4Front EQ10 engine ported from original Winamp source (10-band IIR biquad with asymmetric Q, preamp lookup table, dynamic limiter); processes PCM via QAudioSink when EQ enabled
-- [x] `viscolor.txt` parsing — load per-skin visualization colors; use `SPEC.BMP` (66x16)
-- [x] Clutterbar — clickable options bar from `titlebar.bmp` sprite (x=304) with O/A/I/D/V buttons (Options, Always On Top, File Info, Double Size, Visualization)
-- [x] Windowshade mode — compact single-bar mode for main, EQ, and playlist windows
-- [x] Balance slider — `BALANCE.BMP` rendered with drag interaction
-- [x] Playlist scrollbar — functional scroll thumb from Pledit.bmp sprites with drag support
-- [x] Playlist resize — drag edges/corners; re-tile skin pieces dynamically
-- [x] Playlist bottom button graphics — render ADD/REM/SEL/MISC/LIST button sprites from Pledit.bmp (all 5 buttons with 3-state popup menus)
-
-### Medium Priority
-
-- [x] Keyboard shortcuts — Space (play/pause), V (stop), Z/B (prev/next), C (pause), L (open file), J (jump to time), arrows (seek +/-5s), +/- (volume)
-- [x] Jump to time dialog (Ctrl+J)
-- [x] Jump to file dialog (Ctrl+J) — type-ahead search in playlist with filter and play/queue
-- [x] File info dialog (Alt+3) — display/edit ID3 tags
-- [x] Song title from metadata — read ID3/Vorbis tags instead of using filename
-- [x] Time display toggle — click time area to switch between elapsed / remaining
-- [x] Animated colon separator — use `nums_ex.bmp` if present
-- [x] Double-size mode — 2x pixel scaling (Ctrl+D toggle)
-- [x] Always on top — Ctrl+T toggle, fully wired and persisted
-- [x] EQ frequency response curve — draw the actual curve in the EQ graph area
-- [x] EQ AUTO behavior — auto-load preset based on file/genre
-- [x] Playlist track numbering — show "1. Artist - Title (3:45)" format per entry
-- [x] Playlist keyboard — Delete removes selected, Enter plays selected
-- [x] Playlist info text from `pledit.txt` — skin-specific font colors and background via PLEDIT.TXT parser
-
-### Low Priority
-
-- [x] Media Library window — gen.bmp/genex.bmp-skinned file browser with recursive folder scanning, add-to-playlist via double-click
 - [ ] Mini-Browser window
-- [x] Video playback — QVideoWidget-based video window with frameless draggable window, video_logo.bmp display when idle, auto-show on video content detection, fullscreen support (F/double-click)
 - [ ] Plugin architecture — input, output, DSP, general purpose, visualization plugin APIs
-- [x] Milkdrop visualization — projectM-powered with 274 presets, fullscreen, audio-reactive; launchable from Visualization menu
-- [x] Global hotkeys — MPRIS2 D-Bus integration for system-wide media key support (play/pause/next/prev/seek)
-- [x] SHOUTcast/Icecast streaming with metadata display — auto-update title/tooltip on metadata change with notifications
-- [x] Crossfade / gapless playback between tracks — dual-player preloading for seamless transitions
-- [x] Bookmarks — save/recall favorite files and streams (persistent at `~/.config/winamp/bookmarks.txt`)
-- [x] EQ preset files — import/export `.eqf` format (load/save/delete from presets menu)
-- [x] Playlist generator — random playlist generation from music library with customizable track count, add or replace mode
 - [ ] CD playback and ripping
-- [x] System tray — minimize to tray with tooltip and controls
-- [x] Command-line interface — `-play`, `-pause`, `-stop`, `-enqueue`, files and directories
-- [x] Song change notifications — desktop notification popup when track changes (toggleable in preferences)
-- [x] Localization — .lang file-based language pack system with UTF-8 support; English, German, Spanish included; extensible via ~/.winamp/lang/
-- [x] Modern skin support — Winamp 3/5 XML-based skins (ModernSkinEngine with full bitmap font rendering, EQ, playlist, and main window)
-- [x] Drag tracks out of playlist to file manager — export via file:// MIME data for external apps
-
-### Architecture
-
-- [ ] Multi-file refactor — split into separate source files per window/component
 - [ ] Skin renderer abstraction — decouple skin loading from widget logic
 - [ ] Audio engine abstraction — replaceable backend (PipeWire, PulseAudio, ALSA)
 - [ ] Plugin ABI compatibility — load original Winamp `.dll` plugins via Wine bridge (stretch goal)
+
+### Completed
+
+<details>
+<summary>Click to expand completed items</summary>
+
+- [x] Real EQ DSP processing (4Front EQ10 engine, 10-band IIR biquad)
+- [x] `viscolor.txt` parsing for per-skin visualization colors
+- [x] Clutterbar (O/A/I/D/V options bar)
+- [x] Windowshade mode (main, EQ, playlist)
+- [x] Balance slider
+- [x] Playlist scrollbar, resize, bottom button graphics
+- [x] Keyboard shortcuts (full set)
+- [x] Jump to time / Jump to file dialogs
+- [x] File info dialog (Alt+3)
+- [x] Song title from metadata (ID3/Vorbis tags)
+- [x] Time display toggle (elapsed/remaining)
+- [x] Animated colon separator
+- [x] Double-size mode (Ctrl+D)
+- [x] Always on top (Ctrl+T)
+- [x] EQ frequency response curve
+- [x] EQ AUTO behavior (per-file/genre presets)
+- [x] Playlist track numbering, keyboard controls, skin colors
+- [x] Media Library window
+- [x] Video playback
+- [x] Milkdrop visualization (projectM)
+- [x] Global hotkeys (MPRIS2 D-Bus)
+- [x] SHOUTcast/Icecast streaming
+- [x] Crossfade / gapless playback
+- [x] Bookmarks and EQ preset files
+- [x] Playlist generator
+- [x] System tray, command-line interface, notifications
+- [x] Localization (.lang files)
+- [x] Modern skin support (Winamp 5 XML skins)
+- [x] Drag tracks out of playlist to file manager
+- [x] Multi-file architecture refactor
+
+</details>
 
 ---
 
@@ -320,8 +282,27 @@ Bitmap loading searches multiple fallback paths and merges missing assets from a
 ```
 ├── CMakeLists.txt              # Qt6 + OpenGL + projectM build configuration
 ├── README.md                   # This file
-├── winamp_authentic.cpp        # Main implementation (~8900 lines)
+├── winamp_authentic.cpp        # Legacy monolithic source (retained for reference)
+├── src/
+│   ├── main.cpp                # Entry point
+│   ├── winampwindow.cpp/.h     # Main player window
+│   ├── winampbitmaps.cpp/.h    # Skin bitmap loading
+│   ├── skinutils.cpp/.h        # Shared skin utilities
+│   ├── equalizerwindow.cpp/.h  # Equalizer window
+│   ├── eq10dsp.cpp/.h          # EQ DSP engine
+│   ├── eqpresets.cpp/.h        # EQ preset management
+│   ├── playlistwindow.cpp/.h   # Playlist editor
+│   ├── videowindow.cpp/.h      # Video window
+│   ├── milkdropwindow.cpp/.h   # Milkdrop visualization
+│   ├── medialibrarywindow.cpp/.h # Media library browser
+│   ├── modernskinengine.cpp/.h # Modern skin engine
+│   ├── dialogs.cpp/.h          # All dialogs
+│   ├── bookmarkmanager.cpp/.h  # Bookmark manager
+│   ├── recentfilesmanager.cpp/.h # Recent files
+│   ├── mpris2.cpp/.h           # MPRIS2 D-Bus
+│   └── translator.cpp/.h      # Language translation
 ├── skins/default/              # Default skin bitmaps
+├── lang/                       # Language packs (de.lang, es.lang)
 ├── Src/Winamp/resource/        # Additional bitmap assets
 └── build/
     └── winamp                  # Executable
