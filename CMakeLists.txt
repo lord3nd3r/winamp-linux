@@ -20,8 +20,26 @@ endif()
 find_library(PROJECTM_LIB projectM REQUIRED)
 
 add_executable(winamp
-    winamp_authentic.cpp
+    src/main.cpp
+    src/eq10dsp.cpp
+    src/skinutils.cpp
+    src/translator.cpp
+    src/bookmarkmanager.cpp
+    src/recentfilesmanager.cpp
+    src/winampbitmaps.cpp
+    src/eqpresets.cpp
+    src/modernskinengine.cpp
+    src/dialogs.cpp
+    src/videowindow.cpp
+    src/milkdropwindow.cpp
+    src/mpris2.cpp
+    src/medialibrarywindow.cpp
+    src/playlistwindow.cpp
+    src/equalizerwindow.cpp
+    src/winampwindow.cpp
 )
+
+target_include_directories(winamp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 target_link_libraries(winamp
     Qt6::Core
