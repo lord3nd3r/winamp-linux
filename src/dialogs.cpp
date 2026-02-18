@@ -915,23 +915,30 @@ QWidget *PreferencesDialog::createModernSkinsPage()
 {
     QWidget *page = new QWidget();
     QVBoxLayout *layout = new QVBoxLayout(page);
-    layout->addWidget(new QLabel("<b>Modern Skins (XML)</b>"));
 
-    modernSkinListWidget = new QListWidget(page);
-    populateModernSkins();
-    connect(modernSkinListWidget, &QListWidget::itemDoubleClicked, this, &PreferencesDialog::onModernSkinSelected);
-    layout->addWidget(modernSkinListWidget);
+    QLabel *title = new QLabel("<b>Modern Skins (XML)</b>", page);
+    layout->addWidget(title);
+    layout->addSpacing(12);
 
-    QHBoxLayout *btnRow = new QHBoxLayout();
-    QPushButton *openDirBtn = new QPushButton("Open Skins Folder", page);
-    connect(openDirBtn, &QPushButton::clicked, this, []() {
-        QString skinsDir = QDir::homePath() + "/.winamp/skins";
-        QDir().mkpath(skinsDir);
-        QDesktopServices::openUrl(QUrl::fromLocalFile(skinsDir));
-    });
-    btnRow->addWidget(openDirBtn);
-    btnRow->addStretch();
-    layout->addLayout(btnRow);
+    QLabel *notice = new QLabel(
+        "⚠️  <b>Modern skins are not yet supported on Linux.</b>\n\n"
+        "The Wasabi/Bento XML skin engine has not been fully ported to Qt6.\n"
+        "Please use a Classic skin (.wsz) instead.\n\n"
+        "Modern skin support is planned for a future release.",
+        page
+    );
+    notice->setWordWrap(true);
+    notice->setStyleSheet(
+        "QLabel { "
+        "  color: #ffcc00; "
+        "  background-color: #2a1a00; "
+        "  border: 1px solid #665500; "
+        "  border-radius: 4px; "
+        "  padding: 12px; "
+        "}"
+    );
+    layout->addWidget(notice);
+    layout->addStretch();
     return page;
 }
 
@@ -1149,73 +1156,14 @@ void PreferencesDialog::populateSkins()
 
 void PreferencesDialog::populateModernSkins()
 {
-    if (!modernSkinListWidget) return;
-
-    // Scan built-in modern skins from source tree
-    QString appDir = QCoreApplication::applicationDirPath();
-    QStringList builtinDirs = {
-        appDir + "/../Src/resources/skins",
-        appDir + "/../../Src/resources/skins"
-    };
-    QSet<QString> addedNames;
-    for (const QString &base : builtinDirs) {
-        QDir dir(base);
-        if (!dir.exists()) continue;
-        QStringList folders = dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
-        for (const QString &folder : folders) {
-            QString fullPath = dir.absoluteFilePath(folder);
-            if (QFile::exists(fullPath + "/skin.xml") && !addedNames.contains(folder)) {
-                addedNames.insert(folder);
-                modernSkinListWidget->addItem(folder);
-                modernSkinListWidget->item(modernSkinListWidget->count() - 1)->setData(Qt::UserRole, fullPath);
-            }
-        }
-    }
-
-    // List modern skins in user's skins directory (directories with skin.xml)
-    QDir skinsDir(QDir::homePath() + "/.winamp/skins");
-    if (skinsDir.exists()) {
-        QStringList folders = skinsDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
-        for (const QString &folder : folders) {
-            if (addedNames.contains(folder)) continue;
-            QString fullPath = skinsDir.absolutePath() + "/" + folder;
-            if (QFile::exists(fullPath + "/skin.xml")) {
-                addedNames.insert(folder);
-                modernSkinListWidget->addItem(folder);
-                modernSkinListWidget->item(modernSkinListWidget->count() - 1)->setData(Qt::UserRole, fullPath);
-            }
-        }
-
-        // List .wal archives
-        QStringList walFiles = skinsDir.entryList(QStringList() << "*.wal" << "*.WAL", QDir::Files);
-        for (const QString &f : walFiles) {
-            modernSkinListWidget->addItem(f);
-            modernSkinListWidget->item(modernSkinListWidget->count() - 1)->setData(Qt::UserRole, skinsDir.absolutePath() + "/" + f);
-        }
-    }
+    // Modern skins are not yet supported on Linux — nothing to populate.
+    Q_UNUSED(modernSkinListWidget);
 }
 
 void PreferencesDialog::onModernSkinSelected(QListWidgetItem *item)
 {
-    QString skinPath = item->data(Qt::UserRole).toString();
-    qDebug() << "ModernSkin: selected item" << item->text() << "path:" << skinPath;
-    if (skinPath.isEmpty()) return;
-
-    // If it's a .wal file, extract it first (ZIP archive)
-    if (skinPath.endsWith(".wal", Qt::CaseInsensitive)) {
-        QString extracted = extractSkinArchive(skinPath);
-        if (!extracted.isEmpty())
-            skinPath = extracted;
-        else
-            return;
-    }
-
-    if (QFile::exists(skinPath + "/skin.xml")) {
-        qDebug() << "ModernSkin: emitting skinChanged for" << skinPath;
-        emit skinChanged(skinPath);
-    } else {
-        qDebug() << "ModernSkin: skin.xml NOT found at" << skinPath + "/skin.xml";
-    }
+    // Modern skins are not yet supported on Linux — selection is a no-op.
+    Q_UNUSED(item);
 }
 
 void PreferencesDialog::onSkinSelected(QListWidgetItem *item)
