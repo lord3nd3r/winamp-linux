@@ -1,0 +1,305 @@
+name: Release Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create GitHub Release'
+        required: false
+        default: 'true'
+        type: boolean
+
+env:
+  VERSION: '0.5.0'
+  RELEASE_TAG: 'beta1'
+
+jobs:
+  # ─── Linux Build ──────────────────────────────────────
+  build-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake ninja-build \
+            qt6-base-dev qt6-multimedia-dev qt6-tools-dev \
+            libqt6opengl6-dev libqt6dbus6 \
+            libgl1-mesa-dev libx11-dev libxext-dev \
+            zlib1g-dev libpng-dev libjpeg-dev \
+            libprojectm-dev \
+            rpm wget imagemagick dpkg-dev
+
+      - name: Build
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr
+          cmake --build build --parallel
+
+      - name: Stage install
+        run: DESTDIR=build/staging cmake --install build
+
+      # .deb
+      - name: Build .deb
+        run: |
+          DEBROOT="build/winamp_${VERSION}-${RELEASE_TAG}_amd64"
+          cp -a build/staging "$DEBROOT"
+          mkdir -p "${DEBROOT}/DEBIAN"
+          cat > "${DEBROOT}/DEBIAN/control" <<EOF
+          Package: winamp
+          Version: ${VERSION}-${RELEASE_TAG}
+          Section: sound
+          Priority: optional
+          Architecture: amd64
+          Maintainer: lord3nd3r <lord3nd3r@github.com>
+          Homepage: https://github.com/lord3nd3r/winamp-linux
+          Description: Winamp media player for Linux (Qt6 port)
+           A native Linux port of Winamp using Qt6 with classic skin support,
+           equalizer, playlist editor, media library, and MilkDrop visualizations.
+          Depends: libqt6core6 (>= 6.2) | libqt6core6t64 (>= 6.2), libqt6gui6 (>= 6.2) | libqt6gui6t64 (>= 6.2), libqt6widgets6 (>= 6.2) | libqt6widgets6t64 (>= 6.2), libqt6multimedia6 (>= 6.2) | libqt6multimedia6t64 (>= 6.2), libgl1-mesa-glx | libgl1
+          EOF
+          # Fix indentation (heredoc adds spaces)
+          sed -i 's/^          //' "${DEBROOT}/DEBIAN/control"
+          dpkg-deb --build --root-owner-group "$DEBROOT" \
+            "winamp_${VERSION}-${RELEASE_TAG}_amd64.deb"
+
+      # .rpm
+      - name: Build .rpm
+        run: |
+          RPMBUILD_DIR="build/rpmbuild"
+          mkdir -p "${RPMBUILD_DIR}"/{BUILD,RPMS,SOURCES,SPECS,SRPMS,BUILDROOT}
+          cat > "${RPMBUILD_DIR}/SPECS/winamp.spec" <<'SPECEOF'
+          Name:           winamp
+          Version:        0.5.0
+          Release:        beta1
+          Summary:        Winamp media player for Linux (Qt6 port)
+          License:        GPLv2
+          URL:            https://github.com/lord3nd3r/winamp-linux
+          AutoReqProv:    no
+
+          %description
+          A native Linux port of Winamp using Qt6.
+
+          %install
+          cp -a %{_sourcedir}/staging/usr %{buildroot}/usr
+
+          %files
+          %{_bindir}/winamp
+          %{_datadir}/winamp/
+          %{_datadir}/applications/winamp.desktop
+          %{_datadir}/metainfo/org.winamp.Winamp.metainfo.xml
+          %{_datadir}/icons/hicolor/256x256/apps/winamp.ico
+          SPECEOF
+          sed -i 's/^          //' "${RPMBUILD_DIR}/SPECS/winamp.spec"
+          rpmbuild --define "_topdir $(pwd)/${RPMBUILD_DIR}" \
+                   --define "_sourcedir $(pwd)/build" \
+                   -bb "${RPMBUILD_DIR}/SPECS/winamp.spec" || true
+          find "${RPMBUILD_DIR}/RPMS" -name "*.rpm" -exec cp {} . \;
+
+      # .tar.gz
+      - name: Build tarball
+        run: |
+          TARNAME="winamp-${VERSION}-${RELEASE_TAG}-linux-x86_64"
+          cp -a build/staging/usr "$TARNAME"
+          cat > "${TARNAME}/run-winamp.sh" <<'EOF'
+          #!/bin/bash
+          DIR="$(cd "$(dirname "$0")" && pwd)"
+          export LD_LIBRARY_PATH="${DIR}/lib:${LD_LIBRARY_PATH}"
+          exec "${DIR}/bin/winamp" "$@"
+          EOF
+          sed -i 's/^          //' "${TARNAME}/run-winamp.sh"
+          chmod +x "${TARNAME}/run-winamp.sh"
+          cp LICENSE.md README.md "${TARNAME}/"
+          tar -czf "${TARNAME}.tar.gz" "$TARNAME"
+
+      # AppImage
+      - name: Build AppImage
+        run: |
+          APPDIR="build/AppDir"
+          mkdir -p "$APPDIR/usr"
+          cp -a build/staging/usr/* "$APPDIR/usr/"
+          ln -sf usr/bin/winamp "$APPDIR/AppRun"
+          cp packaging/winamp.desktop "$APPDIR/"
+          convert "Src/Winamp/resource/WinampIcon.ico[0]" -resize 256x256 "$APPDIR/winamp.png"
+          wget -q -O appimagetool "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+          chmod +x appimagetool
+          ARCH=x86_64 VERSION=${VERSION}-beta ./appimagetool "$APPDIR" "Winamp-${VERSION}-beta-x86_64.AppImage"
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: |
+            winamp_*.deb
+            winamp-*.rpm
+            winamp-*-linux-*.tar.gz
+            Winamp-*-x86_64.AppImage
+
+  # ─── Windows Build ───────────────────────────────────
+  build-windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: vcpkg/installed
+          key: vcpkg-x86-windows-${{ hashFiles('vcpkg-ports/**') }}
+          restore-keys: vcpkg-x86-windows-
+
+      - name: Setup vcpkg & install dependencies
+        shell: cmd
+        run: |
+          if not exist vcpkg (
+            git clone https://github.com/microsoft/vcpkg.git
+            vcpkg\bootstrap-vcpkg.bat -disableMetrics
+          )
+          xcopy /K /Y /H /C /I /E vcpkg-ports\* vcpkg\ports\*
+          cd vcpkg
+          vcpkg install alac:x86-windows-static-md
+          vcpkg install expat:x86-windows-static-md
+          vcpkg install freetype:x86-windows-static-md
+          vcpkg install ijg-libjpeg:x86-windows-static-md
+          vcpkg install libflac:x86-windows-static-md
+          vcpkg install libogg:x86-windows-static-md
+          vcpkg install libpng:x86-windows-static-md
+          vcpkg install libsndfile:x86-windows-static-md
+          vcpkg install libtheora:x86-windows-static-md
+          vcpkg install libvorbis:x86-windows-static-md
+          vcpkg install libvpx:x86-windows-static-md
+          vcpkg install minizip:x86-windows-static-md
+          vcpkg install mp3lame:x86-windows-static-md
+          vcpkg install mpg123:x86-windows-static-md
+          vcpkg install openssl:x86-windows-static-md
+          vcpkg install pthread:x86-windows-static-md
+          vcpkg install restclient-cpp:x86-windows-static-md
+          vcpkg install spdlog:x86-windows-static-md
+          vcpkg install zlib:x86-windows-static-md
+
+      - name: Extract Qt DLLs
+        shell: cmd
+        run: |
+          BuildTools\7-ZipPortable_22.01\App\7-Zip\7z.exe x Qt\DLL_5.12_x86\Debug.7z.001 -y -oQt\DLL_5.12_x86
+          BuildTools\7-ZipPortable_22.01\App\7-Zip\7z.exe x Qt\DLL_5.12_x86\Release.7z.001 -y -oQt\DLL_5.12_x86
+
+      - name: Build Winamp (Release x86)
+        shell: cmd
+        run: |
+          msbuild winampAll_2019.sln /p:Configuration=Release /p:Platform=Win32 /m /v:minimal
+
+      - name: Package Windows build
+        shell: pwsh
+        run: |
+          $outDir = "winamp-$env:VERSION-$env:RELEASE_TAG-windows-x86"
+          New-Item -ItemType Directory -Force -Path $outDir
+
+          # Copy main binary and DLLs
+          $releaseDir = "Src\Winamp\Release"
+          if (Test-Path $releaseDir) {
+            Copy-Item "$releaseDir\*.exe" $outDir\ -ErrorAction SilentlyContinue
+            Copy-Item "$releaseDir\*.dll" $outDir\ -ErrorAction SilentlyContinue
+          }
+
+          # Copy Qt runtime DLLs
+          if (Test-Path "Qt\DLL_5.12_x86\Release") {
+            Copy-Item "Qt\DLL_5.12_x86\Release\*.dll" $outDir\ -ErrorAction SilentlyContinue
+          }
+
+          # Copy plugins
+          $pluginDirs = @("Plugins\Input", "Plugins\Output", "Plugins\DSP", "Plugins\General", "Plugins\Visualization")
+          foreach ($dir in $pluginDirs) {
+            $srcPath = "Src\$dir"
+            if (Test-Path $srcPath) {
+              Get-ChildItem -Path $srcPath -Recurse -Filter "*.dll" | Where-Object {
+                $_.DirectoryName -match "Release"
+              } | ForEach-Object {
+                $destSubDir = "$outDir\Plugins"
+                New-Item -ItemType Directory -Force -Path $destSubDir | Out-Null
+                Copy-Item $_.FullName $destSubDir\ -ErrorAction SilentlyContinue
+              }
+            }
+          }
+
+          # Copy skins and resources
+          if (Test-Path "skins") { Copy-Item -Recurse "skins" "$outDir\skins" }
+          if (Test-Path "Src\Winamp\resource") { Copy-Item -Recurse "Src\Winamp\resource" "$outDir\resource" }
+          Copy-Item "LICENSE.md" $outDir\ -ErrorAction SilentlyContinue
+          Copy-Item "README.md" $outDir\ -ErrorAction SilentlyContinue
+
+          # Create ZIP
+          Compress-Archive -Path $outDir -DestinationPath "winamp-$env:VERSION-$env:RELEASE_TAG-windows-x86.zip"
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-package
+          path: winamp-*-windows-*.zip
+
+  # ─── Create GitHub Release ──────────────────────────
+  release:
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: find artifacts -type f | sort
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Winamp ${{ env.VERSION }} BETA for Linux & Windows"
+          tag_name: ${{ github.ref_name || format('v{0}-{1}', env.VERSION, env.RELEASE_TAG) }}
+          draft: false
+          prerelease: true
+          generate_release_notes: true
+          body: |
+            ## Winamp 0.5 BETA — First Linux Release 🐧🎵
+
+            This is the first beta release of Winamp for Linux, built with Qt6.
+
+            ### Downloads
+
+            | Package | Distro | Install |
+            |---------|--------|---------|
+            | `.deb` | Debian / Ubuntu / Mint | `sudo dpkg -i winamp_*.deb` |
+            | `.rpm` | Fedora / RHEL / openSUSE | `sudo rpm -i winamp-*.rpm` |
+            | `.AppImage` | Any Linux (universal) | `chmod +x Winamp-*.AppImage && ./Winamp-*.AppImage` |
+            | `.tar.gz` (Linux) | Any Linux (portable) | Extract & run `./run-winamp.sh` |
+            | `.zip` (Windows) | Windows 10+ | Extract & run `winamp.exe` |
+
+            ### What's included
+            - Classic Winamp UI with skin support (.wsz)
+            - Audio playback via Qt6 Multimedia
+            - Equalizer with presets
+            - Playlist editor
+            - Media library
+            - MilkDrop visualizations (via projectM)
+            - MPRIS2 desktop integration (Linux)
+            - System tray support
+            - Drag & drop file loading
+
+            ### Known limitations
+            - Modern/XML skins (Wasabi/Bento) not yet supported
+            - Some plugins not yet ported
+          files: |
+            artifacts/linux-packages/*
+            artifacts/windows-package/*
