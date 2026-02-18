@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.winamp.Winamp</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>GPL-2.0-only</project_license>
+  <name>Winamp</name>
+  <summary>Winamp media player for Linux</summary>
+  <description>
+    <p>
+      A native Linux port of the legendary Winamp media player using Qt6.
+      Features the classic Winamp look and feel with support for classic skins,
+      equalizer, playlist editor, media library, and MilkDrop visualizations
+      via projectM.
+    </p>
+    <p>
+      This is the first Linux beta release (0.5 BETA), bringing the iconic
+      Winamp experience to Linux desktops.
+    </p>
+  </description>
+  <launchable type="desktop-id">winamp.desktop</launchable>
+  <url type="homepage">https://github.com/lord3nd3r/winamp-linux</url>
+  <url type="bugtracker">https://github.com/lord3nd3r/winamp-linux/issues</url>
+  <provides>
+    <binary>winamp</binary>
+  </provides>
+  <releases>
+    <release version="0.5" date="2026-02-17" type="development">
+      <description>
+        <p>First Linux beta release.</p>
+      </description>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1" />
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+</component>

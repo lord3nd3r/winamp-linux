@@ -1,0 +1,37 @@
+# Maintainer: lord3nd3r <lord3nd3r@github.com>
+pkgname=winamp
+pkgver=0.5.0
+pkgrel=1
+pkgdesc="Winamp media player for Linux (Qt6 port)"
+arch=('x86_64')
+url="https://github.com/lord3nd3r/winamp-linux"
+license=('GPL2')
+depends=(
+    'qt6-base'
+    'qt6-multimedia'
+    'qt6-tools'
+    'libprojectm'
+    'mesa'
+    'libx11'
+    'libxext'
+)
+makedepends=(
+    'cmake'
+    'ninja'
+    'gcc'
+)
+source=("${pkgname}-${pkgver}.tar.gz::https://github.com/lord3nd3r/winamp-linux/archive/v${pkgver}.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+    cd "${srcdir}/winamp-linux-${pkgver}"
+    cmake -B build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr
+    cmake --build build
+}
+
+package() {
+    cd "${srcdir}/winamp-linux-${pkgver}"
+    DESTDIR="${pkgdir}" cmake --install build
+}

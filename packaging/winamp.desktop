@@ -1,0 +1,13 @@
+[Desktop Entry]
+Name=Winamp
+GenericName=Music Player
+Comment=Winamp media player for Linux
+Exec=winamp %F
+Icon=winamp
+Terminal=false
+Type=Application
+Categories=Audio;Music;Player;AudioVideo;
+MimeType=audio/mpeg;audio/mp3;audio/x-mp3;audio/x-mpeg;audio/flac;audio/ogg;audio/x-vorbis+ogg;audio/wav;audio/x-wav;audio/aac;audio/mp4;audio/x-m4a;audio/x-aiff;audio/x-ms-wma;application/ogg;audio/x-mod;audio/x-s3m;audio/x-xm;audio/x-it;
+Keywords=music;player;audio;media;winamp;mp3;
+StartupNotify=true
+StartupWMClass=winamp
