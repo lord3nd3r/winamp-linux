@@ -36,6 +36,8 @@ PlaylistWindow::PlaylistWindow(WinampWindow *parent) : QWidget(nullptr), mainWin
     listWidget->setDragEnabled(true);
     listWidget->setDropIndicatorShown(true);
     listWidget->setDragDropMode(QAbstractItemView::DragDrop); // Allow both internal move and drag-out
+    // Prefer Move as the default drop action so internal reorders behave predictably
+    listWidget->setDefaultDropAction(Qt::MoveAction);
     
     // Enable resizing from edges and corners
     setMouseTracking(true);
@@ -61,6 +63,11 @@ PlaylistWindow::PlaylistWindow(WinampWindow *parent) : QWidget(nullptr), mainWin
             trackDurations.move(start, row + i);
         }
     });
+
+    // Live-reorder (Windows-style live swap) — playlist widget will emit these while dragging
+    connect(listWidget, &PlaylistListWidget::internalDragStarted, this, &PlaylistWindow::startLiveReorder);
+    connect(listWidget, &PlaylistListWidget::internalDragMoved, this, &PlaylistWindow::liveReorderMove);
+    connect(listWidget, &PlaylistListWidget::internalDragFinished, this, &PlaylistWindow::finishLiveReorder);
 
     // Install event filter for keyboard shortcuts and right-click context menu
     listWidget->installEventFilter(this);
@@ -347,6 +354,129 @@ void PlaylistWindow::moveSelectedDown() {
     listWidget->setCurrentRow(rows.first() + 1);
 }
 
+// ---- Live-reorder (Winamp-style live swap while dragging) ----
+QList<QPair<QString,int>> PlaylistWindow::captureSelectionKeys(const QList<int> &rows) {
+    QList<QPair<QString,int>> keys;
+    QList<int> sortedRows = rows;
+    std::sort(sortedRows.begin(), sortedRows.end());
+    for (int r : sortedRows) {
+        if (r < 0 || r >= tracks.size()) continue;
+        QString p = tracks[r];
+        int occ = 0;
+        for (int i = 0; i <= r; ++i) if (tracks[i] == p) ++occ;
+        keys.append(qMakePair(p, occ));
+    }
+    return keys;
+}
+
+void PlaylistWindow::restoreSelectionFromKeys(const QList<QPair<QString,int>> &keys) {
+    listWidget->clearSelection();
+    for (const auto &key : keys) {
+        const QString &p = key.first;
+        int wantOcc = key.second;
+        int occ = 0;
+        for (int i = 0; i < tracks.size(); ++i) {
+            if (tracks[i] == p) {
+                ++occ;
+                if (occ == wantOcc) {
+                    if (i >= 0 && i < listWidget->count())
+                        listWidget->item(i)->setSelected(true);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+int PlaylistWindow::findIndexForKey(const QPair<QString,int> &key) {
+    const QString &p = key.first;
+    int wantOcc = key.second;
+    int occ = 0;
+    for (int i = 0; i < tracks.size(); ++i) {
+        if (tracks[i] == p) {
+            ++occ;
+            if (occ == wantOcc) return i;
+        }
+    }
+    return -1;
+}
+
+void PlaylistWindow::startLiveReorder(int initialRow, const QList<int> &selectedRows) {
+    if (selectedRows.isEmpty()) return;
+    liveReorderActive = true;
+    QList<int> rows = selectedRows;
+    std::sort(rows.begin(), rows.end());
+    liveMovePos = (initialRow >= 0) ? initialRow : rows.first();
+    liveSelectedKeys = captureSelectionKeys(rows);
+    int cur = listWidget->currentRow();
+    if (cur >= 0 && cur < tracks.size()) {
+        QString p = tracks[cur];
+        int occ = 0;
+        for (int i = 0; i <= cur; ++i) if (tracks[i] == p) ++occ;
+        liveCurrentKey = qMakePair(p, occ);
+    } else {
+        liveCurrentKey = qMakePair(QString(), 0);
+    }
+}
+
+void PlaylistWindow::liveReorderMove(int row) {
+    if (!liveReorderActive) return;
+    if (tracks.isEmpty()) return;
+    int target = qBound(0, row, tracks.size() - 1);
+    if (target == liveMovePos) return;
+
+    if (target > liveMovePos) {
+        int steps = target - liveMovePos;
+        for (int s = 0; s < steps; ++s) {
+            // compute current selected indices by matching keys
+            QSet<int> selIndices;
+            for (const auto &key : liveSelectedKeys) {
+                int idx = findIndexForKey(key);
+                if (idx >= 0) selIndices.insert(idx);
+            }
+            for (int i = tracks.size() - 2; i >= 0; --i) {
+                if (selIndices.contains(i) && !selIndices.contains(i + 1)) {
+                    tracks.swapItemsAt(i, i + 1);
+                    if (i < trackDurations.size() && i + 1 < trackDurations.size())
+                        trackDurations.swapItemsAt(i, i + 1);
+                }
+            }
+            ++liveMovePos;
+        }
+    } else {
+        int steps = liveMovePos - target;
+        for (int s = 0; s < steps; ++s) {
+            QSet<int> selIndices;
+            for (const auto &key : liveSelectedKeys) {
+                int idx = findIndexForKey(key);
+                if (idx >= 0) selIndices.insert(idx);
+            }
+            for (int i = 1; i < tracks.size(); ++i) {
+                if (selIndices.contains(i) && !selIndices.contains(i - 1)) {
+                    tracks.swapItemsAt(i, i - 1);
+                    if (i < trackDurations.size() && i - 1 < trackDurations.size())
+                        trackDurations.swapItemsAt(i, i - 1);
+                }
+            }
+            --liveMovePos;
+        }
+    }
+
+    rebuildListDisplay();
+    restoreSelectionFromKeys(liveSelectedKeys);
+    if (!liveCurrentKey.first.isEmpty()) {
+        int newCur = findIndexForKey(liveCurrentKey);
+        if (newCur >= 0) setCurrentTrackIndex(newCur);
+    }
+}
+
+void PlaylistWindow::finishLiveReorder() {
+    liveReorderActive = false;
+    liveMovePos = -1;
+    liveSelectedKeys.clear();
+    liveCurrentKey = qMakePair(QString(), 0);
+}
+
 void PlaylistWindow::sortByTitle() {
     // Sort by display filename (baseName)
     QList<QPair<QString, qint64>> combined;
@@ -467,6 +597,8 @@ void PlaylistWindow::addTrack(const QString &filePath) {
     if (fileInfo.exists() && fileInfo.isFile()) {
         QListWidgetItem *item = new QListWidgetItem(trackDisplayName(tracks.size(), filePath));
         item->setData(Qt::UserRole, filePath); // Store full file path for drag-out
+        // ensure item supports internal drag/drop as well as drag-out
+        item->setFlags(item->flags() | Qt::ItemIsSelectable | Qt::ItemIsEnabled | Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled);
         listWidget->addItem(item);
         tracks.append(filePath);
         trackDurations.append(0); // placeholder until async probe completes

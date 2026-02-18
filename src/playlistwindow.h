@@ -2,6 +2,7 @@
 #include <QWidget>
 #include <QListWidget>
 #include <QMimeData>
+#include <QDrag>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QDirIterator>
@@ -33,6 +34,10 @@ public:
     
 signals:
     void filesDropped(const QStringList &paths);
+    // Internal drag signals used to implement "live-swap" reordering like classic Winamp
+    void internalDragStarted(int initialRow, const QList<int> &selectedRows);
+    void internalDragMoved(int row);
+    void internalDragFinished();
     
 protected:
     QMimeData* mimeData(const QList<QListWidgetItem*> &items) const override {
@@ -52,8 +57,34 @@ protected:
         
         return data;
     }
-    
+
+    // Create our own QDrag instead of calling QListWidget::startDrag().
+    // The base implementation auto-removes items when a MoveAction drop completes,
+    // which conflicts with our live-swap reordering.  We handle all reordering
+    // ourselves via internalDragMoved → PlaylistWindow::liveReorderMove.
+    void startDrag(Qt::DropActions supportedActions) override {
+        QList<int> rows;
+        for (const QModelIndex &idx : selectedIndexes()) rows.append(idx.row());
+        std::sort(rows.begin(), rows.end());
+        int first = rows.isEmpty() ? -1 : rows.first();
+        emit internalDragStarted(first, rows);
+
+        // Build our own drag so we control what happens after exec() returns.
+        QDrag *drag = new QDrag(this);
+        QMimeData *data = mimeData(selectedItems());
+        if (!data) { delete drag; emit internalDragFinished(); return; }
+        drag->setMimeData(data);
+        drag->exec(supportedActions, Qt::CopyAction);   // CopyAction default → cursor hint
+        // Do NOT remove source items — live swap already repositioned everything.
+        emit internalDragFinished();
+    }
+
     void dragEnterEvent(QDragEnterEvent *event) override {
+        if (event->source() == this) {
+            // internal drag — accept and let dragMoveEvent handle live swaps
+            event->acceptProposedAction();
+            return;
+        }
         if (event->mimeData()->hasUrls()) {
             event->acceptProposedAction();
         } else {
@@ -62,14 +93,44 @@ protected:
     }
     
     void dragMoveEvent(QDragMoveEvent *event) override {
+        if (event->source() == this) {
+            event->acceptProposedAction();
+            // report the logical row under the mouse to the parent for live-swap
+            int row = indexAt(event->position().toPoint()).row();
+            if (row < 0) row = count() - 1;
+            emit internalDragMoved(row);
+            // simple autoscroll when near edges
+            const int margin = 18;
+            if (event->position().toPoint().y() < margin) {
+                verticalScrollBar()->setValue(verticalScrollBar()->value() - 1);
+            } else if (event->position().toPoint().y() > height() - margin) {
+                verticalScrollBar()->setValue(verticalScrollBar()->value() + 1);
+            }
+            return;
+        }
+
         if (event->mimeData()->hasUrls()) {
             event->acceptProposedAction();
         } else {
             QListWidget::dragMoveEvent(event);
         }
     }
+
+    void dragLeaveEvent(QDragLeaveEvent *event) override {
+        // dragLeaveEvent does not provide source(); always notify finish (safe no-op if not internal)
+        emit internalDragFinished();
+        QListWidget::dragLeaveEvent(event);
+    }
     
     void dropEvent(QDropEvent *event) override {
+        // Internal drag — live-swap already handled all reordering during dragMoveEvent.
+        // Accept with IgnoreAction so Qt doesn't auto-remove source items.
+        if (event->source() == this) {
+            event->setDropAction(Qt::IgnoreAction);
+            event->accept();
+            return;
+        }
+
         if (event->mimeData()->hasUrls()) {
             QStringList paths;
             QStringList audioExts = {"mp3", "wav", "flac", "ogg", "m4a", "aac", "wma", "opus",
@@ -241,6 +302,20 @@ private:
     bool isSnappedToMain = false;
     WinampWindow *mainWindow = nullptr;
     int snapMode = 0;
+
+    // Live-reorder state (Windows-like "live swap" while dragging)
+    bool liveReorderActive = false;
+    int liveMovePos = -1; // logical row under mouse during live reorder
+    QList<QPair<QString,int>> liveSelectedKeys; // (filePath, occurrenceIndex) to reselect correctly
+    QPair<QString,int> liveCurrentKey; // previous current item key to restore current row
+
+    // Live-reorder helpers
+    void startLiveReorder(int initialRow, const QList<int> &selectedRows);
+    void liveReorderMove(int row);
+    void finishLiveReorder();
+    QList<QPair<QString,int>> captureSelectionKeys(const QList<int> &rows);
+    void restoreSelectionFromKeys(const QList<QPair<QString,int>> &keys);
+    int findIndexForKey(const QPair<QString,int> &key);
     
     // Shade mode
     bool shadeMode = false;
