@@ -84,7 +84,7 @@ void Translator::loadFromFile(const QString &filePath) {
 
 void Translator::loadEnglishDefaults() {
     // Window titles
-    strings["win.main.title"] = "Winamp 5.666 for Linux";
+    strings["win.main.title"] = "Winamp 0.5 BETA for Linux";
     strings["win.playlist.title"] = "Winamp Playlist Editor";
     strings["win.equalizer.title"] = "Winamp Equalizer";
     strings["win.video.title"] = "Winamp Video";
