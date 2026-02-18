@@ -17,7 +17,7 @@
 int main(int argc, char *argv[]) {
   QApplication app(argc, argv);
   app.setApplicationName("Winamp");
-  app.setApplicationVersion("5.666");
+  app.setApplicationVersion("0.5 BETA");
   app.setOrganizationName("Nullsoft");
 
   // Load the Winamp icon from the source resource directory

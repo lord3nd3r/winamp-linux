@@ -954,7 +954,7 @@ private:
     
     void loadEnglishDefaults() {
         // Window titles
-        strings["win.main.title"] = "Winamp 5.666 for Linux";
+        strings["win.main.title"] = "Winamp 0.5 BETA for Linux";
         strings["win.playlist.title"] = "Winamp Playlist Editor";
         strings["win.equalizer.title"] = "Winamp Equalizer";
         strings["win.video.title"] = "Winamp Video";
@@ -6146,7 +6146,7 @@ public:
                  scrollOffset(0), visMode(1), doubleSize(false), shadeMode(false),
                  alwaysOnTop(false), clutterbarOpen(false) {
         setFixedSize(275, 116);
-        setWindowTitle("Winamp 5.666 for Linux");
+        setWindowTitle("Winamp 0.5 BETA for Linux");
         setWindowFlags(Qt::FramelessWindowHint);
         setAttribute(Qt::WA_TranslucentBackground, false);
         setMouseTracking(true);
@@ -7308,7 +7308,7 @@ protected:
             p.fillRect(rect(), QColor(66, 66, 99));
             p.setPen(QColor(0, 255, 0));
             p.setFont(QFont("Tahoma", 7, QFont::Bold));
-            p.drawText(10, 14, "Winamp 5.666 for Linux");
+            p.drawText(10, 14, "Winamp 0.5 BETA for Linux");
             return;
         }
 
@@ -7641,14 +7641,14 @@ protected:
                 eggStat = 1;
                 setWindowTitle("Winamp - \"It really whips the llama's ass!\"");
                 QTimer::singleShot(3000, this, [this]() { 
-                    setWindowTitle("Winamp 5.666 for Linux"); 
+                    setWindowTitle("Winamp 0.5 BETA for Linux"); 
                     eggStat = 0;
                 });
             } else if (QString(eggStr).endsWith(egg2)) {
                 eggStat = 2;
                 setWindowTitle("Winamp - by Justin Frankel & the Nullsoft crew");
                 QTimer::singleShot(3000, this, [this]() { 
-                    setWindowTitle("Winamp 5.666 for Linux"); 
+                    setWindowTitle("Winamp 0.5 BETA for Linux"); 
                     eggStat = 0;
                 });
             }
@@ -8878,7 +8878,7 @@ private:
         
         trayIcon = new QSystemTrayIcon(this);
         trayIcon->setIcon(windowIcon().isNull() ? QIcon::fromTheme("audio-headphones") : windowIcon());
-        trayIcon->setToolTip("Winamp 5.666 for Linux");
+        trayIcon->setToolTip("Winamp 0.5 BETA for Linux");
         
         trayMenu = new QMenu(this);
         trayMenu->addAction("Winamp", this, [this]() {
@@ -9067,7 +9067,7 @@ void Mpris2PlayerAdaptor::OpenUri(const QString &uri) {
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
     app.setApplicationName("Winamp");
-    app.setApplicationVersion("5.666");
+    app.setApplicationVersion("0.5 BETA");
     app.setOrganizationName("Nullsoft");
 
     // Load the Winamp icon from the source resource directory
