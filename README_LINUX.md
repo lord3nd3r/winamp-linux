@@ -18,7 +18,11 @@ This is a native Linux port of Winamp using Qt6 as the UI foundation. The goal i
 ### In Progress
 - 🔨 Wasabi framework porting to Qt
 - 🔨 Plugin system adaptation
-- 🔨 Skin loading system
+- 🔨 Classic skin loading system (.wsz)
+
+### Not Yet Working
+- ❌ **Modern skins (XML/Wasabi/Bento)** — The Wasabi XML skin engine has not been ported to Qt6.
+  Modern skin selection is disabled in Preferences. Use a Classic skin (.wsz) instead.
 
 ### TODO
 - ⏳ Full GDI-to-QPainter rendering pipeline
@@ -26,7 +30,7 @@ This is a native Linux port of Winamp using Qt6 as the UI foundation. The goal i
 - ⏳ Playlist editor window
 - ⏳ Visualization plugins
 - ⏳ Media Library
-- ⏳ Complete skin support
+- ⏳ Modern skin (XML/Wasabi) support
 - ⏳ Input/Output plugin framework
 - ⏳ All DSP effects
 
@@ -216,7 +220,9 @@ Src/
 
 ### Temporary Limitations
 - Some plugins not yet ported
-- Skin support incomplete
+- **Modern skins not supported** — XML/Wasabi/Bento skin engine is not yet ported to Qt6.
+  The "Modern Skins" page in Preferences shows a notice instead of a skin picker.
+  Classic skins (.wsz) work normally.
 - Media library not implemented
 - No Milkdrop visualization yet
 
