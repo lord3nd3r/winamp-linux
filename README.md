@@ -36,6 +36,25 @@ sudo apt-get install -y \
 
 Qt5 or Qt6 will work. CMake prefers Qt6 when available and falls back to Qt5.
 
+## Runtime Dependencies
+
+Qt6 uses GStreamer as its multimedia backend on Linux. You'll need the GStreamer plugin
+packages installed for audio format support. Without these you may see warnings like
+`No decoder available for type 'application/x-id3'`.
+
+```bash
+sudo apt-get install -y \
+  gstreamer1.0-plugins-good \
+  gstreamer1.0-plugins-bad \
+  gstreamer1.0-plugins-ugly \
+  gstreamer1.0-libav
+```
+
+- **plugins-good** — ID3 tag demuxer, MP3/FLAC/OGG parsers
+- **plugins-ugly** — MP3 decoder (mpg123), patent-encumbered codecs
+- **plugins-bad** — Additional format support (AAC, Opus, etc.)
+- **gstreamer1.0-libav** — FFmpeg-based fallback decoders
+
 ## Build
 
 Qt5 fallback build:
