@@ -11,7 +11,7 @@ Native Winamp-inspired player for Linux with classic skins, playlist and equaliz
 - Classic Winamp-style main player
 - Playlist editor and 10-band equalizer
 - Skin loading from installed assets, custom folders, and skin archives
-- Modern Winamp 5-style skin support
+- Modern Winamp 5-style skins are currently disabled because they can break the UI
 - projectM/Milkdrop visualization support
 - System tray integration
 - MPRIS2 support on Qt6
@@ -92,6 +92,7 @@ At runtime, the app looks for skins and resources in:
 - Qt5 builds are supported, but MPRIS2 is disabled there.
 - The app uses the real Winamp bitmap assets from the repo and installed share directories.
 - User configuration is stored under `~/.config/winamp/`.
+- Modern Winamp 5 skins are intentionally disabled for now; use classic skins only.
 
 ## Repository Layout
 
