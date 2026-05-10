@@ -134,4 +134,4 @@ At runtime, the app looks for skins and resources in:
 
 ## License
 
-See `LICENSE.md`.
+This project is licensed under the [GNU General Public License v2.0](LICENSE.md).
