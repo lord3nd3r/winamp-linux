@@ -20,6 +20,7 @@ Native Winamp-inspired player for Linux with classic skins, playlist and equaliz
 - Bookmarks, recent files, language packs, and persisted settings
 - HTTP/HTTPS stream URL playback with redirect following and automatic fallback
 - Python plugin system — extend Winamp with scripts in `~/.config/winamp/plugins/`
+- In-app plugin manager (Preferences → Plug-ins) to enable, disable, configure, add, and remove plugins
 
 ## Build Requirements
 
@@ -135,6 +136,7 @@ At runtime, the app looks for skins and resources in:
   - `eq_dsp.h` - EQ DSP algorithm
   - `mpris2_adaptors.h` - DBus integration
   - `python_plugin.h` - embedded Python plugin system
+- `plugins/examples/` - bundled example plugins (hello, Icecast DJ)
 - `skins/` - default skin assets
 - `assets/` - classic Winamp resource assets
 - `lang/` - translation files
@@ -142,6 +144,8 @@ At runtime, the app looks for skins and resources in:
 ## Python Plugins
 
 Winamp for Linux supports Python plugins via an embedded interpreter (pybind11). Place `.py` files in `~/.config/winamp/plugins/` and they will be loaded automatically at startup.
+
+Plugins can also be managed from within Winamp via **Preferences → Plug-ins**, which provides enable/disable toggling, configuration file editing, adding, and removing plugins — just like the classic Windows Winamp plugin manager.
 
 ### Plugin API
 
