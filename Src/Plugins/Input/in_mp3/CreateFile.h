@@ -1,6 +1,0 @@
-#ifndef NULLSOFT_CREATEFILEH
-#define NULLSOFT_CREATEFILEH
-
-
-
-#endif

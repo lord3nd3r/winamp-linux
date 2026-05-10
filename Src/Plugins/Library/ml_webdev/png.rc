@@ -1,9 +1,0 @@
-#include "resource.h"
-/////////////////////////////////////////////////////////////////////////////
-//
-// Data
-//
-IDR_HELP_ICON  RCDATA
-".\\resources\\help.png"
-IDR_GEAR_ICON  RCDATA
-".\\resources\\gear.png"

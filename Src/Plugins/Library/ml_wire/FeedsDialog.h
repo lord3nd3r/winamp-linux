@@ -1,5 +1,0 @@
-#ifndef NULLSOFT_FEEDSDIALOGH
-#define NULLSOFT_FEEDSDIALOGH
-
-BOOL CALLBACK FeedsProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam);
-#endif
