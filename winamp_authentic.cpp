@@ -19,6 +19,10 @@
 #include <QMouseEvent>
 #include <QTimer>
 #include <QRandomGenerator>
+#include <QNetworkAccessManager>
+#include <QNetworkRequest>
+#include <QNetworkReply>
+#include <QIODevice>
 #include <QListWidget>
 #include <QVBoxLayout>
 #include <QPixmap>
@@ -112,6 +116,29 @@ static inline float waOutputVolume(const QMediaPlayer *player, const WAudioOutpu
     Q_UNUSED(audioOutput);
     return player->volume() / 100.0f;
 }
+
+static inline void waSetNetworkStream(QMediaPlayer *player, QIODevice *device, const QUrl &sourceUrl) {
+    player->setMedia(QMediaContent(), device);
+    Q_UNUSED(sourceUrl);
+}
+
+static QIcon createFallbackAppIcon() {
+    QPixmap pix(64, 64);
+    pix.fill(QColor(18, 18, 18));
+
+    QPainter p(&pix);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(0, 255, 0));
+    p.drawRoundedRect(QRectF(6, 6, 52, 52), 8, 8);
+    p.setPen(QColor(12, 12, 12));
+    QFont font = p.font();
+    font.setBold(true);
+    font.setPointSize(24);
+    p.setFont(font);
+    p.drawText(pix.rect(), Qt::AlignCenter, "W");
+    return QIcon(pix);
+}
 #else
 using WAudioOutput = QAudioOutput;
 static inline QPoint waMouseGlobalPos(const QMouseEvent *event) {
@@ -139,6 +166,28 @@ static inline void waSetOutputVolume(QMediaPlayer *player, WAudioOutput *audioOu
 static inline float waOutputVolume(const QMediaPlayer *player, const WAudioOutput *audioOutput) {
     Q_UNUSED(player);
     return audioOutput->volume();
+}
+
+static inline void waSetNetworkStream(QMediaPlayer *player, QIODevice *device, const QUrl &sourceUrl) {
+    player->setSourceDevice(device, sourceUrl);
+}
+
+static QIcon createFallbackAppIcon() {
+    QPixmap pix(64, 64);
+    pix.fill(QColor(18, 18, 18));
+
+    QPainter p(&pix);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(0, 255, 0));
+    p.drawRoundedRect(QRectF(6, 6, 52, 52), 8, 8);
+    p.setPen(QColor(12, 12, 12));
+    QFont font = p.font();
+    font.setBold(true);
+    font.setPointSize(24);
+    p.setFont(font);
+    p.drawText(pix.rect(), Qt::AlignCenter, "W");
+    return QIcon(pix);
 }
 #endif
 
@@ -2557,6 +2606,34 @@ static QString configPath() {
     return dir + "/winamp.conf";
 }
 
+static bool isRemoteMediaLocation(const QString &value) {
+    QUrl url = QUrl::fromUserInput(value.trimmed());
+    if (!url.isValid() || url.isLocalFile() || url.scheme().isEmpty()) return false;
+    const QString scheme = url.scheme().toLower();
+    return scheme == "http" || scheme == "https" || scheme == "icy" || scheme == "ftp";
+}
+
+static QString playlistEntryLabel(const QString &value) {
+    QUrl url = QUrl::fromUserInput(value.trimmed());
+    if (url.isValid() && !url.isLocalFile() && !url.scheme().isEmpty()) {
+        QString label = url.fileName();
+        if (label.isEmpty()) label = url.host();
+        if (label.isEmpty()) label = value;
+        return label;
+    }
+    return QFileInfo(value).fileName();
+}
+
+static QString playlistSortLabel(const QString &value) {
+    QUrl url = QUrl::fromUserInput(value.trimmed());
+    if (url.isValid() && !url.isLocalFile() && !url.scheme().isEmpty()) {
+        QString label = url.host() + url.path();
+        if (label.isEmpty()) label = value;
+        return label.toLower();
+    }
+    return QFileInfo(value).baseName().toLower();
+}
+
 // Common data roots for running from source tree or system installs.
 static QStringList winampDataRoots(const QString &appDir) {
     return {
@@ -2762,7 +2839,7 @@ private:
     void exploreFolderOfSelected();
     void generateHtmlPlaylist();
     QString trackDisplayName(int index, const QString &filePath) {
-        return QString("%1. %2").arg(index + 1).arg(QFileInfo(filePath).fileName());
+        return QString("%1. %2").arg(index + 1).arg(playlistEntryLabel(filePath));
     }
     void rebuildListDisplay() {
         listWidget->clear();
@@ -3786,7 +3863,7 @@ void PlaylistWindow::cropSelected() {
 void PlaylistWindow::removeDeadFiles() {
     int removed = 0;
     for (int i = tracks.size() - 1; i >= 0; i--) {
-        if (!QFile::exists(tracks[i])) {
+        if (!isRemoteMediaLocation(tracks[i]) && !QFile::exists(tracks[i])) {
             tracks.removeAt(i);
             if (i < trackDurations.size())
                 trackDurations.removeAt(i);
@@ -3847,7 +3924,7 @@ void PlaylistWindow::sortByTitle() {
     for (int i = 0; i < tracks.size(); i++)
         combined.append({tracks[i], i < trackDurations.size() ? trackDurations[i] : 0});
     std::sort(combined.begin(), combined.end(), [](const auto &a, const auto &b) {
-        return QFileInfo(a.first).baseName().toLower() < QFileInfo(b.first).baseName().toLower();
+        return playlistSortLabel(a.first) < playlistSortLabel(b.first);
     });
     tracks.clear(); trackDurations.clear();
     for (const auto &p : combined) { tracks.append(p.first); trackDurations.append(p.second); }
@@ -3860,7 +3937,7 @@ void PlaylistWindow::sortByFilename() {
     for (int i = 0; i < tracks.size(); i++)
         combined.append({tracks[i], i < trackDurations.size() ? trackDurations[i] : 0});
     std::sort(combined.begin(), combined.end(), [](const auto &a, const auto &b) {
-        return QFileInfo(a.first).fileName().toLower() < QFileInfo(b.first).fileName().toLower();
+        return playlistEntryLabel(a.first).toLower() < playlistEntryLabel(b.first).toLower();
     });
     tracks.clear(); trackDurations.clear();
     for (const auto &p : combined) { tracks.append(p.first); trackDurations.append(p.second); }
@@ -3873,7 +3950,7 @@ void PlaylistWindow::sortByPath() {
     for (int i = 0; i < tracks.size(); i++)
         combined.append({tracks[i], i < trackDurations.size() ? trackDurations[i] : 0});
     std::sort(combined.begin(), combined.end(), [](const auto &a, const auto &b) {
-        return a.first.toLower() < b.first.toLower();
+        return playlistSortLabel(a.first) < playlistSortLabel(b.first);
     });
     tracks.clear(); trackDurations.clear();
     for (const auto &p : combined) { tracks.append(p.first); trackDurations.append(p.second); }
@@ -3904,6 +3981,7 @@ void PlaylistWindow::randomizeList() {
 void PlaylistWindow::exploreFolderOfSelected() {
     int row = listWidget->currentRow();
     if (row >= 0 && row < tracks.size()) {
+        if (isRemoteMediaLocation(tracks[row])) return;
         QString folder = QFileInfo(tracks[row]).absolutePath();
         QDesktopServices::openUrl(QUrl::fromLocalFile(folder));
     }
@@ -3957,32 +4035,42 @@ void PlaylistWindow::updateTotalTimeDisplay() {
 }
 
 void PlaylistWindow::addTrack(const QString &filePath) {
-    QFileInfo fileInfo(filePath);
-    if (fileInfo.exists()) {
-        QListWidgetItem *item = new QListWidgetItem(trackDisplayName(tracks.size(), filePath));
-        item->setData(Qt::UserRole, filePath); // Store full file path for drag-out
-        listWidget->addItem(item);
-        tracks.append(filePath);
+    QString location = filePath.trimmed();
+    if (location.isEmpty()) return;
 
-        // Use a temporary media player to get the duration
-        QMediaPlayer tempPlayer;
-        waSetSource(&tempPlayer, QUrl::fromLocalFile(filePath));
-        
-        // We need to wait for it to load the media to get duration
-        QEventLoop loop;
-        QObject::connect(&tempPlayer, &QMediaPlayer::mediaStatusChanged, [&](QMediaPlayer::MediaStatus status){
-            if(status == QMediaPlayer::LoadedMedia) {
-                trackDurations.append(tempPlayer.duration());
-                updateTotalTimeDisplay();
-                loop.quit();
-            } else if (status == QMediaPlayer::InvalidMedia) {
-                trackDurations.append(0); // Add 0 if media is invalid
-                updateTotalTimeDisplay();
-                loop.quit();
-            }
-        });
-        loop.exec();
+    bool remote = isRemoteMediaLocation(location);
+    QFileInfo fileInfo(location);
+    if (!remote && !fileInfo.exists()) return;
+
+    QListWidgetItem *item = new QListWidgetItem(trackDisplayName(tracks.size(), location));
+    item->setData(Qt::UserRole, location); // Store full location for drag-out
+    listWidget->addItem(item);
+    tracks.append(location);
+
+    if (remote) {
+        trackDurations.append(0);
+        updateTotalTimeDisplay();
+        return;
     }
+
+    // Use a temporary media player to get the duration
+    QMediaPlayer tempPlayer;
+    waSetSource(&tempPlayer, QUrl::fromLocalFile(location));
+
+    // We need to wait for it to load the media to get duration
+    QEventLoop loop;
+    QObject::connect(&tempPlayer, &QMediaPlayer::mediaStatusChanged, [&](QMediaPlayer::MediaStatus status){
+        if(status == QMediaPlayer::LoadedMedia) {
+            trackDurations.append(tempPlayer.duration());
+            updateTotalTimeDisplay();
+            loop.quit();
+        } else if (status == QMediaPlayer::InvalidMedia) {
+            trackDurations.append(0); // Add 0 if media is invalid
+            updateTotalTimeDisplay();
+            loop.quit();
+        }
+    });
+    loop.exec();
 }
 
 void PlaylistWindow::clearPlaylist() {
@@ -4651,11 +4739,7 @@ void PlaylistWindow::showAddMenu(QPoint globalPos) {
         QString url = QInputDialog::getText(this, "Add URL",
             "Enter URL:", QLineEdit::Normal, "http://", &ok);
         if (ok && !url.isEmpty()) {
-            // Add URL as a track (QMediaPlayer can handle remote URLs)
-            listWidget->addItem(trackDisplayName(tracks.size(), url));
-            tracks.append(url);
-            trackDurations.append(0);
-            updateTotalTimeDisplay();
+            addTrack(url);
         }
     }
 }
@@ -4819,9 +4903,9 @@ void PlaylistWindow::showListMenu(QPoint globalPos) {
                     if (line.isEmpty() || line.startsWith('#'))
                         continue;
                     // Handle relative paths
-                    if (!QFileInfo(line).isAbsolute())
+                    if (!QFileInfo(line).isAbsolute() && !isRemoteMediaLocation(line))
                         line = basePath + "/" + line;
-                    if (QFile::exists(line))
+                    if (QFile::exists(line) || isRemoteMediaLocation(line))
                         addTrack(line);
                 }
                 file.close();
@@ -4837,7 +4921,7 @@ void PlaylistWindow::showListMenu(QPoint globalPos) {
                 out << "#EXTM3U\n";
                 for (int i = 0; i < tracks.size(); i++) {
                     qint64 durSec = (i < trackDurations.size()) ? trackDurations[i] / 1000 : -1;
-                    QString title = QFileInfo(tracks[i]).baseName();
+                        QString title = playlistEntryLabel(tracks[i]);
                     out << "#EXTINF:" << durSec << "," << title << "\n";
                     out << tracks[i] << "\n";
                 }
@@ -5937,6 +6021,7 @@ public:
         setFixedSize(275, 116);
         setWindowTitle("Winamp 5.666 for Linux");
         setWindowFlags(Qt::FramelessWindowHint);
+        setWindowIcon(QApplication::windowIcon().isNull() ? createFallbackAppIcon() : QApplication::windowIcon());
         setAttribute(Qt::WA_TranslucentBackground, false);
         setMouseTracking(true);
         setFocusPolicy(Qt::StrongFocus);
@@ -6025,6 +6110,19 @@ public:
         
         // Auto-advance to next track when current one ends
         connect(player, &QMediaPlayer::mediaStatusChanged, this, [this](QMediaPlayer::MediaStatus status) {
+            if (streamViaReplyActive) {
+                if (status == QMediaPlayer::BufferedMedia ||
+                    status == QMediaPlayer::BufferingMedia ||
+                    status == QMediaPlayer::LoadedMedia) {
+                    streamViaReplyActive = false;
+                } else if (status == QMediaPlayer::InvalidMedia ||
+                           status == QMediaPlayer::NoMedia ||
+                           status == QMediaPlayer::StalledMedia) {
+                    fallbackToDirectStream();
+                    return;
+                }
+            }
+
             if (status == QMediaPlayer::EndOfMedia) {
                 // Stop after current track (like Windows g_stopaftercur)
                 if (stopAfterCurrent) {
@@ -6248,6 +6346,10 @@ public:
 
     void playFile(const QString &file) {
         if (!file.isEmpty() && QFile::exists(file)) {
+            streamViaReplyActive = false;
+            streamDirectFallbackTried = false;
+            pendingStreamUrl = QUrl();
+            cleanupNetworkStream();
             currentFile = file;
             waSetSource(player, QUrl::fromLocalFile(file));
             player->play();
@@ -6256,18 +6358,31 @@ public:
 
     void playUrl(const QString &url) {
         if (!url.isEmpty()) {
+            QUrl parsed = QUrl::fromUserInput(url.trimmed());
+            if (parsed.isLocalFile()) {
+                playFile(parsed.toLocalFile());
+                return;
+            }
+
+            if (parsed.scheme().compare("http", Qt::CaseInsensitive) == 0 ||
+                parsed.scheme().compare("https", Qt::CaseInsensitive) == 0) {
+                playHttpStream(parsed);
+                return;
+            }
+
+            streamViaReplyActive = false;
+            streamDirectFallbackTried = false;
+            pendingStreamUrl = QUrl();
+            cleanupNetworkStream();
             currentFile = url;
-            waSetSource(player, QUrl(url));
+            waSetSource(player, parsed);
             player->play();
             updateTrayTooltip();
-            
-            // Show notification for stream
+
             if (showSongNotifications && trayIcon) {
                 QString title = metaTitle.isEmpty() ? url : metaTitle;
                 trayIcon->showMessage("Winamp", title, QSystemTrayIcon::Information, 3000);
             }
-            
-            // Don't preload next track for streams
         }
     }
 
@@ -6290,7 +6405,12 @@ public slots:
         if (dialog.exec() == QDialog::Accepted) {
             QString url = dialog.getUrl();
             if (!url.isEmpty()) {
-                playUrl(url);
+                playlistWindow->addTrack(url);
+                int idx = playlistWindow->trackCount() - 1;
+                if (idx >= 0) {
+                    playlistWindow->setCurrentTrackIndex(idx);
+                    playTrack(playlistWindow->trackAt(idx));
+                }
             }
         }
     }
@@ -6995,8 +7115,8 @@ public:
                     delete audioSink;
                 }
                 QAudioFormat outFmt;
-                outFmt.setSampleRate(sampleRate);
                 outFmt.setChannelCount(eqChannels);
+                outFmt.setSampleRate(sampleRate);
                 outFmt.setSampleFormat(QAudioFormat::Float);
                 
                 audioSink = new QAudioSink(QMediaDevices::defaultAudioOutput(), outFmt, this);
@@ -7013,7 +7133,6 @@ public:
                 eq10_setgain(eqState, eqChannels, b, dB);
             }
             
-            // Get preamp value — uses the original Winamp lookup table
             int preampSlider = eqWindow->getPreampValue();
             float preampGain = eq_preamp_table[qBound(0, preampSlider, 63)];
             
@@ -7083,6 +7202,73 @@ public:
                 eqSampleRate = 0;
                 eqChannels = 0;
             }
+        }
+    }
+
+    void cleanupNetworkStream() {
+        if (streamReply) {
+            streamReply->abort();
+            streamReply->deleteLater();
+            streamReply = nullptr;
+        }
+    }
+
+    void fallbackToDirectStream() {
+        if (!streamViaReplyActive || streamDirectFallbackTried || !pendingStreamUrl.isValid()) return;
+        streamDirectFallbackTried = true;
+        streamViaReplyActive = false;
+
+        cleanupNetworkStream();
+        currentFile = pendingStreamUrl.toString();
+        waSetSource(player, pendingStreamUrl);
+        player->play();
+        updateTrayTooltip();
+
+        if (showSongNotifications && trayIcon) {
+            QString title = metaTitle.isEmpty() ? pendingStreamUrl.toString() : metaTitle;
+            trayIcon->showMessage("Winamp", title, QSystemTrayIcon::Information, 3000);
+        }
+    }
+
+    void playHttpStream(const QUrl &url) {
+        pendingStreamUrl = url;
+        streamViaReplyActive = true;
+        streamDirectFallbackTried = false;
+        cleanupNetworkStream();
+        if (!networkManager) {
+            networkManager = new QNetworkAccessManager(this);
+        }
+
+        QNetworkRequest request(url);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+#else
+        request.setAttribute(QNetworkRequest::FollowRedirectsAttribute, true);
+#endif
+        request.setRawHeader("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:126.0) Gecko/20100101 Firefox/126.0");
+        request.setRawHeader("Accept", "*/*");
+        request.setRawHeader("Accept-Language", "en-US,en;q=0.9");
+        request.setRawHeader("Cache-Control", "no-cache");
+        request.setRawHeader("Pragma", "no-cache");
+        QString origin = url.scheme() + "://" + url.host();
+        request.setRawHeader("Referer", origin.toUtf8());
+        request.setRawHeader("Origin", origin.toUtf8());
+
+        streamReply = networkManager->get(request);
+        connect(streamReply, &QNetworkReply::finished, this, [this]() {
+            if (!streamViaReplyActive || !streamReply) return;
+            if (streamReply->error() != QNetworkReply::NoError) {
+                fallbackToDirectStream();
+            }
+        });
+        waSetNetworkStream(player, streamReply, url);
+        currentFile = url.toString();
+        player->play();
+        updateTrayTooltip();
+
+        if (showSongNotifications && trayIcon) {
+            QString title = metaTitle.isEmpty() ? url.toString() : metaTitle;
+            trayIcon->showMessage("Winamp", title, QSystemTrayIcon::Information, 3000);
         }
     }
 #endif
@@ -8421,22 +8607,35 @@ protected:
         
         if (nextIdx < count) {
             QString nextFile = playlistWindow->trackAt(nextIdx);
-            if (!nextFile.isEmpty() && QFile::exists(nextFile)) {
-                waSetSource(nextPlayer, QUrl::fromLocalFile(nextFile));
-                // Don't play yet, just preload
+            if (!nextFile.isEmpty()) {
+                if (QFile::exists(nextFile)) {
+                    waSetSource(nextPlayer, QUrl::fromLocalFile(nextFile));
+                    // Don't play yet, just preload
+                } else if (isRemoteMediaLocation(nextFile)) {
+                    waSetSource(nextPlayer, QUrl::fromUserInput(nextFile));
+                }
             }
         } else if (repeatOn && count > 0) {
             // If repeat all is on, preload first track
             QString nextFile = playlistWindow->trackAt(0);
-            if (!nextFile.isEmpty() && QFile::exists(nextFile)) {
-                waSetSource(nextPlayer, QUrl::fromLocalFile(nextFile));
+            if (!nextFile.isEmpty()) {
+                if (QFile::exists(nextFile)) {
+                    waSetSource(nextPlayer, QUrl::fromLocalFile(nextFile));
+                } else if (isRemoteMediaLocation(nextFile)) {
+                    waSetSource(nextPlayer, QUrl::fromUserInput(nextFile));
+                }
             }
         }
     }
     
 public:
     void playTrack(const QString &fileName) {
-        if (!fileName.isEmpty() && QFile::exists(fileName)) {
+        if (fileName.isEmpty()) return;
+        if (isRemoteMediaLocation(fileName)) {
+            playUrl(fileName);
+            return;
+        }
+        if (QFile::exists(fileName)) {
             currentFile = fileName;
             // Reset media info — will be refreshed by metaDataChanged and processAudioBuffer
             mediaBitrate = 0;
@@ -8612,6 +8811,11 @@ private:
     QTimer *timer;
     QTimer *scrollTimer;
     QString currentFile;
+    QNetworkAccessManager *networkManager = nullptr;
+    QNetworkReply *streamReply = nullptr;
+    QUrl pendingStreamUrl;
+    bool streamViaReplyActive = false;
+    bool streamDirectFallbackTried = false;
     QPoint dragPosition;
     bool isDragging;
     int volume;  // 0-255 like original
@@ -8902,9 +9106,11 @@ int main(int argc, char *argv[]) {
     app.setApplicationName("Winamp");
     app.setApplicationVersion("5.666");
     app.setOrganizationName("Nullsoft");
+    app.setDesktopFileName("winamp.desktop");
 
     // Load the Winamp icon from the source resource directory
     QString appDir = QCoreApplication::applicationDirPath();
+    QIcon appIcon;
     QStringList iconCandidates = {
         appDir + "/../../Src/Winamp/resource/WinampIcon.ico",
         appDir + "/../Src/Winamp/resource/WinampIcon.ico",
@@ -8915,10 +9121,14 @@ int main(int argc, char *argv[]) {
     }
     for (const QString &iconPath : iconCandidates) {
         if (QFile::exists(iconPath)) {
-            app.setWindowIcon(QIcon(iconPath));
+            appIcon = QIcon(iconPath);
             break;
         }
     }
+    if (appIcon.isNull()) {
+        appIcon = createFallbackAppIcon();
+    }
+    app.setWindowIcon(appIcon);
 
     // Load bitmaps — try saved skin, then project skins/default, then resource dir
     QSettings settings(configPath(), QSettings::IniFormat);
