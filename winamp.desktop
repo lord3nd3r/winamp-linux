@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Winamp
+GenericName=Media Player
+Comment=Winamp media player for Linux
+Exec=winamp %U
+TryExec=winamp
+Terminal=false
+Categories=AudioVideo;Player;Audio;
+Icon=/usr/share/winamp/resource/WinampIcon.ico
+MimeType=audio/mpeg;audio/mp3;audio/x-mpegurl;audio/x-scpls;audio/flac;audio/ogg;audio/wav;audio/x-wav;audio/aac;audio/mp4;
+StartupNotify=true
+StartupWMClass=winamp

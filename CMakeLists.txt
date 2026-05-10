@@ -64,5 +64,6 @@ if(QT_PACKAGE STREQUAL "Qt6" AND ${QT_DBUS_FOUND_VAR})
 endif()
 
 install(TARGETS winamp RUNTIME DESTINATION bin)
+install(FILES winamp.desktop DESTINATION share/applications)
 install(DIRECTORY skins/ DESTINATION share/winamp/skins)
 install(DIRECTORY Src/Winamp/resource/ DESTINATION share/winamp/resource)
