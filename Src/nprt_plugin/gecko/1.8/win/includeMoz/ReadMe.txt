@@ -1,1 +1,0 @@
-Files in includeMoz are copied from the Mozilla Source
