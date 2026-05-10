@@ -2021,11 +2021,20 @@ private:
 
     void populateSkins() {
         if (!skinListWidget) return;
-        // Find the built-in default skin path
+        // Find the built-in default skin path (check all known locations)
         QString appDir = QCoreApplication::applicationDirPath();
         QStringList defaultCandidates = {
             appDir + "/../skins/default",
             appDir + "/../../skins/default",
+            appDir + "/../Src/Winamp/resource",
+            appDir + "/../../Src/Winamp/resource",
+            appDir + "/../share/winamp/skins/default",
+            appDir + "/../share/winamp/resource",
+            "/usr/share/winamp/skins/default",
+            "/usr/share/winamp/resource",
+            "/usr/local/share/winamp/skins/default",
+            "/usr/local/share/winamp/resource",
+            QDir::homePath() + "/.local/share/winamp/skins/default",
             QDir::homePath() + "/.winamp/skins/default"
         };
         for (const QString &p : defaultCandidates) {
