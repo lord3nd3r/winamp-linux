@@ -172,6 +172,24 @@ def on_winamp_exit():
     print("Goodbye!")
 ```
 
+### Icecast DJ Plugin
+
+An included plugin for DJs that streams directly to Icecast servers. Install it by copying
+`plugins/examples/icecast_dj.py` to `~/.config/winamp/plugins/`. On first run it creates
+`icecast_dj.json` with all available options:
+
+- **Server**: host, port, username, password, TLS toggle
+- **Mount points**: multiple mounts with independent format/bitrate/samplerate/channels
+- **Formats**: MP3, OGG Vorbis, Opus, AAC, FLAC
+- **DJ metadata**: name, description, URL
+- **Auto-reconnect**: configurable delay and max attempts
+- **Metadata push**: auto-updates Icecast song title on track change
+- **Logging**: optional log file output
+
+Requires `ffmpeg` (`sudo apt install ffmpeg`).
+
+See `plugins/examples/` for all bundled plugins.
+
 ## License
 
 This project is licensed under the [GNU General Public License v2.0](LICENSE.md).
