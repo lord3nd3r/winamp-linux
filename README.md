@@ -9,14 +9,16 @@ Native Winamp-inspired player for Linux with classic skins, playlist and equaliz
 ## Highlights
 
 - Classic Winamp-style main player
-- Playlist editor and 10-band equalizer
+- Playlist editor and 10-band equalizer (faithful port of the original EQ10 DSP algorithm)
+- Non-blocking async playlist loading with background duration probing
+- Logarithmic spectrum analyzer matching the original Winamp frequency mapping
 - Skin loading from installed assets, custom folders, and skin archives
 - Modern Winamp 5-style skins are currently disabled because they can break the UI
 - projectM/Milkdrop visualization support
 - System tray integration
 - MPRIS2 support on Qt6
 - Bookmarks, recent files, language packs, and persisted settings
-- HTTP/HTTPS stream URL playback (including playlist entries)
+- HTTP/HTTPS stream URL playback with redirect following and automatic fallback
 
 ## Build Requirements
 
@@ -89,11 +91,19 @@ At runtime, the app looks for skins and resources in:
 
 ## Notes
 
-- Qt6 enables the full MPRIS2 path.
-- Qt5 builds are supported, but MPRIS2 is disabled there.
+- Both Qt5 and Qt6 build cleanly with zero errors and zero warnings.
+- Qt6 enables the full MPRIS2 path (desktop media keys, KDE Connect, panel widgets).
+- Qt5 builds include full streaming support; MPRIS2 and EQ DSP processing are Qt6-only.
 - The app uses the real Winamp bitmap assets from the repo and installed share directories.
 - User configuration is stored under `~/.config/winamp/`.
 - Modern Winamp 5 skins are intentionally disabled for now; use classic skins only.
+
+## Technical Details
+
+- **EQ DSP**: Faithful port of George Yohng's `eq10dsp.cpp` with asymmetric Q, dynamic limiter, and pre-allocated audio buffers for glitch-free real-time processing.
+- **Spectrum Analyzer**: Uses logarithmic (octave-based) FFT bin mapping matching Winamp's original `sa_tab[]` frequency distribution.
+- **Playlist Loading**: Async duration probing via a single shared `QMediaPlayer` queue with 5-second timeout, replacing the old blocking-per-track pattern.
+- **Gapless Playback**: Dual `QMediaPlayer` preload/swap architecture for seamless track transitions.
 
 ## Repository Layout
 

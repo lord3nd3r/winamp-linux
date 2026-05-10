@@ -97,7 +97,7 @@ static inline void waSetSource(QMediaPlayer *player, const QUrl &url) {
     player->setMedia(url);
 }
 static inline QUrl waSource(const QMediaPlayer *player) {
-    return player->media().canonicalUrl();
+    return player->media().request().url();
 }
 static inline WAudioOutput *waCreateAudioOutput(QObject *parent) {
     Q_UNUSED(parent);
@@ -2599,6 +2599,18 @@ static bool isModernSkinDir(const QString &path) {
 static bool g_isModernSkin = false;
 static ModernSkinEngine *g_modernSkin = nullptr;
 
+// Shared Winamp-style QMenu stylesheet (used by all context menus)
+static const char *kWinampMenuStyle =
+    "QMenu { background-color: #2b2d3d; color: #00ff00; border: 1px solid #555; font-size: 9pt; }"
+    "QMenu::item:selected { background-color: #0000c6; }"
+    "QMenu::item:checked { font-weight: bold; }"
+    "QMenu::item:disabled { color: #666; }"
+    "QMenu::separator { height: 1px; background: #555; margin: 2px 4px; }";
+
+// Shared audio file filter string for all file dialogs
+static const char *kAudioFileFilter =
+    "Audio Files (*.mp3 *.wav *.flac *.ogg *.m4a *.aac *.wma *.opus);;All Files (*)";
+
 // Config file path helper
 static QString configPath() {
     QString dir = QDir::homePath() + "/.config/winamp";
@@ -2876,6 +2888,12 @@ private:
     // Font settings
     QString playlistFontFamily = "Courier New";
     int playlistFontSize = 8;
+    
+    // Async duration probe queue (replaces blocking QEventLoop per-track)
+    QMediaPlayer *durationProbePlayer = nullptr;
+    QStringList durationProbeQueue;
+    bool durationProbeActive = false;
+    void startNextDurationProbe();
 };
 
 // Equalizer Window
@@ -2946,11 +2964,7 @@ public:
     
     void showPresetsMenu(QPoint globalPos) {
         QMenu menu;
-        menu.setStyleSheet(
-            "QMenu { background-color: #2b2d3d; color: #00ff00; border: 1px solid #555; font-size: 9pt; }"
-            "QMenu::item:selected { background-color: #0000c6; }"
-            "QMenu::separator { height: 1px; background: #555; margin: 2px 4px; }"
-        );
+        menu.setStyleSheet(kWinampMenuStyle);
         
         // Built-in presets submenu
         QMenu *builtinMenu = menu.addMenu("Presets");
@@ -4046,31 +4060,54 @@ void PlaylistWindow::addTrack(const QString &filePath) {
     item->setData(Qt::UserRole, location); // Store full location for drag-out
     listWidget->addItem(item);
     tracks.append(location);
+    trackDurations.append(0); // Start with 0, probe async
+    updateTotalTimeDisplay();
 
-    if (remote) {
-        trackDurations.append(0);
-        updateTotalTimeDisplay();
+    if (remote) return;
+
+    // Queue async duration probe (non-blocking — replaces old QEventLoop pattern)
+    durationProbeQueue.append(location);
+    if (!durationProbeActive) {
+        startNextDurationProbe();
+    }
+}
+
+void PlaylistWindow::startNextDurationProbe() {
+    if (durationProbeQueue.isEmpty()) {
+        durationProbeActive = false;
         return;
     }
+    durationProbeActive = true;
+    QString nextFile = durationProbeQueue.takeFirst();
 
-    // Use a temporary media player to get the duration
-    QMediaPlayer tempPlayer;
-    waSetSource(&tempPlayer, QUrl::fromLocalFile(location));
+    // Create the shared probe player on first use
+    if (!durationProbePlayer) {
+        durationProbePlayer = new QMediaPlayer(this);
+        connect(durationProbePlayer, &QMediaPlayer::mediaStatusChanged,
+            this, [this](QMediaPlayer::MediaStatus status) {
+                if (status == QMediaPlayer::LoadedMedia || status == QMediaPlayer::InvalidMedia) {
+                    // Find the track index matching the probed source
+                    QString probedPath = waSource(durationProbePlayer).toLocalFile();
+                    int idx = tracks.lastIndexOf(probedPath);
+                    if (idx >= 0 && idx < trackDurations.size() && status == QMediaPlayer::LoadedMedia) {
+                        trackDurations[idx] = durationProbePlayer->duration();
+                        updateTotalTimeDisplay();
+                    }
+                    // Probe next in queue
+                    startNextDurationProbe();
+                }
+            });
+    }
 
-    // We need to wait for it to load the media to get duration
-    QEventLoop loop;
-    QObject::connect(&tempPlayer, &QMediaPlayer::mediaStatusChanged, [&](QMediaPlayer::MediaStatus status){
-        if(status == QMediaPlayer::LoadedMedia) {
-            trackDurations.append(tempPlayer.duration());
-            updateTotalTimeDisplay();
-            loop.quit();
-        } else if (status == QMediaPlayer::InvalidMedia) {
-            trackDurations.append(0); // Add 0 if media is invalid
-            updateTotalTimeDisplay();
-            loop.quit();
+    waSetSource(durationProbePlayer, QUrl::fromLocalFile(nextFile));
+
+    // Safety timeout: if media never reaches Loaded/Invalid, skip after 5 seconds
+    QTimer::singleShot(5000, this, [this, nextFile]() {
+        if (durationProbeActive && waSource(durationProbePlayer).toLocalFile() == nextFile) {
+            // Timed out — skip this track's duration probe
+            startNextDurationProbe();
         }
     });
-    loop.exec();
 }
 
 void PlaylistWindow::clearPlaylist() {
@@ -4585,11 +4622,7 @@ void PlaylistWindow::loadSettings(QSettings &s) {
 
 // Right-click context menu on playlist items (matches Windows Winamp)
 void PlaylistWindow::showContextMenu(QPoint globalPos) {
-    static const char *menuStyle =
-        "QMenu { background-color: #2b2d3d; color: #00ff00; border: 1px solid #555; font-size: 9pt; }"
-        "QMenu::item:selected { background-color: #0000c6; }"
-        "QMenu::item:disabled { color: #666; }"
-        "QMenu::separator { height: 1px; background: #555; margin: 2px 4px; }";
+    const char *menuStyle = kWinampMenuStyle;
 
     QMenu menu;
     menu.setStyleSheet(menuStyle);
@@ -4706,10 +4739,7 @@ void PlaylistWindow::showContextMenu(QPoint globalPos) {
 
 void PlaylistWindow::showAddMenu(QPoint globalPos) {
     QMenu menu;
-    menu.setStyleSheet(
-        "QMenu { background-color: #2b2d3d; color: #00ff00; border: 1px solid #555; font-size: 9pt; }"
-        "QMenu::item:selected { background-color: #0000c6; }"
-    );
+    menu.setStyleSheet(kWinampMenuStyle);
     
     QAction *addFiles = menu.addAction("Add file(s)\tL");
     QAction *addDir = menu.addAction("Add folder\tShift+L");
@@ -4718,7 +4748,7 @@ void PlaylistWindow::showAddMenu(QPoint globalPos) {
     QAction *selected = menu.exec(globalPos);
     if (selected == addFiles) {
         QStringList files = QFileDialog::getOpenFileNames(this, "Add Files", QString(), 
-            "Audio Files (*.mp3 *.wav *.flac *.ogg *.m4a *.aac);;All Files (*)");
+            kAudioFileFilter);
         for (const QString &file : files) {
             if (!file.isEmpty()) {
                 addTrack(file);
@@ -4746,11 +4776,7 @@ void PlaylistWindow::showAddMenu(QPoint globalPos) {
 
 void PlaylistWindow::showRemMenu(QPoint globalPos) {
     QMenu menu;
-    menu.setStyleSheet(
-        "QMenu { background-color: #2b2d3d; color: #00ff00; border: 1px solid #555; font-size: 9pt; }"
-        "QMenu::item:selected { background-color: #0000c6; }"
-        "QMenu::separator { height: 1px; background: #555; margin: 2px 4px; }"
-    );
+    menu.setStyleSheet(kWinampMenuStyle);
     
     QAction *removeSel = menu.addAction("Remove selected\tDel");
     QAction *crop = menu.addAction("Crop selected\tCtrl+Del");
@@ -4782,10 +4808,7 @@ void PlaylistWindow::showRemMenu(QPoint globalPos) {
 
 void PlaylistWindow::showSelMenu(QPoint globalPos) {
     QMenu menu;
-    menu.setStyleSheet(
-        "QMenu { background-color: #2b2d3d; color: #00ff00; border: 1px solid #555; font-size: 9pt; }"
-        "QMenu::item:selected { background-color: #0000c6; }"
-    );
+    menu.setStyleSheet(kWinampMenuStyle);
     
     QAction *selectAll = menu.addAction("Select all\tCtrl+A");
     QAction *selectNone = menu.addAction("Select none");
@@ -4803,10 +4826,7 @@ void PlaylistWindow::showSelMenu(QPoint globalPos) {
 }
 
 void PlaylistWindow::showMiscMenu(QPoint globalPos) {
-    static const char *menuStyle =
-        "QMenu { background-color: #2b2d3d; color: #00ff00; border: 1px solid #555; font-size: 9pt; }"
-        "QMenu::item:selected { background-color: #0000c6; }"
-        "QMenu::separator { height: 1px; background: #555; margin: 2px 4px; }";
+    const char *menuStyle = kWinampMenuStyle;
 
     QMenu menu;
     menu.setStyleSheet(menuStyle);
@@ -4875,10 +4895,7 @@ void PlaylistWindow::showMiscMenu(QPoint globalPos) {
 
 void PlaylistWindow::showListMenu(QPoint globalPos) {
     QMenu menu;
-    menu.setStyleSheet(
-        "QMenu { background-color: #2b2d3d; color: #00ff00; border: 1px solid #555; font-size: 9pt; }"
-        "QMenu::item:selected { background-color: #0000c6; }"
-    );
+    menu.setStyleSheet(kWinampMenuStyle);
 
     QAction *newPl = menu.addAction("New playlist\tCtrl+N");
     QAction *openPl = menu.addAction("Open playlist...\tCtrl+O");
@@ -6389,7 +6406,7 @@ public:
 public slots:
     void onPlayFile() {
         QString file = QFileDialog::getOpenFileName(this, "Open File", QString(), 
-            "Audio Files (*.mp3 *.wav *.flac *.ogg *.m4a *.aac *.wma);;All Files (*)");
+            kAudioFileFilter);
         if (!file.isEmpty()) {
             playFile(file);
             RecentFilesManager::instance().addFile(file);
@@ -7034,9 +7051,15 @@ public:
             float magnitudes[256];
             fft512(fftInput, magnitudes);
 
+            // Logarithmic bin mapping (octave-based, matching Winamp's original sa_tab[])
+            // Maps 256 FFT bins into 19 display bars with log-frequency grouping
+            static const int sa_bins[20] = {
+                1, 2, 3, 4, 6, 8, 11, 15, 21, 29,
+                40, 54, 74, 101, 137, 187, 208, 230, 245, 256
+            };
             for (int i = 0; i < 19; i++) {
-                int startBin = i * 8 + 1;
-                int endBin = qMin(startBin + 8, 256);
+                int startBin = sa_bins[i];
+                int endBin = sa_bins[i + 1];
                 float maxVal = 0;
                 for (int j = startBin; j < endBin; j++)
                     if (magnitudes[j] > maxVal) maxVal = magnitudes[j];
@@ -7142,24 +7165,26 @@ public:
             if (balance < 0) balR = (127.0f + balance) / 127.0f; // left-biased
             if (balance > 0) balL = (127.0f - balance) / 127.0f; // right-biased
             
-            // Allocate float working buffer
+            // Resize pre-allocated DSP buffers if needed (avoids per-callback heap alloc)
             int totalSamples = sampleCount * eqChannels;
-            QVector<float> floatBuf(totalSamples);
-            QVector<float> outBuf(totalSamples);
+            if (eqDspFloatBuf.size() < totalSamples) {
+                eqDspFloatBuf.resize(totalSamples);
+                eqDspOutBuf.resize(totalSamples);
+            }
             
             // Convert input to float with preamp applied (matches In.cpp FillFloat)
             if (fmt.sampleFormat() == QAudioFormat::Int16) {
                 const qint16 *src = buffer.constData<qint16>();
                 for (int i = 0; i < sampleCount; i++) {
                     for (int ch = 0; ch < eqChannels; ch++) {
-                        floatBuf[i * eqChannels + ch] = (src[i * channels + ch] / 32768.0f) * preampGain;
+                        eqDspFloatBuf[i * eqChannels + ch] = (src[i * channels + ch] / 32768.0f) * preampGain;
                     }
                 }
             } else if (fmt.sampleFormat() == QAudioFormat::Float) {
                 const float *src = buffer.constData<float>();
                 for (int i = 0; i < sampleCount; i++) {
                     for (int ch = 0; ch < eqChannels; ch++) {
-                        floatBuf[i * eqChannels + ch] = src[i * channels + ch] * preampGain;
+                        eqDspFloatBuf[i * eqChannels + ch] = src[i * channels + ch] * preampGain;
                     }
                 }
             } else {
@@ -7168,24 +7193,24 @@ public:
             
             // Process through EQ10 for each channel (matches Windows inner loop)
             for (int ch = 0; ch < eqChannels; ch++) {
-                eq10_processf(&eqState[ch], floatBuf.data(), outBuf.data(),
+                eq10_processf(&eqState[ch], eqDspFloatBuf.data(), eqDspOutBuf.data(),
                               sampleCount, ch, eqChannels);
             }
             
             // Apply volume and balance post-EQ
             for (int i = 0; i < sampleCount; i++) {
                 if (eqChannels >= 2) {
-                    outBuf[i * eqChannels + 0] *= vol * balL;
-                    outBuf[i * eqChannels + 1] *= vol * balR;
+                    eqDspOutBuf[i * eqChannels + 0] *= vol * balL;
+                    eqDspOutBuf[i * eqChannels + 1] *= vol * balR;
                 } else {
-                    outBuf[i * eqChannels + 0] *= vol;
+                    eqDspOutBuf[i * eqChannels + 0] *= vol;
                 }
             }
             
             // Write to QAudioSink
             if (audioSinkDevice) {
                 qint64 bytes = totalSamples * sizeof(float);
-                audioSinkDevice->write(reinterpret_cast<const char*>(outBuf.data()), bytes);
+                audioSinkDevice->write(reinterpret_cast<const char*>(eqDspOutBuf.data()), bytes);
             }
         } else {
             // EQ is off — restore direct QAudioOutput path
@@ -7204,6 +7229,7 @@ public:
             }
         }
     }
+#endif
 
     void cleanupNetworkStream() {
         if (streamReply) {
@@ -7240,11 +7266,7 @@ public:
         }
 
         QNetworkRequest request(url);
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
         request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
-#else
-        request.setAttribute(QNetworkRequest::FollowRedirectsAttribute, true);
-#endif
         request.setRawHeader("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:126.0) Gecko/20100101 Firefox/126.0");
         request.setRawHeader("Accept", "*/*");
         request.setRawHeader("Accept-Language", "en-US,en;q=0.9");
@@ -7271,7 +7293,6 @@ public:
             trayIcon->showMessage("Winamp", title, QSystemTrayIcon::Information, 3000);
         }
     }
-#endif
 
 protected:
     void paintEvent(QPaintEvent *) override {
@@ -7837,12 +7858,7 @@ protected:
     }
 
     void showContextMenu(QPoint globalPos) {
-        static const char *menuStyle =
-            "QMenu { background-color: #2b2d3d; color: #00ff00; border: 1px solid #555; font-size: 9pt; }"
-            "QMenu::item:selected { background-color: #0000c6; }"
-            "QMenu::item:checked { font-weight: bold; }"
-            "QMenu::item:disabled { color: #666; }"
-            "QMenu::separator { height: 1px; background: #555; margin: 2px 4px; }";
+        const char *menuStyle = kWinampMenuStyle;
 
         QMenu menu;
         menu.setStyleSheet(menuStyle);
@@ -8128,11 +8144,7 @@ protected:
             // Right-click on repeat button: show repeat mode menu
             if (x >= 210 && x < 238 && y >= 89 && y < 104) {
                 QMenu menu;
-                menu.setStyleSheet(
-                    "QMenu { background-color: #2b2d3d; color: #00ff00; border: 1px solid #555; font-size: 9pt; }"
-                    "QMenu::item:selected { background-color: #0000c6; }"
-                    "QMenu::item:checked { font-weight: bold; }"
-                );
+                menu.setStyleSheet(kWinampMenuStyle);
                 QAction *repOffAct = menu.addAction("Repeat off");
                 repOffAct->setCheckable(true);
                 repOffAct->setChecked(!repeatOn);
@@ -8466,12 +8478,11 @@ protected:
                             break;
                         case MB_MUTE: {
                             // Toggle mute
-                            static int savedVolume = 200;
                             if (waOutputVolume(player, audioOutput) > 0.01f) {
-                                savedVolume = volume;
+                                savedMuteVolume = volume;
                                 waSetOutputVolume(player, audioOutput, 0.0f);
                             } else {
-                                volume = savedVolume;
+                                volume = savedMuteVolume;
                                 applyVolume();
                             }
                             break;
@@ -8544,7 +8555,7 @@ protected:
     
     void openFile() {
         QString fileName = QFileDialog::getOpenFileName(this, "Open Audio File", "",
-            "Audio Files (*.mp3 *.wav *.flac *.ogg *.m4a *.aac *.wma);;All Files (*)");
+            kAudioFileFilter);
         if (!fileName.isEmpty()) {
             currentFile = fileName;
             waSetSource(player, QUrl::fromLocalFile(fileName));
@@ -8808,6 +8819,8 @@ private:
     int eqSampleRate = 0;  // Current configured sample rate
     int eqChannels = 0;    // Current configured channel count
     bool eqDspActive = false; // Whether DSP path is active
+    QVector<float> eqDspFloatBuf;  // Pre-allocated input buffer (resized on format change)
+    QVector<float> eqDspOutBuf;    // Pre-allocated output buffer (resized on format change)
     QTimer *timer;
     QTimer *scrollTimer;
     QString currentFile;
@@ -8827,6 +8840,7 @@ private:
     bool isDraggingVolume, isDraggingPos, isDraggingBalance;
     int scrollOffset;
     int balance; // -127 (left) to +127 (right), 0 = center (matches Windows pan127)
+    int savedMuteVolume = 200; // Volume saved before mute (was static local, now proper member)
     bool doubleSize;   // 2x scaling mode (like Windows config_dsize)
     bool shadeMode;    // compact shade mode (like Windows config_windowshade)
     bool alwaysOnTop;  // always on top (like Windows config_aot)
