@@ -19,6 +19,7 @@ Native Winamp-inspired player for Linux with classic skins, playlist and equaliz
 - MPRIS2 support on Qt6
 - Bookmarks, recent files, language packs, and persisted settings
 - HTTP/HTTPS stream URL playback with redirect following and automatic fallback
+- Python plugin system — extend Winamp with scripts in `~/.config/winamp/plugins/`
 
 ## Build Requirements
 
@@ -31,7 +32,8 @@ sudo apt-get install -y \
   qtbase5-dev qtmultimedia5-dev libqt5opengl5-dev \
   qt6-base-dev qt6-multimedia-dev qt6-base-dev-tools \
   libgl-dev \
-  libprojectm-dev projectm-data
+  libprojectm-dev projectm-data \
+  pybind11-dev python3-dev
 ```
 
 Qt5 or Qt6 will work. CMake prefers Qt6 when available and falls back to Qt5.
@@ -132,9 +134,43 @@ At runtime, the app looks for skins and resources in:
   - `playlist.h`, `equalizer.h`, etc. - extracted UI windows
   - `eq_dsp.h` - EQ DSP algorithm
   - `mpris2_adaptors.h` - DBus integration
+  - `python_plugin.h` - embedded Python plugin system
 - `skins/` - default skin assets
 - `assets/` - classic Winamp resource assets
 - `lang/` - translation files
+
+## Python Plugins
+
+Winamp for Linux supports Python plugins via an embedded interpreter (pybind11). Place `.py` files in `~/.config/winamp/plugins/` and they will be loaded automatically at startup.
+
+### Plugin API
+
+Each plugin receives a `winamp.Api` object with these methods:
+
+| Method | Description |
+|---|---|
+| `play_track(path)` | Play a file by path |
+| `play()` / `pause()` / `stop()` | Playback controls |
+| `next_track()` / `prev_track()` | Track navigation |
+| `set_volume(v)` / `get_volume()` | Volume (0-255) |
+| `get_current_file()` | Current file path |
+| `is_playing()` / `is_paused()` | Playback state |
+| `get_position()` / `get_duration()` | Time in seconds |
+| `seek(seconds)` | Seek to position |
+| `playlist_count()` / `playlist_add(path)` / `playlist_clear()` | Playlist management |
+
+### Example Plugin
+
+```python
+# ~/.config/winamp/plugins/hello_winamp.py
+
+def on_winamp_start(api):
+    print(f"Volume: {api.get_volume()}/255")
+    print(f"Playlist: {api.playlist_count()} tracks")
+
+def on_winamp_exit():
+    print("Goodbye!")
+```
 
 ## License
 

@@ -55,6 +55,9 @@ add_executable(winamp
     src/mpris2_adaptors.h
 )
 
+find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
+find_package(pybind11 CONFIG REQUIRED)
+
 target_link_libraries(winamp
     ${QT_PACKAGE}::Core
     ${QT_PACKAGE}::Gui
@@ -62,7 +65,9 @@ target_link_libraries(winamp
     ${QT_PACKAGE}::Multimedia
     ${QT_PACKAGE}::MultimediaWidgets
     ${QT_PACKAGE}::OpenGL
+    ${QT_PACKAGE}::Network
     ${PROJECTM_LIB}
+    pybind11::embed
 )
 
 if(QT_PACKAGE STREQUAL "Qt6")
