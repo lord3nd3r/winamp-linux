@@ -2283,6 +2283,11 @@ public slots:
     QMediaPlayer *getPlayer() { return player; }
     PlaylistWindow *getPlaylistWindow() { return playlistWindow; }
 
+    // Public accessors for Python plugin API
+    void setPluginVolume(int v) { volume = qBound(0, v, 255); applyVolume(); update(); }
+    int getPluginVolume() const { return volume; }
+    QString getPluginCurrentFile() const { return currentFile; }
+
     void onPlayLocation() {
         PlayLocationDialog dialog(this);
         if (dialog.exec() == QDialog::Accepted) {
@@ -5014,6 +5019,8 @@ void Mpris2PlayerAdaptor::OpenUri(const QString &uri) {
 }
 #endif
 
+#include "python_plugin.h"
+
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
     app.setApplicationName("Winamp");
@@ -5127,6 +5134,7 @@ int main(int argc, char *argv[]) {
     }
 
     WinampWindow w;
+    PythonPluginManager pyManager(&w);
 
     // If saved skin is modern, trigger modern skin loading
     if (savedIsModern) {
