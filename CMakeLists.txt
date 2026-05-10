@@ -37,7 +37,7 @@ endif()
 find_library(PROJECTM_LIB projectM REQUIRED)
 
 add_executable(winamp
-    winamp_authentic.cpp
+    src/main.cpp
     src/compat.h
     src/eq_dsp.h
     src/constants.h
