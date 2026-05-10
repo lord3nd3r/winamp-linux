@@ -38,6 +38,9 @@ find_library(PROJECTM_LIB projectM REQUIRED)
 
 add_executable(winamp
     winamp_authentic.cpp
+    src/compat.h
+    src/eq_dsp.h
+    src/constants.h
 )
 
 target_link_libraries(winamp
