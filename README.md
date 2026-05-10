@@ -127,7 +127,11 @@ At runtime, the app looks for skins and resources in:
 ## Repository Layout
 
 - `CMakeLists.txt` - build configuration and Qt selection
-- `winamp_authentic.cpp` - main application implementation
+- `src/` - modularized C++ source code and headers
+  - `main.cpp` - main application implementation (formerly `winamp_authentic.cpp`)
+  - `playlist.h`, `equalizer.h`, etc. - extracted UI windows
+  - `eq_dsp.h` - EQ DSP algorithm
+  - `mpris2_adaptors.h` - DBus integration
 - `skins/` - default skin assets
 - `Src/Winamp/resource/` - classic Winamp resource assets
 - `lang/` - translation files
