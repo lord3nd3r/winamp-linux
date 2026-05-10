@@ -47,8 +47,8 @@ static inline QStringList winampSkinAndResourcePaths(const QString &appDir) {
         appDir + "/../skins/default",
         appDir + "/../../skins/default",
         QDir::homePath() + "/.winamp/skins/default",
-        appDir + "/../Src/Winamp/resource",
-        appDir + "/../../Src/Winamp/resource"
+        appDir + "/../assets",
+        appDir + "/../../assets"
     };
 
     const QStringList roots = winampDataRoots(appDir);
