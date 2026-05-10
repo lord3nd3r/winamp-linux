@@ -152,3 +152,5 @@ private:
     QMap<QString, QString> strings;
     QString currentLang;
 };
+
+#define TR(key, def) Translator::instance().tr(key, def)

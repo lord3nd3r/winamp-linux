@@ -48,6 +48,9 @@ add_executable(winamp
     src/modern_skin.h
     src/playlist.h
     src/equalizer.h
+    src/video.h
+    src/milkdrop.h
+    src/media_library.h
 )
 
 target_link_libraries(winamp
