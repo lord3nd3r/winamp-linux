@@ -45,12 +45,14 @@ add_executable(winamp
     src/bookmark_manager.h
     src/recent_files.h
     src/dialogs.h
+    src/preferences.h
     src/modern_skin.h
     src/playlist.h
     src/equalizer.h
     src/video.h
     src/milkdrop.h
     src/media_library.h
+    src/mpris2_adaptors.h
 )
 
 target_link_libraries(winamp
