@@ -1520,13 +1520,11 @@ public:
         // Setup category
         QTreeWidgetItem *setupItem = addPage(nullptr, "Setup", createGeneralPage());
         addPage(setupItem, "File Types", createFileTypesPage());
-        addPage(setupItem, "Titles", createTitlesPage());
         addPage(setupItem, "Language", createLanguagePage());
 
         // Skins category
         QTreeWidgetItem *skinsItem = addPage(nullptr, "Skins", createSkinsPage());
         addPage(skinsItem, "Classic Skins", createClassicSkinsPage());
-        addPage(skinsItem, "Modern Skins", createModernSkinsPage());
 
         // Playback category
         QTreeWidgetItem *playbackItem = addPage(nullptr, "Playback", createPlaybackPage());
@@ -1772,7 +1770,7 @@ private:
         layout->addSpacing(10);
         layout->addWidget(new QLabel("Select a skin category on the left.\n\n"
                                      "Classic skins (.wsz) use bitmap sprite sheets.\n"
-                                     "Modern skins (.wal) use XML-based layouts."));
+                                     "Modern skins are currently disabled because they can break the UI."));
         layout->addStretch();
         return page;
     }
@@ -6352,19 +6350,28 @@ public slots:
     void onSkinChanged(const QString &skinPath) {
         // Check if this is a modern (XML-based) skin
         if (isModernSkinDir(skinPath)) {
-            if (modernSkin.loadSkin(skinPath)) {
-                isModernSkin = true;
-                g_isModernSkin = true;
-                g_modernSkin = &modernSkin;
-                // Remove fixed size constraint, allow resizing
-                setMinimumSize(0, 0);
-                setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
-                setMinimumSize(354, 144);
-                resize(354, 144);
-                setMouseTracking(true);
-                update();
-                qDebug() << "Loaded modern skin:" << modernSkin.getSkinName();
+            qWarning() << "Modern skin support is disabled because it can break the UI. Falling back to classic skin.";
+            isModernSkin = false;
+            g_isModernSkin = false;
+            g_modernSkin = nullptr;
+            QString fallbackSkin = QDir::homePath() + "/.winamp/skins/default";
+            WinampBitmaps::instance().loadAll(fallbackSkin);
+            g_plColors = parsePleditTxt(fallbackSkin);
+            QString appDir = QCoreApplication::applicationDirPath();
+            QStringList fallbacks = winampSkinAndResourcePaths(appDir);
+            for (const QString &fb : fallbacks) {
+                QDir d(fb);
+                if (d.exists())
+                    WinampBitmaps::instance().loadMissing(d.absolutePath());
             }
+
+            // Restore classic fixed size so the UI stays in a known-good layout.
+            if (doubleSize)
+                setFixedSize(550, 232);
+            else if (shadeMode)
+                setFixedSize(275, 14);
+            else
+                setFixedSize(275, 116);
         } else {
             // Classic skin
             isModernSkin = false;
