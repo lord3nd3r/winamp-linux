@@ -5025,8 +5025,8 @@ int main(int argc, char *argv[]) {
     QString appDir = QCoreApplication::applicationDirPath();
     QIcon appIcon;
     QStringList iconCandidates = {
-        appDir + "/../../Src/Winamp/resource/WinampIcon.ico",
-        appDir + "/../Src/Winamp/resource/WinampIcon.ico",
+        appDir + "/../../assets/WinampIcon.ico",
+        appDir + "/../assets/WinampIcon.ico",
         appDir + "/WinampIcon.ico"
     };
     for (const QString &root : winampDataRoots(appDir)) {

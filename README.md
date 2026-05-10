@@ -133,7 +133,7 @@ At runtime, the app looks for skins and resources in:
   - `eq_dsp.h` - EQ DSP algorithm
   - `mpris2_adaptors.h` - DBus integration
 - `skins/` - default skin assets
-- `Src/Winamp/resource/` - classic Winamp resource assets
+- `assets/` - classic Winamp resource assets
 - `lang/` - translation files
 
 ## License

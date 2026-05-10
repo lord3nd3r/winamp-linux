@@ -249,7 +249,7 @@ private:
         QString appDir = QCoreApplication::applicationDirPath();
         QStringList skinPaths = {
             "skins/default",
-            "Src/Winamp/resource"
+            "assets"
         };
         for (const QString &root : winampDataRoots(appDir)) {
             skinPaths << (root + "/skins/default")

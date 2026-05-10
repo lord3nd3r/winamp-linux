@@ -261,7 +261,7 @@ private:
         QString appDir = QCoreApplication::applicationDirPath();
         QStringList paths = {
             "skins/default/video_logo.bmp",
-            "Src/Winamp/resource/video_logo.bmp"
+            "assets/video_logo.bmp"
         };
         for (const QString &root : winampDataRoots(appDir)) {
             paths << (root + "/skins/default/video_logo.bmp")
