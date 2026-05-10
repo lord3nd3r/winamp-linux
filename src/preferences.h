@@ -22,6 +22,11 @@
 #include <QTreeWidget>
 #include <QStackedWidget>
 #include <QSpinBox>
+#include <QDesktopServices>
+#include <QMessageBox>
+#include <QTextStream>
+#include <QStandardPaths>
+#include <QUrl>
 
 class PreferencesDialog : public QDialog {
     Q_OBJECT
@@ -499,24 +504,209 @@ private:
         return page;
     }
 
-    // ---- Plugins overview page ----
+    // ---- Plugins page — full management UI ----
+    QListWidget *pluginListWidget = nullptr;
+
     QWidget *createPluginsPage() {
         QWidget *page = new QWidget();
         QVBoxLayout *layout = new QVBoxLayout(page);
-        layout->addWidget(new QLabel("<b>Plug-ins</b>"));
-        layout->addSpacing(10);
-        layout->addWidget(new QLabel("Plug-in architecture is not yet available on Linux.\n\n"
-                                     "Currently using:\n"
-                                     "  • Qt6 Multimedia for audio decoding & output\n"
-                                     "  • projectM for Milkdrop visualization\n\n"
-                                     "Future support planned for:\n"
-                                     "  • Input plug-ins (in_*.so)\n"
-                                     "  • Output plug-ins (out_*.so)\n"
-                                     "  • DSP/Effect plug-ins (dsp_*.so)\n"
-                                     "  • General purpose plug-ins (gen_*.so)\n"
-                                     "  • Visualization plug-ins (vis_*.so)"));
-        layout->addStretch();
+        layout->addWidget(new QLabel("<b>Plug-ins (Python)</b>"));
+        layout->addSpacing(5);
+
+        QLabel *desc = new QLabel(
+            "Python plugins are loaded from <b>~/.config/winamp/plugins/</b><br>"
+            "Each .py file that defines <code>on_winamp_start(api)</code> is a plugin.<br>"
+            "Restart Winamp after making changes.", page);
+        desc->setWordWrap(true);
+        desc->setTextFormat(Qt::RichText);
+        layout->addWidget(desc);
+        layout->addSpacing(5);
+
+        pluginListWidget = new QListWidget(page);
+        pluginListWidget->setSelectionMode(QAbstractItemView::SingleSelection);
+        populatePlugins();
+        layout->addWidget(pluginListWidget, 1);
+
+        // Status label
+        QLabel *statusLabel = new QLabel("", page);
+        statusLabel->setStyleSheet("color: #aaffaa; font-size: 8pt;");
+        layout->addWidget(statusLabel);
+
+        // Button row
+        QHBoxLayout *btnRow = new QHBoxLayout();
+
+        QPushButton *enableBtn = new QPushButton("Enable/Disable", page);
+        QPushButton *configBtn = new QPushButton("Configure", page);
+        QPushButton *addBtn = new QPushButton("Add...", page);
+        QPushButton *removeBtn = new QPushButton("Remove", page);
+        QPushButton *refreshBtn = new QPushButton("Refresh", page);
+        QPushButton *openDirBtn = new QPushButton("Open Folder", page);
+
+        btnRow->addWidget(enableBtn);
+        btnRow->addWidget(configBtn);
+        btnRow->addWidget(addBtn);
+        btnRow->addWidget(removeBtn);
+        btnRow->addWidget(refreshBtn);
+        btnRow->addWidget(openDirBtn);
+        layout->addLayout(btnRow);
+
+        QString pluginDir = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + "/winamp/plugins";
+
+        // Enable/Disable toggle
+        connect(enableBtn, &QPushButton::clicked, this, [this, statusLabel, pluginDir]() {
+            QListWidgetItem *item = pluginListWidget->currentItem();
+            if (!item) return;
+            QString filename = item->data(Qt::UserRole).toString();
+            QString filepath = pluginDir + "/" + filename;
+            QString disabledPath = filepath + ".disabled";
+
+            if (filename.endsWith(".disabled")) {
+                // Re-enable: rename from .py.disabled to .py
+                QString enabledPath = filepath.chopped(9); // strip .disabled
+                if (QFile::rename(filepath, enabledPath)) {
+                    statusLabel->setText("Enabled: " + QFileInfo(enabledPath).fileName() + " (restart to apply)");
+                    populatePlugins();
+                }
+            } else {
+                // Disable: rename from .py to .py.disabled
+                if (QFile::rename(filepath, disabledPath)) {
+                    statusLabel->setText("Disabled: " + filename + " (restart to apply)");
+                    populatePlugins();
+                }
+            }
+        });
+
+        // Configure — open associated .json config or the .py file itself
+        connect(configBtn, &QPushButton::clicked, this, [this, statusLabel, pluginDir]() {
+            QListWidgetItem *item = pluginListWidget->currentItem();
+            if (!item) return;
+            QString filename = item->data(Qt::UserRole).toString();
+            // Strip .disabled suffix if present
+            QString baseName = filename;
+            if (baseName.endsWith(".disabled")) baseName.chop(9);
+            QString stem = QFileInfo(baseName).completeBaseName();
+
+            // Look for a matching .json config file
+            QString jsonPath = pluginDir + "/" + stem + ".json";
+            QString pyPath = pluginDir + "/" + filename;
+
+            if (QFile::exists(jsonPath)) {
+                QDesktopServices::openUrl(QUrl::fromLocalFile(jsonPath));
+                statusLabel->setText("Opened config: " + stem + ".json");
+            } else {
+                // Fall back to opening the .py file
+                QDesktopServices::openUrl(QUrl::fromLocalFile(pyPath));
+                statusLabel->setText("Opened script: " + filename + " (no .json config found)");
+            }
+        });
+
+        // Add — copy a .py file into the plugins directory
+        connect(addBtn, &QPushButton::clicked, this, [this, statusLabel, pluginDir]() {
+            QString srcFile = QFileDialog::getOpenFileName(this, "Add Python Plugin",
+                QDir::homePath(), "Python Plugins (*.py);;All Files (*)");
+            if (srcFile.isEmpty()) return;
+
+            QString destFile = pluginDir + "/" + QFileInfo(srcFile).fileName();
+            if (QFile::exists(destFile)) {
+                statusLabel->setText("Error: " + QFileInfo(srcFile).fileName() + " already exists");
+                return;
+            }
+            if (QFile::copy(srcFile, destFile)) {
+                statusLabel->setText("Added: " + QFileInfo(srcFile).fileName() + " (restart to load)");
+                populatePlugins();
+            } else {
+                statusLabel->setText("Error: failed to copy plugin file");
+            }
+        });
+
+        // Remove — delete the plugin file
+        connect(removeBtn, &QPushButton::clicked, this, [this, statusLabel, pluginDir]() {
+            QListWidgetItem *item = pluginListWidget->currentItem();
+            if (!item) return;
+            QString filename = item->data(Qt::UserRole).toString();
+            QString filepath = pluginDir + "/" + filename;
+
+            if (QFile::remove(filepath)) {
+                statusLabel->setText("Removed: " + filename);
+                populatePlugins();
+            } else {
+                statusLabel->setText("Error: could not remove " + filename);
+            }
+        });
+
+        // Refresh — rescan the plugins directory
+        connect(refreshBtn, &QPushButton::clicked, this, [this, statusLabel]() {
+            populatePlugins();
+            statusLabel->setText("Plugin list refreshed");
+        });
+
+        // Open plugins folder
+        connect(openDirBtn, &QPushButton::clicked, this, [pluginDir]() {
+            QDir().mkpath(pluginDir);
+            QDesktopServices::openUrl(QUrl::fromLocalFile(pluginDir));
+        });
+
         return page;
+    }
+
+    void populatePlugins() {
+        if (!pluginListWidget) return;
+        pluginListWidget->clear();
+
+        QString pluginDir = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + "/winamp/plugins";
+        QDir dir(pluginDir);
+        if (!dir.exists()) {
+            dir.mkpath(".");
+            return;
+        }
+
+        // List both .py (enabled) and .py.disabled (disabled) files
+        QStringList filters;
+        filters << "*.py" << "*.py.disabled";
+        QStringList files = dir.entryList(filters, QDir::Files, QDir::Name);
+
+        for (const QString &filename : files) {
+            bool disabled = filename.endsWith(".disabled");
+            QString displayName = filename;
+            if (disabled) {
+                displayName = filename.chopped(9); // strip .disabled
+            }
+
+            // Try to read a description from the first docstring or comment
+            QString desc = "";
+            QFile f(dir.absoluteFilePath(filename));
+            if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                QTextStream in(&f);
+                // Read first few lines looking for a comment or docstring
+                for (int i = 0; i < 5 && !in.atEnd(); ++i) {
+                    QString line = in.readLine().trimmed();
+                    if (line.startsWith("#") && !line.startsWith("#!")) {
+                        desc = line.mid(1).trimmed();
+                        if (desc.startsWith("-")) desc = desc.mid(1).trimmed();
+                        break;
+                    }
+                }
+                f.close();
+            }
+
+            // Check if a .json config exists
+            QString stem = QFileInfo(displayName).completeBaseName();
+            bool hasConfig = QFile::exists(pluginDir + "/" + stem + ".json");
+
+            QString label = displayName;
+            if (!desc.isEmpty()) label += "  —  " + desc;
+            if (disabled) label += "  [DISABLED]";
+            if (hasConfig) label += "  [⚙]";
+
+            QListWidgetItem *item = new QListWidgetItem(label);
+            item->setData(Qt::UserRole, filename); // store real filename
+            if (disabled) {
+                item->setForeground(QColor(120, 120, 120));
+            } else {
+                item->setForeground(QColor(0, 255, 0));
+            }
+            pluginListWidget->addItem(item);
+        }
     }
 
     // ---- Skin list helpers ----
