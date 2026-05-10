@@ -1,6 +1,6 @@
 # Winamp for Linux
 
-Native Winamp-inspired player for Linux with classic skins, playlist and equalizer windows, modern skin support, projectM/Milkdrop visualization, and desktop integration. The current codebase builds with Qt5 or Qt6 and uses C++17.
+Native Winamp-inspired player for Linux with classic skins, playlist and equalizer windows, projectM/Milkdrop visualization, and desktop integration. The current codebase builds with Qt5 or Qt6 and uses C++17.
 
 ![Winamp Linux](https://img.shields.io/badge/Winamp-Linux-00FF00?style=for-the-badge&logo=linux&logoColor=white)
 ![Qt](https://img.shields.io/badge/Qt5%2FQt6-Multimedia-41CD52?style=for-the-badge&logo=qt&logoColor=white)
@@ -16,6 +16,7 @@ Native Winamp-inspired player for Linux with classic skins, playlist and equaliz
 - System tray integration
 - MPRIS2 support on Qt6
 - Bookmarks, recent files, language packs, and persisted settings
+- HTTP/HTTPS stream URL playback (including playlist entries)
 
 ## Build Requirements
 
@@ -26,7 +27,7 @@ sudo apt-get update
 sudo apt-get install -y \
   cmake ninja-build \
   qtbase5-dev qtmultimedia5-dev libqt5opengl5-dev \
-  qt6-base-dev qtmultimedia5-dev qt6-base-dev-tools \
+  qt6-base-dev qt6-multimedia-dev qt6-base-dev-tools \
   libgl-dev \
   libprojectm-dev projectm-data
 ```
@@ -63,19 +64,19 @@ or, if you built Qt6:
 
 ## Install System-Wide
 
-Install the Qt5 build into `/usr`:
+Configure with `/usr` as the install prefix, then install:
 
 ```bash
-sudo cmake --install build-qt5 --prefix /usr
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+cmake --build build -j
+sudo cmake --install build
 ```
 
-Install the Qt6 build into `/usr`:
+The install places:
 
-```bash
-sudo cmake --install build-qt6 --prefix /usr
-```
-
-The install places the binary at `/usr/bin/winamp` and assets under `/usr/share/winamp`.
+- Binary: `/usr/bin/winamp`
+- Desktop entry: `/usr/share/applications/winamp.desktop`
+- Assets: `/usr/share/winamp`
 
 ## Asset Search Paths
 
