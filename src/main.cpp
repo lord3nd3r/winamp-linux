@@ -83,7 +83,7 @@
 #include <QStyle>
 
 // Qt5/Qt6 compatibility layer
-#include "src/compat.h"
+#include "compat.h"
 
 // D-Bus for MPRIS2 media player interface (Linux desktop integration)
 #if defined(QT_DBUS_LIB) && QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
@@ -99,10 +99,10 @@
 #include <libprojectM/projectM.hpp>
 
 // EQ10 DSP engine (10-band graphic equalizer)
-#include "src/eq_dsp.h"
+#include "eq_dsp.h"
 
 // Skin helpers, playlist colors, archive extraction
-#include "src/constants.h"
+#include "constants.h"
 
 // Global skin playlist colors (loaded when skin changes)
 static SkinPlaylistColors g_plColors;
@@ -110,12 +110,12 @@ static SkinPlaylistColors g_plColors;
 // ============================================================
 // Bookmark Manager — store/retrieve bookmarked files and URLs
 // ============================================================
-#include "src/bookmark_manager.h"
+#include "bookmark_manager.h"
 
 // ============================================================
 // Recent Files Manager — track recently played files
 // ============================================================
-#include "src/recent_files.h"
+#include "recent_files.h"
 
 // ============================================================
 // Jump to File Dialog — search within playlist (Ctrl+J / J)
@@ -226,7 +226,7 @@ static void loadVisColors(const QString &skinPath) {
 // ============================================================
 // Simple Translation System for Language Pack Support
 // ============================================================
-#include "src/translator.h"
+#include "translator.h"
 
 // Convenience macro
 #define TR(key, def) Translator::instance().tr(key, def)
@@ -275,10 +275,10 @@ static QPoint getTextCharPos(QChar ch) {
 // About Dialog — Demoscene-style animated credits (faithful to Windows original)
 
 // Play Location Dialog
-#include "src/dialogs.h"
+#include "dialogs.h"
 
 // Preferences Dialog — Tree-based layout matching Windows Winamp (Options.cpp)
-#include "src/preferences.h"
+#include "preferences.h"
 
 
 // Bitmap Resource Manager
@@ -359,7 +359,7 @@ private:
     WinampBitmaps() {}
 };
 
-#include "src/modern_skin.h"
+#include "modern_skin.h"
 
 // Detect modern skin (now in constants.h: isModernSkinDir)
 
@@ -398,10 +398,10 @@ static const int numPresets = sizeof(builtinPresets) / sizeof(builtinPresets[0])
 // Custom list widget for dragging tracks to file manager
 
 // Playlist Window
-#include "src/playlist.h"
+#include "playlist.h"
 
 // Equalizer Window
-#include "src/equalizer.h"
+#include "equalizer.h"
 
 // Playlist Window Constructor
 PlaylistWindow::PlaylistWindow(WinampWindow *parent) : QWidget(nullptr), mainWindow(parent) {
@@ -1865,12 +1865,12 @@ EqualizerWindow::EqualizerWindow(WinampWindow *parent) : QWidget(nullptr), mainW
 // ============================================================
 // VideoWindow — Video playback window with skin support
 // ============================================================
-#include "src/video.h"
+#include "video.h"
 
 // ============================================================
 // MilkdropWindow — projectM-powered Milkdrop visualization
 // ============================================================
-#include "src/milkdrop.h"
+#include "milkdrop.h"
 
 // ============================================================================
 // MPRIS2 D-Bus Adaptor — Linux desktop media player integration
@@ -1881,14 +1881,14 @@ EqualizerWindow::EqualizerWindow(WinampWindow *parent) : QWidget(nullptr), mainW
 #if defined(QT_DBUS_LIB) && QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 
 
-#include "src/mpris2_adaptors.h"
+#include "mpris2_adaptors.h"
 
 #endif // QT_DBUS_LIB && Qt6
 
 // ============================================================
 // MediaLibraryWindow — Media Library browser with gen.bmp skin
 // ============================================================
-#include "src/media_library.h"
+#include "media_library.h"
 
 // Main Winamp Window
 class WinampWindow : public QWidget {
@@ -5194,4 +5194,4 @@ int main(int argc, char *argv[]) {
     return app.exec();
 }
 
-#include "winamp_authentic.moc"
+#include "main.moc"
