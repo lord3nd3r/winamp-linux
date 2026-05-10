@@ -41,6 +41,10 @@ add_executable(winamp
     src/compat.h
     src/eq_dsp.h
     src/constants.h
+    src/translator.h
+    src/bookmark_manager.h
+    src/recent_files.h
+    src/dialogs.h
 )
 
 target_link_libraries(winamp
