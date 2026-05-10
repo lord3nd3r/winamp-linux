@@ -45,6 +45,7 @@ add_executable(winamp
     src/bookmark_manager.h
     src/recent_files.h
     src/dialogs.h
+    src/modern_skin.h
 )
 
 target_link_libraries(winamp
