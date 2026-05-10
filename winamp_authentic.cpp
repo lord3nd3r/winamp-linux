@@ -4,13 +4,17 @@
 #include <QMediaPlayer>
 #include <QMediaMetaData>
 #include <QAudioOutput>
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 #include <QAudioBufferOutput>
 #include <QAudioBuffer>
 #include <QAudioSink>
 #include <QAudioDevice>
 #include <QMediaDevices>
+#endif
 #include <QVideoWidget>
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 #include <QVideoSink>
+#endif
 #include <QFileDialog>
 #include <QMouseEvent>
 #include <QTimer>
@@ -72,9 +76,74 @@
 #include <QSizeGrip>
 #include <QRegularExpression>
 #include <QXmlStreamReader>
+#include <QStyle>
+
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+#define playbackState state
+#define playbackStateChanged stateChanged
+#define hasVideoChanged videoAvailableChanged
+using WAudioOutput = QObject;
+static inline QPoint waMouseGlobalPos(const QMouseEvent *event) {
+    return event->globalPos();
+}
+static inline QPointF waMousePos(const QMouseEvent *event) {
+    return event->localPos();
+}
+static inline void waSetSource(QMediaPlayer *player, const QUrl &url) {
+    player->setMedia(url);
+}
+static inline QUrl waSource(const QMediaPlayer *player) {
+    return player->media().canonicalUrl();
+}
+static inline WAudioOutput *waCreateAudioOutput(QObject *parent) {
+    Q_UNUSED(parent);
+    return nullptr;
+}
+static inline void waAttachAudioOutput(QMediaPlayer *player, WAudioOutput *audioOutput) {
+    Q_UNUSED(player);
+    Q_UNUSED(audioOutput);
+}
+static inline void waSetOutputVolume(QMediaPlayer *player, WAudioOutput *audioOutput, float volume) {
+    Q_UNUSED(audioOutput);
+    int vol100 = qBound(0, static_cast<int>(volume * 100.0f), 100);
+    player->setVolume(vol100);
+}
+static inline float waOutputVolume(const QMediaPlayer *player, const WAudioOutput *audioOutput) {
+    Q_UNUSED(audioOutput);
+    return player->volume() / 100.0f;
+}
+#else
+using WAudioOutput = QAudioOutput;
+static inline QPoint waMouseGlobalPos(const QMouseEvent *event) {
+    return event->globalPosition().toPoint();
+}
+static inline QPointF waMousePos(const QMouseEvent *event) {
+    return event->position();
+}
+static inline void waSetSource(QMediaPlayer *player, const QUrl &url) {
+    player->setSource(url);
+}
+static inline QUrl waSource(const QMediaPlayer *player) {
+    return player->source();
+}
+static inline WAudioOutput *waCreateAudioOutput(QObject *parent) {
+    return new QAudioOutput(parent);
+}
+static inline void waAttachAudioOutput(QMediaPlayer *player, WAudioOutput *audioOutput) {
+    player->setAudioOutput(audioOutput);
+}
+static inline void waSetOutputVolume(QMediaPlayer *player, WAudioOutput *audioOutput, float volume) {
+    Q_UNUSED(player);
+    audioOutput->setVolume(volume);
+}
+static inline float waOutputVolume(const QMediaPlayer *player, const WAudioOutput *audioOutput) {
+    Q_UNUSED(player);
+    return audioOutput->volume();
+}
+#endif
 
 // D-Bus for MPRIS2 media player interface (Linux desktop integration)
-#ifdef QT_DBUS_LIB
+#if defined(QT_DBUS_LIB) && QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 #include <QDBusConnection>
 #include <QDBusMessage>
 #include <QDBusInterface>
@@ -627,6 +696,7 @@ public:
         
         // Load current metadata from player (matches Windows GetDlgItemTextW)
         if (m_player) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
             QMediaMetaData meta = m_player->metaData();
             titleEdit->setText(meta.stringValue(QMediaMetaData::Title));
             
@@ -651,6 +721,13 @@ public:
             
             genreEdit->setText(meta.stringValue(QMediaMetaData::Genre));
             commentEdit->setPlainText(meta.stringValue(QMediaMetaData::Comment));
+#else
+            titleEdit->setText(m_player->metaData("Title").toString());
+            artistEdit->setText(m_player->metaData("Author").toString());
+            albumEdit->setText(m_player->metaData("AlbumTitle").toString());
+            genreEdit->setText(m_player->metaData("Genre").toString());
+            commentEdit->setPlainText(m_player->metaData("Description").toString());
+#endif
         }
         
         tabs->addTab(metadataTab, "Metadata");
@@ -665,6 +742,7 @@ public:
         techLayout->addRow("Modified:", new QLabel(fi.lastModified().toString("yyyy-MM-dd hh:mm:ss")));
         
         if (m_player) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
             QMediaMetaData meta = m_player->metaData();
             
             // Audio bitrate
@@ -688,6 +766,12 @@ public:
             QString codec = meta.stringValue(QMediaMetaData::AudioCodec);
             if (!codec.isEmpty())
                 techLayout->addRow("Codec:", new QLabel(codec));
+#else
+            QVariant br = m_player->metaData("AudioBitRate");
+            if (br.isValid()) {
+                techLayout->addRow("Bitrate:", new QLabel(QString::number(br.toInt() / 1000) +  " kbps"));
+            }
+#endif
         }
         
         techLayout->addRow("", new QLabel("")); // Spacer
@@ -924,7 +1008,11 @@ private:
         }
         
         QTextStream in(&file);
+    #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
         in.setEncoding(QStringConverter::Utf8);
+    #else
+        in.setCodec("UTF-8");
+    #endif
         
         while (!in.atEnd()) {
             QString line = in.readLine().trimmed();
@@ -1071,7 +1159,7 @@ public:
         }
 
         // Credits text (from original creditsrend.c)
-        credits = {
+        credits = QStringList{
             "Winamp v5.9.0\n    The Credits",
             "Linux Qt6 Port:\n    Kristopher Craig",
             "Winamp for Linux\n    Qt6 Native Port",
@@ -2471,6 +2559,34 @@ static QString configPath() {
     return dir + "/winamp.conf";
 }
 
+// Common data roots for running from source tree or system installs.
+static QStringList winampDataRoots(const QString &appDir) {
+    return {
+        appDir + "/../share/winamp",
+        appDir + "/../../share/winamp",
+        "/usr/local/share/winamp",
+        "/usr/share/winamp",
+        QDir::homePath() + "/.local/share/winamp"
+    };
+}
+
+static QStringList winampSkinAndResourcePaths(const QString &appDir) {
+    QStringList out = {
+        appDir + "/../skins/default",
+        appDir + "/../../skins/default",
+        QDir::homePath() + "/.winamp/skins/default",
+        appDir + "/../Src/Winamp/resource",
+        appDir + "/../../Src/Winamp/resource"
+    };
+
+    const QStringList roots = winampDataRoots(appDir);
+    for (const QString &root : roots) {
+        out << (root + "/skins/default")
+            << (root + "/resource");
+    }
+    return out;
+}
+
 // Built-in EQ Presets (slider values 0-63, center=32)
 struct EqPreset {
     const char *name;
@@ -2506,7 +2622,11 @@ public:
     PlaylistListWidget(QWidget *parent = nullptr) : QListWidget(parent) {}
     
 protected:
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     QMimeData* mimeData(const QList<QListWidgetItem*> &items) const override {
+#else
+    QMimeData* mimeData(const QList<QListWidgetItem*> items) const {
+#endif
         QMimeData *data = new QMimeData();
         QList<QUrl> urls;
         
@@ -3187,7 +3307,7 @@ protected:
             if (y < tbH) {
                 if (x >= width() - 18) { hide(); return; }
                 isDragging = true;
-                dragPosition = event->globalPosition().toPoint() - frameGeometry().topLeft();
+                dragPosition = waMouseGlobalPos(event) - frameGeometry().topLeft();
                 return;
             }
             // Content offset: center 318px EQ in window
@@ -3229,7 +3349,7 @@ protected:
         if (y < 14) {
             if (x >= 264) { hide(); return; }
             isDragging = true;
-            dragPosition = event->globalPosition().toPoint() - frameGeometry().topLeft();
+            dragPosition = waMouseGlobalPos(event) - frameGeometry().topLeft();
             return;
         }
         
@@ -3301,7 +3421,7 @@ protected:
             return;
         }
         if (isDragging) {
-            QPoint newPos = event->globalPosition().toPoint() - dragPosition;
+            QPoint newPos = waMouseGlobalPos(event) - dragPosition;
             move(newPos);
             checkSnap();
         }
@@ -3848,7 +3968,7 @@ void PlaylistWindow::addTrack(const QString &filePath) {
 
         // Use a temporary media player to get the duration
         QMediaPlayer tempPlayer;
-        tempPlayer.setSource(QUrl::fromLocalFile(filePath));
+        waSetSource(&tempPlayer, QUrl::fromLocalFile(filePath));
         
         // We need to wait for it to load the media to get duration
         QEventLoop loop;
@@ -4157,15 +4277,15 @@ void PlaylistWindow::mousePressEvent(QMouseEvent *event) {
     if (event->button() == Qt::RightButton) {
         // Bottom buttons still respond to right click (matching drawn button positions)
         if (y >= h - 30 && y < h - 12) {
-            if (x >= 14 && x < 36) { showAddMenu(event->globalPosition().toPoint()); return; }
-            if (x >= 43 && x < 65) { showRemMenu(event->globalPosition().toPoint()); return; }
-            if (x >= 72 && x < 94) { showSelMenu(event->globalPosition().toPoint()); return; }
-            if (x >= 101 && x < 123) { showMiscMenu(event->globalPosition().toPoint()); return; }
-            if (x >= width() - 44 && x < width() - 22) { showListMenu(event->globalPosition().toPoint()); return; }
+            if (x >= 14 && x < 36) { showAddMenu(waMouseGlobalPos(event)); return; }
+            if (x >= 43 && x < 65) { showRemMenu(waMouseGlobalPos(event)); return; }
+            if (x >= 72 && x < 94) { showSelMenu(waMouseGlobalPos(event)); return; }
+            if (x >= 101 && x < 123) { showMiscMenu(waMouseGlobalPos(event)); return; }
+            if (x >= width() - 44 && x < width() - 22) { showListMenu(waMouseGlobalPos(event)); return; }
         }
         // Right-click on list area shows the full context menu
         if (y >= 20 && y < h - 38) {
-            showContextMenu(event->globalPosition().toPoint());
+            showContextMenu(waMouseGlobalPos(event));
             event->accept();
             return;
         }
@@ -4175,23 +4295,23 @@ void PlaylistWindow::mousePressEvent(QMouseEvent *event) {
     // Left-click bottom buttons (matching drawn positions from draw_pe.cpp)
     if (y >= h - 30 && y < h - 12) {
         if (x >= 14 && x < 36) {
-            showAddMenu(event->globalPosition().toPoint());
+            showAddMenu(waMouseGlobalPos(event));
             event->accept();
             return;
         } else if (x >= 43 && x < 65) {
-            showRemMenu(event->globalPosition().toPoint());
+            showRemMenu(waMouseGlobalPos(event));
             event->accept();
             return;
         } else if (x >= 72 && x < 94) {
-            showSelMenu(event->globalPosition().toPoint());
+            showSelMenu(waMouseGlobalPos(event));
             event->accept();
             return;
         } else if (x >= 101 && x < 123) {
-            showMiscMenu(event->globalPosition().toPoint());
+            showMiscMenu(waMouseGlobalPos(event));
             event->accept();
             return;
         } else if (x >= width() - 44 && x < width() - 22) {
-            showListMenu(event->globalPosition().toPoint());
+            showListMenu(waMouseGlobalPos(event));
             event->accept();
             return;
         }
@@ -4234,14 +4354,14 @@ void PlaylistWindow::mousePressEvent(QMouseEvent *event) {
             if (edge != NoEdge) {
                 isResizing = true;
                 resizeEdge = edge;
-                resizeStartPos = event->globalPosition().toPoint();
+                resizeStartPos = waMouseGlobalPos(event);
                 resizeStartSize = size();
                 event->accept();
                 return;
             }
         }
         isDragging = true;
-        dragPosition = event->globalPosition().toPoint() - frameGeometry().topLeft();
+        dragPosition = waMouseGlobalPos(event) - frameGeometry().topLeft();
         event->accept();
     }
 }
@@ -4262,7 +4382,7 @@ void PlaylistWindow::dropEvent(QDropEvent *event) {
 void PlaylistWindow::mouseMoveEvent(QMouseEvent *event) {
     // Handle resizing
     if (isResizing) {
-        QPoint delta = event->globalPosition().toPoint() - resizeStartPos;
+        QPoint delta = waMouseGlobalPos(event) - resizeStartPos;
         QSize newSize = resizeStartSize;
         if (resizeEdge & RightEdge)
             newSize.setWidth(qMax(275, resizeStartSize.width() + delta.x()));
@@ -4274,7 +4394,7 @@ void PlaylistWindow::mouseMoveEvent(QMouseEvent *event) {
     
     // Handle scrollbar dragging
     if (isDraggingScrollbar) {
-        int y = event->position().y();
+        int y = waMousePos(event).y();
         int bodyTop = 20;
         int bodyBottom = height() - 38;
         if (listWidget && listWidget->count() > 0) {
@@ -4306,7 +4426,7 @@ void PlaylistWindow::mouseMoveEvent(QMouseEvent *event) {
     }
     
     if (isDragging) {
-        move(event->globalPosition().toPoint() - dragPosition);
+        move(waMouseGlobalPos(event) - dragPosition);
         checkSnap();
     }
 }
@@ -4944,14 +5064,14 @@ protected:
             if (edge != NoEdge) {
                 isResizing = true;
                 resizeEdge = edge;
-                resizeStartPos = event->globalPosition().toPoint();
+                resizeStartPos = waMouseGlobalPos(event);
                 resizeStartGeometry = geometry();
                 event->accept();
                 return;
             }
             // Otherwise, start dragging
             isDragging = true;
-            dragStartPos = event->globalPosition().toPoint() - frameGeometry().topLeft();
+            dragStartPos = waMouseGlobalPos(event) - frameGeometry().topLeft();
         } else if (event->button() == Qt::RightButton) {
             // Could show context menu here
         }
@@ -4962,7 +5082,7 @@ protected:
         
         // Handle resizing
         if (isResizing) {
-            QPoint delta = event->globalPosition().toPoint() - resizeStartPos;
+            QPoint delta = waMouseGlobalPos(event) - resizeStartPos;
             QRect newGeom = resizeStartGeometry;
             
             // Adjust geometry based on resize edge
@@ -4995,7 +5115,7 @@ protected:
         
         // Handle dragging
         if (isDragging) {
-            move(event->globalPosition().toPoint() - dragStartPos);
+            move(waMouseGlobalPos(event) - dragStartPos);
             return;
         }
         
@@ -5095,10 +5215,15 @@ private:
     
     void loadLogo() {
         // Try to load video_logo.bmp from skin
+        QString appDir = QCoreApplication::applicationDirPath();
         QStringList paths = {
             "skins/default/video_logo.bmp",
             "Src/Winamp/resource/video_logo.bmp"
         };
+        for (const QString &root : winampDataRoots(appDir)) {
+            paths << (root + "/skins/default/video_logo.bmp")
+                  << (root + "/resource/video_logo.bmp");
+        }
         
         for (const QString &path : paths) {
             if (QFile::exists(path)) {
@@ -5299,7 +5424,7 @@ private:
 // This enables media keys (play/pause/next/prev), KDE Connect, panel widgets, etc.
 // Matches what Windows Winamp does with its global hotkeys + remote control features
 // ============================================================================
-#ifdef QT_DBUS_LIB
+#if defined(QT_DBUS_LIB) && QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 
 class Mpris2RootAdaptor : public QDBusAbstractAdaptor {
     Q_OBJECT
@@ -5394,7 +5519,7 @@ public:
         QString album = meta.stringValue(QMediaMetaData::AlbumTitle);
         if (!album.isEmpty()) map["xesam:album"] = album;
         
-        QUrl source = m_player->source();
+        QUrl source = waSource(m_player);
         if (source.isValid()) map["xesam:url"] = source.toString();
         
         return map;
@@ -5451,7 +5576,7 @@ private:
     QAudioOutput *m_audioOutput;
 };
 
-#endif // QT_DBUS_LIB
+#endif // QT_DBUS_LIB && Qt6
 
 // ============================================================
 // MediaLibraryWindow — Media Library browser with gen.bmp skin
@@ -5581,7 +5706,7 @@ protected:
             if (edge != NoEdge) {
                 isResizing = true;
                 resizeEdge = edge;
-                resizeStartPos = event->globalPosition().toPoint();
+                resizeStartPos = waMouseGlobalPos(event);
                 resizeStartGeometry = geometry();
                 return;
             }
@@ -5596,7 +5721,7 @@ protected:
     
     void mouseMoveEvent(QMouseEvent *event) override {
         if (isResizing) {
-            QPoint delta = event->globalPosition().toPoint() - resizeStartPos;
+            QPoint delta = waMouseGlobalPos(event) - resizeStartPos;
             QRect newGeom = resizeStartGeometry;
             
             if (resizeEdge & LeftEdge) {
@@ -5627,7 +5752,7 @@ protected:
         }
         
         if (isDragging) {
-            move(event->globalPosition().toPoint() - dragStartPos);
+            move(waMouseGlobalPos(event) - dragStartPos);
             return;
         }
         
@@ -5684,10 +5809,15 @@ private:
     
     void loadSkin() {
         // Try to load gen.bmp and genex.bmp from skin paths
+        QString appDir = QCoreApplication::applicationDirPath();
         QStringList skinPaths = {
             "skins/default",
             "Src/Winamp/resource"
         };
+        for (const QString &root : winampDataRoots(appDir)) {
+            skinPaths << (root + "/skins/default")
+                      << (root + "/resource");
+        }
         
         for (const QString &basePath : skinPaths) {
             QString genPath = basePath + "/gen.bmp";
@@ -5830,15 +5960,15 @@ public:
         // 1) QAudioOutput for direct playback (used as fallback / when EQ is off)
         // 2) QAudioBufferOutput → EQ10 DSP → QAudioSink (when EQ is on)
         player = new QMediaPlayer(this);
-        audioOutput = new QAudioOutput(this);
-        player->setAudioOutput(audioOutput);
-        audioOutput->setVolume(volume / 255.0f);
+        audioOutput = waCreateAudioOutput(this);
+        waAttachAudioOutput(player, audioOutput);
+        waSetOutputVolume(player, audioOutput, volume / 255.0f);
         
         // Setup second player for gapless playback
         nextPlayer = new QMediaPlayer(this);
-        nextAudioOutput = new QAudioOutput(this);
-        nextPlayer->setAudioOutput(nextAudioOutput);
-        nextAudioOutput->setVolume(volume / 255.0f);
+        nextAudioOutput = waCreateAudioOutput(this);
+        waAttachAudioOutput(nextPlayer, nextAudioOutput);
+        waSetOutputVolume(nextPlayer, nextAudioOutput, volume / 255.0f);
         usingNextPlayer = false;
         
         // Initialize EQ DSP state
@@ -5848,17 +5978,19 @@ public:
         eqDspActive = false;
         
         // Setup audio buffer output for visualization + EQ DSP
+    #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
         audioBufferOutput = new QAudioBufferOutput(this);
         player->setAudioBufferOutput(audioBufferOutput);
         connect(audioBufferOutput, &QAudioBufferOutput::audioBufferReceived,
-                this, &WinampWindow::processAudioBuffer);
+            this, &WinampWindow::processAudioBuffer);
+    #endif
         
         // System tray icon (matches Windows SYSTRAY.cpp)
         setupSystemTray();
         
         // MPRIS2 D-Bus integration — Linux desktop media keys and remote control
         // (equivalent to Windows global hotkeys + WM_COMMAND remote control)
-#ifdef QT_DBUS_LIB
+#if defined(QT_DBUS_LIB) && QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
         new Mpris2RootAdaptor(this);
         new Mpris2PlayerAdaptor(player, audioOutput, this);
         QDBusConnection dbus = QDBusConnection::sessionBus();
@@ -5912,20 +6044,22 @@ public:
                 }
                 
                 // Gapless playback: if next track is preloaded, swap players
-                if (nextPlayer->source().isValid() && !shuffleOn) {
+                if (waSource(nextPlayer).isValid() && !shuffleOn) {
                     // Swap players for seamless transition
                     std::swap(player, nextPlayer);
                     std::swap(audioOutput, nextAudioOutput);
                     
                     // Update visualization to use the now-active player
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
                     player->setAudioBufferOutput(audioBufferOutput);
                     nextPlayer->setAudioBufferOutput(nullptr);
+#endif
                     
                     // Start the preloaded track
                     player->play();
                     
                     // Update currentFile
-                    currentFile = player->source().toLocalFile();
+                    currentFile = waSource(player).toLocalFile();
                     
                     // Update playlist index
                     int curIdx = playlistWindow->currentTrackIndex();
@@ -5974,7 +6108,12 @@ public:
         });
         
         // Extract bitrate and song metadata when available
+    #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
         connect(player, &QMediaPlayer::metaDataChanged, this, [this]() {
+    #else
+        connect(player, QOverload<>::of(&QMediaPlayer::metaDataChanged), this, [this]() {
+    #endif
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
             QMediaMetaData md = player->metaData();
             QVariant br = md.value(QMediaMetaData::AudioBitRate);
             if (br.isValid()) {
@@ -6006,6 +6145,29 @@ public:
             } else if (!newMetaTitle.isEmpty()) {
                 metaTitle = newMetaTitle;
             }
+#else
+            QVariant br = player->metaData("AudioBitRate");
+            if (br.isValid()) {
+                mediaBitrate = br.toInt() / 1000;
+            }
+
+            QString title = player->metaData("Title").toString();
+            QString artist = player->metaData("Author").toString();
+
+            QString newMetaTitle;
+            if (!title.isEmpty()) {
+                newMetaTitle = artist.isEmpty() ? title : (artist + " - " + title);
+            }
+
+            if (!newMetaTitle.isEmpty() && newMetaTitle != metaTitle) {
+                metaTitle = newMetaTitle;
+                if (showSongNotifications && trayIcon) {
+                    trayIcon->showMessage("Winamp", metaTitle, QSystemTrayIcon::Information, 3000);
+                }
+            } else if (!newMetaTitle.isEmpty()) {
+                metaTitle = newMetaTitle;
+            }
+#endif
             
             // Update tray tooltip
             updateTrayTooltip();
@@ -6089,7 +6251,7 @@ public:
     void playFile(const QString &file) {
         if (!file.isEmpty() && QFile::exists(file)) {
             currentFile = file;
-            player->setSource(QUrl::fromLocalFile(file));
+            waSetSource(player, QUrl::fromLocalFile(file));
             player->play();
         }
     }
@@ -6097,7 +6259,7 @@ public:
     void playUrl(const QString &url) {
         if (!url.isEmpty()) {
             currentFile = url;
-            player->setSource(QUrl(url));
+            waSetSource(player, QUrl(url));
             player->play();
             updateTrayTooltip();
             
@@ -6212,13 +6374,7 @@ public slots:
             g_plColors = parsePleditTxt(skinPath);
             
             QString appDir = QCoreApplication::applicationDirPath();
-            QStringList fallbacks = {
-                appDir + "/../skins/default",
-                appDir + "/../../skins/default",
-                QDir::homePath() + "/.winamp/skins/default",
-                appDir + "/../Src/Winamp/resource",
-                appDir + "/../../Src/Winamp/resource"
-            };
+            QStringList fallbacks = winampSkinAndResourcePaths(appDir);
             for (const QString &fb : fallbacks) {
                 QDir d(fb);
                 if (d.exists())
@@ -6663,7 +6819,7 @@ public:
         QPixmap muteBg = modernSkin.getBitmap("player.button.mute.bg");
         if (!muteBg.isNull()) p.drawPixmap(160, py + 99, muteBg);
         // (Mute toggle drawn with drawModernBtn)
-        bool isMuted = (audioOutput->volume() < 0.01f && volume > 0);
+        bool isMuted = (waOutputVolume(player, audioOutput) < 0.01f && volume > 0);
         QString muteId = isMuted ? "player.button.mute.on" : "player.button.mute.off";
         if (modernPressed == MB_MUTE) muteId = isMuted ? "player.button.mute.on.pressed" : "player.button.mute.off.pressed";
         QPixmap mutePx = modernSkin.getBitmap(muteId);
@@ -6722,6 +6878,7 @@ public:
         if (!resizer.isNull()) p.drawPixmap(W - 17, py + 108, resizer);
     }
 
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     void processAudioBuffer(const QAudioBuffer &buffer) {
         const QAudioFormat fmt = buffer.format();
         int sampleCount = buffer.frameCount();
@@ -6806,7 +6963,7 @@ public:
             
             // Mute the direct QAudioOutput path — we'll output processed audio via QAudioSink
             if (!eqDspActive) {
-                audioOutput->setVolume(0.0f);
+                waSetOutputVolume(player, audioOutput, 0.0f);
                 eqDspActive = true;
             }
             
@@ -6907,7 +7064,7 @@ public:
         } else {
             // EQ is off — restore direct QAudioOutput path
             if (eqDspActive) {
-                audioOutput->setVolume(volume / 255.0f);
+                waSetOutputVolume(player, audioOutput, volume / 255.0f);
                 eqDspActive = false;
                 // Stop the DSP sink
                 if (audioSink) {
@@ -6921,6 +7078,7 @@ public:
             }
         }
     }
+#endif
 
 protected:
     void paintEvent(QPaintEvent *) override {
@@ -7731,7 +7889,7 @@ protected:
             int y = event->pos().y();
             
             if (event->button() == Qt::RightButton) {
-                showContextMenu(event->globalPosition().toPoint());
+                showContextMenu(waMouseGlobalPos(event));
                 return;
             }
             
@@ -7766,7 +7924,7 @@ protected:
             
             // Drag window (titlebar or empty area)
             isDragging = true;
-            dragPosition = event->globalPosition().toPoint() - frameGeometry().topLeft();
+            dragPosition = waMouseGlobalPos(event) - frameGeometry().topLeft();
             return;
         }
         
@@ -7791,14 +7949,14 @@ protected:
                 QAction *repOneAct = menu.addAction("Repeat track");
                 repOneAct->setCheckable(true);
                 repOneAct->setChecked(repeatOn && repeatTrack);
-                QAction *sel = menu.exec(event->globalPosition().toPoint());
+                QAction *sel = menu.exec(waMouseGlobalPos(event));
                 if (sel == repOffAct) { repeatOn = false; repeatTrack = false; }
                 else if (sel == repAllAct) { repeatOn = true; repeatTrack = false; }
                 else if (sel == repOneAct) { repeatOn = true; repeatTrack = true; }
                 update();
                 return;
             }
-            showContextMenu(event->globalPosition().toPoint());
+            showContextMenu(waMouseGlobalPos(event));
             return;
         }
         int x = event->pos().x();
@@ -7875,7 +8033,7 @@ protected:
             if (x >= 264 && x < 273) { close(); return; }           // Close
             if (x >= 244 && x < 253) { showMinimized(); return; }   // Minimize
             isDragging = true;
-            dragPosition = event->globalPosition().toPoint() - frameGeometry().topLeft();
+            dragPosition = waMouseGlobalPos(event) - frameGeometry().topLeft();
             return;
         }
         
@@ -7952,8 +8110,8 @@ protected:
     }
     
     void mouseMoveEvent(QMouseEvent *event) override {
-        int x = event->position().x();
-        int y = event->position().y();
+        int x = waMousePos(event).x();
+        int y = waMousePos(event).y();
         
         // ---- Modern skin mouse move ----
         if (isModernSkin) {
@@ -7976,7 +8134,7 @@ protected:
             }
             // Window drag
             if (isDragging) {
-                move(event->globalPosition().toPoint() - dragPosition);
+                move(waMouseGlobalPos(event) - dragPosition);
                 playlistWindow->followMain();
                 eqWindow->followMain();
                 return;
@@ -8024,7 +8182,7 @@ protected:
         }
         
         if (!tooltip.isEmpty()) {
-            QToolTip::showText(event->globalPosition().toPoint(), tooltip, this);
+            QToolTip::showText(waMouseGlobalPos(event), tooltip, this);
         } else {
             QToolTip::hideText();
         }
@@ -8054,7 +8212,7 @@ protected:
         }
         
         if (isDragging) {
-            move(event->globalPosition().toPoint() - dragPosition);
+            move(waMouseGlobalPos(event) - dragPosition);
             playlistWindow->followMain();
             eqWindow->followMain();
         }
@@ -8116,9 +8274,9 @@ protected:
                         case MB_MUTE: {
                             // Toggle mute
                             static int savedVolume = 200;
-                            if (audioOutput->volume() > 0.01f) {
+                            if (waOutputVolume(player, audioOutput) > 0.01f) {
                                 savedVolume = volume;
-                                audioOutput->setVolume(0.0);
+                                waSetOutputVolume(player, audioOutput, 0.0f);
                             } else {
                                 volume = savedVolume;
                                 applyVolume();
@@ -8196,7 +8354,7 @@ protected:
             "Audio Files (*.mp3 *.wav *.flac *.ogg *.m4a *.aac *.wma);;All Files (*)");
         if (!fileName.isEmpty()) {
             currentFile = fileName;
-            player->setSource(QUrl::fromLocalFile(fileName));
+            waSetSource(player, QUrl::fromLocalFile(fileName));
             player->play();
             playlistWindow->addTrack(fileName);
             RecentFilesManager::instance().addFile(fileName);
@@ -8257,14 +8415,14 @@ protected:
         if (nextIdx < count) {
             QString nextFile = playlistWindow->trackAt(nextIdx);
             if (!nextFile.isEmpty() && QFile::exists(nextFile)) {
-                nextPlayer->setSource(QUrl::fromLocalFile(nextFile));
+                waSetSource(nextPlayer, QUrl::fromLocalFile(nextFile));
                 // Don't play yet, just preload
             }
         } else if (repeatOn && count > 0) {
             // If repeat all is on, preload first track
             QString nextFile = playlistWindow->trackAt(0);
             if (!nextFile.isEmpty() && QFile::exists(nextFile)) {
-                nextPlayer->setSource(QUrl::fromLocalFile(nextFile));
+                waSetSource(nextPlayer, QUrl::fromLocalFile(nextFile));
             }
         }
     }
@@ -8284,7 +8442,7 @@ public:
                 eqWindow->autoLoadPreset(fileName);
             }
             
-            player->setSource(QUrl::fromLocalFile(fileName));
+            waSetSource(player, QUrl::fromLocalFile(fileName));
             player->play();
             RecentFilesManager::instance().addFile(fileName);
             updateTrayTooltip();
@@ -8304,10 +8462,10 @@ public:
     // When EQ DSP is active, volume is applied in the DSP chain, not via QAudioOutput
     void applyVolume() {
         if (!eqDspActive) {
-            audioOutput->setVolume(volume / 255.0f);
+            waSetOutputVolume(player, audioOutput, volume / 255.0f);
         }
         // nextAudioOutput always gets volume (it plays before DSP takes over)
-        nextAudioOutput->setVolume(volume / 255.0f);
+        waSetOutputVolume(nextPlayer, nextAudioOutput, volume / 255.0f);
     }
     
     void updateDisplay() {
@@ -8426,16 +8584,20 @@ public:
 
 private:
     QMediaPlayer *player;
-    QAudioOutput *audioOutput;
+    WAudioOutput *audioOutput;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     QAudioBufferOutput *audioBufferOutput;
+#endif
     QMediaPlayer *nextPlayer;  // Preload next track for gapless playback
-    QAudioOutput *nextAudioOutput;
+    WAudioOutput *nextAudioOutput;
     bool usingNextPlayer;  // Track which player is active
     
     // Real EQ DSP processing (ported from Windows eq10dsp.cpp / In.cpp)
     // Audio flow: QMediaPlayer → QAudioBufferOutput → EQ10 DSP → QAudioSink
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     QAudioSink *audioSink = nullptr;
     QIODevice *audioSinkDevice = nullptr;
+#endif
     eq10_t eqState[2];     // EQ filter state per channel (stereo max)
     int eqSampleRate = 0;  // Current configured sample rate
     int eqChannels = 0;    // Current configured channel count
@@ -8538,7 +8700,10 @@ private:
         if (!QSystemTrayIcon::isSystemTrayAvailable()) return;
         
         trayIcon = new QSystemTrayIcon(this);
-        trayIcon->setIcon(windowIcon().isNull() ? QIcon::fromTheme("audio-headphones") : windowIcon());
+        QIcon icon = windowIcon();
+        if (icon.isNull()) icon = QIcon::fromTheme("audio-headphones");
+        if (icon.isNull()) icon = QApplication::style()->standardIcon(QStyle::SP_MediaPlay);
+        trayIcon->setIcon(icon);
         trayIcon->setToolTip("Winamp 5.666 for Linux");
         
         trayMenu = new QMenu(this);
@@ -8701,7 +8866,7 @@ void EqualizerWindow::followMain() {
 }
 
 // MPRIS2 out-of-line method implementations (need full WinampWindow definition)
-#ifdef QT_DBUS_LIB
+#if defined(QT_DBUS_LIB) && QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 void Mpris2PlayerAdaptor::Next() {
     WinampWindow *w = qobject_cast<WinampWindow*>(parent());
     if (w) {
@@ -8738,6 +8903,9 @@ int main(int argc, char *argv[]) {
         appDir + "/../Src/Winamp/resource/WinampIcon.ico",
         appDir + "/WinampIcon.ico"
     };
+    for (const QString &root : winampDataRoots(appDir)) {
+        iconCandidates << (root + "/resource/WinampIcon.ico");
+    }
     for (const QString &iconPath : iconCandidates) {
         if (QFile::exists(iconPath)) {
             app.setWindowIcon(QIcon(iconPath));
@@ -8756,15 +8924,7 @@ int main(int argc, char *argv[]) {
     // Build a list of candidate paths
     QStringList candidates;
     if (!skinPath.isEmpty()) candidates << skinPath;
-
-    // Paths relative to the executable
-    candidates << appDir + "/../skins/default"     // demo/build/ -> skins/default
-               << appDir + "/../../skins/default"   // deeper build dirs
-               << QDir::homePath() + "/.winamp/skins/default";
-
-    // Also try the source resource directory (has MAIN.BMP etc.)
-    candidates << appDir + "/../Src/Winamp/resource"
-               << appDir + "/../../Src/Winamp/resource";
+    candidates << winampSkinAndResourcePaths(appDir);
 
     // Check if saved skin is a modern (XML) skin — still load classic as fallback
     bool savedIsModern = !skinPath.isEmpty() && isModernSkinDir(skinPath);
@@ -8783,13 +8943,7 @@ int main(int argc, char *argv[]) {
 
     // If no classic skin loaded yet and saved skin was modern, load default classic as fallback
     if (!loaded) {
-        QStringList fallbackClassic = {
-            appDir + "/../skins/default",
-            appDir + "/../../skins/default",
-            QDir::homePath() + "/.winamp/skins/default",
-            appDir + "/../Src/Winamp/resource",
-            appDir + "/../../Src/Winamp/resource"
-        };
+        QStringList fallbackClassic = winampSkinAndResourcePaths(appDir);
         for (const QString &path : fallbackClassic) {
             QDir d(path);
             if (d.exists() && WinampBitmaps::instance().loadAll(d.absolutePath())) {
@@ -8820,6 +8974,9 @@ int main(int argc, char *argv[]) {
     // Look for SPLASH.BMP in the loaded skin or fallback paths
     QStringList splashCandidates = candidates;
     splashCandidates << appDir + "/../Src/resources" << appDir + "/../../Src/resources";
+    for (const QString &root : winampDataRoots(appDir)) {
+        splashCandidates << (root + "/resource");
+    }
     for (const QString &path : splashCandidates) {
         QString splashFile = QDir(path).filePath("SPLASH.BMP");
         if (QFile::exists(splashFile)) {
