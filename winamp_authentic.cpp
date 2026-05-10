@@ -254,8 +254,9 @@ static const float eq_preamp_table[64] = {
 };
 
 // Slider value (0-63) to dB (matches In.cpp VALTODB)
+// Slider pos: 63 = top = +12dB boost, 31 = center = 0dB, 0 = bottom = -12dB cut
 static inline double eq10_valtodb(int v) {
-    v -= 31;
+    v = 31 - v;  // Flip: 63→-32 (boost), 0→+31 (cut)
     if (v < -31) v = -31;
     if (v > 32) v = 32;
     if (v > 0) return -12.0 * (v / 32.0);
@@ -2907,15 +2908,15 @@ public:
     void checkSnap();
     
     // Get EQ band gain in dB (for audio processing)
-    // Slider range 0-63, center=32 -> maps to +12dB...-12dB
+    // Slider range 0-63: 63 = top = +12dB boost, 31 = center = 0dB, 0 = bottom = -12dB cut
     float getBandGainDb(int band) const {
         if (band < 0 || band >= 10) return 0.0f;
         if (!eqEnabled) return 0.0f;
-        return (32 - eqValues[band]) * 12.0f / 32.0f;
+        return (eqValues[band] - 32) * 12.0f / 32.0f;
     }
     float getPreampGainDb() const {
         if (!eqEnabled) return 0.0f;
-        return (32 - preampValue) * 12.0f / 32.0f;
+        return (preampValue - 32) * 12.0f / 32.0f;
     }
     
     // Raw slider accessors for EQ DSP engine (0-63 range, matching Windows eq_tab/config_preamp)
@@ -7157,7 +7158,7 @@ public:
             }
             
             int preampSlider = eqWindow->getPreampValue();
-            float preampGain = eq_preamp_table[qBound(0, preampSlider, 63)];
+            float preampGain = eq_preamp_table[qBound(0, 63 - preampSlider, 63)];
             
             // Volume and balance (applied post-EQ, matching Windows output chain)
             float vol = volume / 255.0f;
