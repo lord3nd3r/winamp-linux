@@ -46,6 +46,8 @@ add_executable(winamp
     src/recent_files.h
     src/dialogs.h
     src/modern_skin.h
+    src/playlist.h
+    src/equalizer.h
 )
 
 target_link_libraries(winamp
