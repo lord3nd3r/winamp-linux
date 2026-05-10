@@ -4621,11 +4621,14 @@ void PlaylistWindow::loadSettings(QSettings &s) {
     // Add each saved track back into the playlist
     for (const QString &track : savedTracks) {
         QString trimmed = track.trimmed();
-        if (!trimmed.isEmpty() && QFile::exists(trimmed)) {
-            listWidget->addItem(trackDisplayName(tracks.size(), trimmed));
-            tracks.append(trimmed);
-            trackDurations.append(0); // Duration will be 0 until played
-        }
+        if (trimmed.isEmpty()) continue;
+        // Accept both local files that exist and remote stream URLs
+        if (!isRemoteMediaLocation(trimmed) && !QFile::exists(trimmed)) continue;
+        QListWidgetItem *item = new QListWidgetItem(trackDisplayName(tracks.size(), trimmed));
+        item->setData(Qt::UserRole, trimmed);
+        listWidget->addItem(item);
+        tracks.append(trimmed);
+        trackDurations.append(0); // Duration will be 0 until played
     }
     updateTotalTimeDisplay();
 }
