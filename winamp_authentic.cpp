@@ -7308,6 +7308,32 @@ public:
     }
 
 protected:
+    void changeEvent(QEvent *event) override {
+        if (event->type() == QEvent::WindowStateChange) {
+            if (windowState() & Qt::WindowMinimized) {
+                // Minimizing: remember which child windows are visible, then hide them
+                wasPlaylistVisible = (playlistWindow && playlistWindow->isVisible());
+                wasEqVisible = (eqWindow && eqWindow->isVisible());
+                wasVideoVisible = (videoWindow && videoWindow->isVisible());
+                wasMilkdropVisible = (milkdropWindow && milkdropWindow->isVisible());
+                wasMediaLibVisible = (mediaLibraryWindow && mediaLibraryWindow->isVisible());
+                if (playlistWindow) playlistWindow->hide();
+                if (eqWindow) eqWindow->hide();
+                if (videoWindow) videoWindow->hide();
+                if (milkdropWindow) milkdropWindow->hide();
+                if (mediaLibraryWindow) mediaLibraryWindow->hide();
+            } else if (!(windowState() & Qt::WindowMinimized)) {
+                // Restoring: show only the windows that were visible before
+                if (wasPlaylistVisible && playlistWindow) playlistWindow->show();
+                if (wasEqVisible && eqWindow) eqWindow->show();
+                if (wasVideoVisible && videoWindow) videoWindow->show();
+                if (wasMilkdropVisible && milkdropWindow) milkdropWindow->show();
+                if (wasMediaLibVisible && mediaLibraryWindow) mediaLibraryWindow->show();
+            }
+        }
+        QWidget::changeEvent(event);
+    }
+
     void paintEvent(QPaintEvent *) override {
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing, false);
@@ -8891,6 +8917,13 @@ private:
     VideoWindow *videoWindow = nullptr;
     MilkdropWindow *milkdropWindow = nullptr;
     MediaLibraryWindow *mediaLibraryWindow = nullptr;
+    
+    // Track child window visibility for minimize/restore grouping
+    bool wasPlaylistVisible = false;
+    bool wasEqVisible = false;
+    bool wasVideoVisible = false;
+    bool wasMilkdropVisible = false;
+    bool wasMediaLibVisible = false;
     
     // Modern skin engine (Winamp 5 XML-based skins)
     ModernSkinEngine modernSkin;
