@@ -19,6 +19,7 @@
 #include <QFileDialog>
 #include "constants.h"
 #include "translator.h"
+#include <QCoreApplication>
 #include <QTreeWidget>
 #include <QStackedWidget>
 #include <QSpinBox>

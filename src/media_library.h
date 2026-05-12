@@ -14,6 +14,7 @@
 #include <QHeaderView>
 #include <QFileSystemModel>
 #include <QStandardPaths>
+#include <QCoreApplication>
 #include "constants.h"
 #include "compat.h"
 #include "translator.h"

@@ -9,6 +9,7 @@
 #include "constants.h"
 #include "compat.h"
 #include "translator.h"
+#include <QCoreApplication>
 
 class VideoWindow : public QWidget {
     Q_OBJECT
