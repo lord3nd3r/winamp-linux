@@ -23,6 +23,7 @@
 #include <QKeyEvent>
 #include <QPainter>
 #include <QTimer>
+#include <cmath>
 #include "constants.h"
 #include "translator.h"
 
