@@ -2,7 +2,7 @@
 
 **A native classic Winamp 2.x–style media player for modern Linux desktops.**
 
-**Current release: [v1.1.0](https://github.com/lord3nd3r/winamp-linux/releases/tag/v1.1.0)**
+**Current release: [v1.1.1](https://github.com/lord3nd3r/winamp-linux/releases/tag/v1.1.1)**
 
 Built in **C++17** with **Qt 6** (Qt 5 fallback), faithful classic skins, a real 10-band EQ, gapless dual-player audio, out-of-process Python plugins, and desktop integration via MPRIS2.
 
@@ -15,7 +15,7 @@ Built in **C++17** with **Qt 6** (Qt 5 fallback), faithful classic skins, a real
   <img src="https://img.shields.io/badge/C%2B%2B-17-00599C?style=flat-square&logo=cplusplus&logoColor=white" alt="C++17">
   <img src="https://img.shields.io/badge/Qt-6%20%2F%205-41CD52?style=flat-square&logo=qt&logoColor=white" alt="Qt 6/5">
   <img src="https://img.shields.io/badge/platform-Linux-FCC624?style=flat-square&logo=linux&logoColor=black" alt="Linux">
-  <img src="https://img.shields.io/badge/version-1.0.0-00FF00?style=flat-square" alt="Version 1.0.0">
+  <img src="https://img.shields.io/badge/version-1.1.1-00FF00?style=flat-square" alt="Version 1.1.1">
 </p>
 
 <p align="center">
@@ -205,8 +205,8 @@ Default install layout (CMake `install` rules):
 
 Release assets are named per distro, for example:
 
-- `winamp-1.0.0-ubuntu-24.04.deb`
-- `winamp-1.0.0-fedora-41.rpm`
+- `winamp-1.1.1-ubuntu-24.04.deb`
+- `winamp-1.1.1-fedora-41.rpm`
 - matching `.tar.gz` for each matrix entry
 
 **Not packaged in CI:** Arch Linux (repo only ships **projectM 4.x**; this tree still uses the classic 3.x `libprojectM` C++ API). Build from source on Arch once a compatible `libprojectM` is available, or vendor the 3.x library.

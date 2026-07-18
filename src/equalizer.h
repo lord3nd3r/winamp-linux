@@ -19,6 +19,10 @@ public:
     
     void followMain();
     void checkSnap();
+    bool isSnapped() const { return isSnappedToMain && snapEdge != 0; }
+    void setSnapped(bool snapped) { isSnappedToMain = snapped; snapEdge = snapped ? 1 : 0; }
+    // Place flush under the main window and mark docked (Winamp 2.x default).
+    void dockBelowMain();
     
     float getBandGainDb(int band) const;
     float getPreampGainDb() const;
@@ -61,4 +65,5 @@ private:
     bool isDragging = false;
     WinampWindow *mainWindow = nullptr;
     bool isSnappedToMain = false;
+    int snapEdge = 0;  // 0=none, 1=below main, 2=right of main, 3=above main
 };
