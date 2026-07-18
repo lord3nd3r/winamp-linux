@@ -106,6 +106,7 @@ install(DIRECTORY lang/ DESTINATION share/winamp/lang)
 
 # Testing
 enable_testing()
+
 add_executable(winamp_tests
     tests/test_eq_dsp.cpp
 )
@@ -114,6 +115,25 @@ target_link_libraries(winamp_tests PRIVATE
     ${QT_PACKAGE}::Test
 )
 add_test(NAME eq_dsp_test COMMAND winamp_tests)
+
+add_executable(playlist_tests
+    tests/test_playlist.cpp
+    src/playlist.cpp
+)
+target_link_libraries(playlist_tests PRIVATE
+    ${QT_PACKAGE}::Core
+    ${QT_PACKAGE}::Gui
+    ${QT_PACKAGE}::Widgets
+    ${QT_PACKAGE}::Multimedia
+    ${QT_PACKAGE}::MultimediaWidgets
+    ${QT_PACKAGE}::OpenGL
+    ${QT_PACKAGE}::Network
+    ${QT_PACKAGE}::Test
+)
+if(QT_PACKAGE STREQUAL "Qt6")
+    target_link_libraries(playlist_tests PRIVATE Qt6::OpenGLWidgets)
+endif()
+add_test(NAME playlist_test COMMAND playlist_tests)
 
 # CPack Packaging
 set(CPACK_PACKAGE_NAME "winamp")

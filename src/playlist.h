@@ -55,6 +55,7 @@ protected:
 
 class PlaylistWindow : public QWidget {
     Q_OBJECT
+    friend class TestPlaylist;
 public:
     PlaylistWindow(WinampWindow *parent = nullptr);
     void addTrack(const QString &filePath);
