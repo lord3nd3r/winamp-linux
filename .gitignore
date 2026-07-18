@@ -11,3 +11,10 @@ build_*/
 .vscode/
 .idea/
 *.log
+
+# Private local tool / agent stores (keep product-named paths in local exclude only)
+.agent/
+.agents/
+.local-agent/
+.continue/
+.windsurf/
