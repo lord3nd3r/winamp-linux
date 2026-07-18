@@ -39,7 +39,7 @@ sudo apt-get install -y \
   cmake ninja-build \
   qt6-base-dev qt6-multimedia-dev libqt6multimediawidgets6 \
   libgl-dev libprojectm-dev projectm-data \
-  pybind11-dev python3-dev
+  python3
 ```
 
 *Note: GStreamer plugins (`gstreamer1.0-plugins-good/bad/ugly`) are required at runtime for audio decoding.*

@@ -641,6 +641,12 @@ void PreferencesDialog::populatePlugins() {
         QStringList files = dir.entryList(filters, QDir::Files, QDir::Name);
 
         for (const QString &filename : files) {
+            // Internal host script must never appear in the user plugin list
+            if (filename == QLatin1String("winamp_plugin_host.py")
+                || filename.startsWith(QLatin1String("winamp_plugin_host."))) {
+                continue;
+            }
+
             bool disabled = filename.endsWith(".disabled");
             QString displayName = filename;
             if (disabled) {

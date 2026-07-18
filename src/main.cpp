@@ -426,11 +426,13 @@ int main(int argc, char *argv[]) {
     }
 
     WinampWindow w;
+    // Out-of-process Python host: construction itself should not throw, but
+    // keep a narrow guard so a future change cannot take down startup.
     std::unique_ptr<PythonPluginManager> pyManager;
     try {
         pyManager = std::make_unique<PythonPluginManager>(&w);
     } catch (const std::exception &e) {
-        qWarning() << "[Python Plugins] Interpreter init failed:" << e.what();
+        qWarning() << "[Python Plugins] Host manager init failed:" << e.what();
         qWarning() << "[Python Plugins] Continuing without plugin support.";
     }
 

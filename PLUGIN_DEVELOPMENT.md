@@ -1,13 +1,17 @@
 # Python Plugin Development Guide
 
-Winamp for Linux features an embedded Python interpreter (powered by `pybind11`) that allows you to extend the player's functionality with Python scripts.
+Winamp for Linux loads user plugins in a **separate `python3` process** (JSON-RPC over stdin/stdout). Plugin crashes cannot take down the player process. The public API surface matches the original `winamp.Api` methods so existing example scripts keep working.
 
 ---
 
 ## 1. Quick Start
 
 ### Plugin Directory
-Winamp scans `~/.config/winamp/plugins/` at startup for all `*.py` files and loads them.
+Winamp scans `~/.config/winamp/plugins/` at startup for all `*.py` files (except internal host scripts) and loads them. Disable a plugin by renaming it to `name.py.disabled` (or use Preferences → Plug-ins).
+
+### Requirements
+- System `python3` on `PATH`
+- Optional deps for specific plugins (e.g. `ffmpeg` for the Icecast DJ example)
 
 ### Create Your First Plugin
 Create a file at `~/.config/winamp/plugins/hello.py`:
@@ -19,14 +23,14 @@ api = None
 def on_winamp_start(winamp_api):
     global api
     api = winamp_api
-    print("🎵 Winamp Plugin Loaded Successfully!")
-    print(f"Current volume level: {api.get_volume()}/255")
+    print("Winamp Plugin Loaded Successfully!", file=__import__('sys').stderr)
+    print(f"Current volume level: {api.get_volume()}/255", file=__import__('sys').stderr)
 
 def on_winamp_exit():
-    print("🎵 Winamp Plugin Shutdown!")
+    print("Winamp Plugin Shutdown!", file=__import__('sys').stderr)
 ```
 
-Start Winamp from the terminal to see the standard output prints.
+Start Winamp from the terminal; host and plugin messages appear as `[Python Plugins]` / `[Plugin Host]` on stderr.
 
 ---
 
@@ -34,19 +38,17 @@ Start Winamp from the terminal to see the standard output prints.
 
 Your plugins should define these entry points:
 
-- **`on_winamp_start(api)`**: Called when Winamp is initialized. Receives a `winamp.Api` helper object to control the player.
-- **`on_winamp_exit()`**: Called when the user exits the application. Use this to close files, flush network sockets, or stop threads.
+- **`on_winamp_start(api)`**: Called when the sandbox host starts. Receives an API proxy with the methods below.
+- **`on_winamp_exit()`**: Called when Winamp is shutting down. Close files, stop threads, flush sockets here.
 
-> [!WARNING]
-> **Thread Blocking**: Winamp runs the lifecycle callbacks directly on the main GUI thread.
-> If your plugin blocks or performs long-running network or file operations inside `on_winamp_start`, the entire application GUI will freeze.
-> Always run polling or background tasks in a helper `threading.Thread`.
+> [!NOTE]
+> **Isolation**: Plugins run out-of-process. Blocking inside `on_winamp_start` no longer freezes the Winamp UI, but it still delays other plugins from loading. Prefer `threading.Thread` for long work. API calls that return a value wait up to 5 seconds for a reply from the player.
 
 ---
 
-## 3. API Reference (`winamp.Api`)
+## 3. API Reference (API proxy)
 
-The `winamp_api` object passed to `on_winamp_start` exposes the following methods:
+The `winamp_api` object passed to `on_winamp_start` exposes the following methods (same names as the former embedded `winamp.Api`):
 
 ### Playback Control
 - `play_track(path: str)`: Clears the current player queue state and plays the given file path immediately.
