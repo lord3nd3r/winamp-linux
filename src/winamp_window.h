@@ -60,7 +60,7 @@ public:
                  doubleSize(false), shadeMode(false), alwaysOnTop(false), clutterbarOpen(false),
                  visMode(1) {
         setFixedSize(275, 116);
-        setWindowTitle("Winamp 5.666 for Linux");
+        setWindowTitle(QString::fromUtf8(kWinampWindowTitle));
         setWindowFlags(Qt::FramelessWindowHint);
         setWindowIcon(QApplication::windowIcon().isNull() ? createFallbackAppIcon() : QApplication::windowIcon());
         setAttribute(Qt::WA_TranslucentBackground, false);
@@ -1403,7 +1403,7 @@ protected:
             p.fillRect(rect(), QColor(66, 66, 99));
             p.setPen(QColor(0, 255, 0));
             p.setFont(QFont("Tahoma", 7, QFont::Bold));
-            p.drawText(10, 14, "Winamp 5.666 for Linux");
+            p.drawText(10, 14, QString::fromUtf8(kWinampWindowTitle));
             return;
         }
 
@@ -1736,14 +1736,14 @@ protected:
                 eggStat = 1;
                 setWindowTitle("Winamp - \"It really whips the llama's ass!\"");
                 QTimer::singleShot(3000, this, [this]() { 
-                    setWindowTitle("Winamp 5.666 for Linux"); 
+                    setWindowTitle(QString::fromUtf8(kWinampWindowTitle)); 
                     eggStat = 0;
                 });
             } else if (QString(eggStr).endsWith(egg2)) {
                 eggStat = 2;
                 setWindowTitle("Winamp - by Justin Frankel & the Nullsoft crew");
                 QTimer::singleShot(3000, this, [this]() { 
-                    setWindowTitle("Winamp 5.666 for Linux"); 
+                    setWindowTitle(QString::fromUtf8(kWinampWindowTitle)); 
                     eggStat = 0;
                 });
             }
@@ -2999,7 +2999,7 @@ private:
         if (icon.isNull()) icon = QIcon::fromTheme("audio-headphones");
         if (icon.isNull()) icon = QApplication::style()->standardIcon(QStyle::SP_MediaPlay);
         trayIcon->setIcon(icon);
-        trayIcon->setToolTip("Winamp 5.666 for Linux");
+        trayIcon->setToolTip(QString::fromUtf8(kWinampWindowTitle));
         
         trayMenu = new QMenu(this);
         trayMenu->addAction("Winamp", this, [this]() {

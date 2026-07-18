@@ -316,7 +316,7 @@ void Mpris2PlayerAdaptor::OpenUri(const QString &uri) {
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
     app.setApplicationName("Winamp");
-    app.setApplicationVersion("5.666");
+    app.setApplicationVersion(QString::fromUtf8(kWinampVersion));
     app.setOrganizationName("Nullsoft");
     app.setDesktopFileName("winamp.desktop");
 

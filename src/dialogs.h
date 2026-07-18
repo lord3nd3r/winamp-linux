@@ -348,7 +348,7 @@ public:
 
         // Credits text (from original creditsrend.c)
         credits = QStringList{
-            "Winamp v5.9.0\n    The Credits",
+            QString("Winamp v%1\n    The Credits").arg(QString::fromUtf8(kWinampVersion)),
             "Linux Qt6 Port:\n    Kristopher Craig",
             "Winamp for Linux\n    Qt6 Native Port",
             "Original Development:\n Quentin Hebette, Thierry Honore,\n Lionel Peeters, Hakan Danisik,\n Eddy Richman, Jef Mauguit",
@@ -546,10 +546,11 @@ protected:
         p.setFont(QFont("Courier", 8));
         p.drawText(5, h - 5, QString("%1 fps").arg(currentFps, 0, 'f', 0));
 
-        // === Bottom bar: "Winamp v5.9.0" ===
+        // === Bottom bar: product version (matches GitHub releases) ===
         p.setPen(QColor(100, 100, 100));
         p.setFont(QFont("Tahoma", 8));
-        p.drawText(0, h - 18, w, 15, Qt::AlignCenter, "Winamp v5.9.0 for Linux — Qt6 Native Port");
+        p.drawText(0, h - 18, w, 15, Qt::AlignCenter,
+                   QString("%1 — Qt Native Port").arg(QString::fromUtf8(kWinampAboutLine)));
     }
 
     void keyPressEvent(QKeyEvent *e) override {

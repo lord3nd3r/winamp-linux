@@ -2,6 +2,8 @@
 
 **A native classic Winamp 2.x–style media player for modern Linux desktops.**
 
+**Current release: [v0.5.0-beta2](https://github.com/lord3nd3r/winamp-linux/releases/tag/v0.5.0-beta2)**
+
 Built in **C++17** with **Qt 6** (Qt 5 fallback), faithful classic skins, a real 10-band EQ, gapless dual-player audio, out-of-process Python plugins, and desktop integration via MPRIS2.
 
 <p align="center">
@@ -13,7 +15,7 @@ Built in **C++17** with **Qt 6** (Qt 5 fallback), faithful classic skins, a real
   <img src="https://img.shields.io/badge/C%2B%2B-17-00599C?style=flat-square&logo=cplusplus&logoColor=white" alt="C++17">
   <img src="https://img.shields.io/badge/Qt-6%20%2F%205-41CD52?style=flat-square&logo=qt&logoColor=white" alt="Qt 6/5">
   <img src="https://img.shields.io/badge/platform-Linux-FCC624?style=flat-square&logo=linux&logoColor=black" alt="Linux">
-  <img src="https://img.shields.io/badge/version-5.9.0-00FF00?style=flat-square" alt="Version 5.9.0">
+  <img src="https://img.shields.io/badge/version-0.5.0--beta2-00FF00?style=flat-square" alt="Version 0.5.0-beta2">
 </p>
 
 <p align="center">

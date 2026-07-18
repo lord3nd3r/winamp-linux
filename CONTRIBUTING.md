@@ -182,7 +182,7 @@ Workflow: `.github/workflows/release.yml`
 
 ### Version
 
-`project(Winamp VERSION 5.9.0 ...)` in `CMakeLists.txt` drives package version metadata. Bump deliberately when cutting a release.
+`project(Winamp VERSION 0.5.0 ...)` in `CMakeLists.txt` plus `WINAMP_VERSION_FULL` (`0.5.0-beta2`) and `kWinampVersion` in `src/constants.h` must stay aligned with **GitHub release tags**. Bump all three when cutting a release.
 
 ---
 
