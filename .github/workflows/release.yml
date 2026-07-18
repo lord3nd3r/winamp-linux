@@ -1,5 +1,9 @@
 name: Build & Release
 
+# Multi-distro packages for major Linux families.
+# Native .deb / .rpm where the distro ships classic projectM (3.x API).
+# Arch is omitted: only projectM 4.x is packaged (incompatible API).
+
 on:
   push:
     tags:
@@ -9,56 +13,226 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
-    name: Build & Package (Ubuntu Resolute)
+    name: ${{ matrix.distro }}
     runs-on: ubuntu-latest
     container:
-      image: ubuntu:resolute
+      image: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # --- Debian family ---
+          - distro: ubuntu-22.04
+            image: ubuntu:22.04
+            family: deb
+          - distro: ubuntu-24.04
+            image: ubuntu:24.04
+            family: deb
+          - distro: ubuntu-resolute
+            image: ubuntu:resolute
+            family: deb
+          - distro: debian-bookworm
+            image: debian:bookworm
+            family: deb
+          - distro: debian-trixie
+            image: debian:trixie
+            family: deb
+          # --- RPM family ---
+          - distro: fedora-41
+            image: fedora:41
+            family: rpm
+          - distro: fedora-42
+            image: fedora:42
+            family: rpm
+          - distro: opensuse-tumbleweed
+            image: opensuse/tumbleweed:latest
+            family: suse
 
     steps:
-      - name: Install Git, Tar, and File utility
+      - name: Install bootstrap tools (deb)
+        if: matrix.family == 'deb'
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
           apt-get update
-          apt-get install -y git tar file dpkg-dev
+          apt-get install -y --no-install-recommends \
+            ca-certificates git tar file dpkg-dev
 
-      - name: Checkout Source Code
+      - name: Install bootstrap tools (rpm)
+        if: matrix.family == 'rpm'
+        run: |
+          dnf -y install git tar file rpm-build rpmdevtools which
+
+      - name: Install bootstrap tools (suse)
+        if: matrix.family == 'suse'
+        run: |
+          zypper --non-interactive --gpg-auto-import-keys refresh
+          zypper --non-interactive install -y git tar file rpm-build which gzip
+
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install System Dependencies
+      - name: Install build dependencies (deb)
+        if: matrix.family == 'deb'
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          apt-get install -y \
+          apt-get install -y --no-install-recommends \
             cmake \
             ninja-build \
             build-essential \
+            pkg-config \
             qt6-base-dev \
             qt6-multimedia-dev \
+            libgl1-mesa-dev \
             libprojectm-dev \
+            projectm-data \
             python3 \
             libgstreamer1.0-dev \
             libgstreamer-plugins-base1.0-dev \
-            libgl1-mesa-dev
+            gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good \
+            gstreamer1.0-libav \
+            libxkbcommon0 \
+            libegl1
 
-      - name: Configure CMake
+      - name: Install build dependencies (rpm)
+        if: matrix.family == 'rpm'
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          dnf -y install \
+            cmake \
+            ninja-build \
+            gcc-c++ \
+            pkgconf-pkg-config \
+            qt6-qtbase-devel \
+            qt6-qtmultimedia-devel \
+            mesa-libGL-devel \
+            libprojectM-devel \
+            python3 \
+            gstreamer1-devel \
+            gstreamer1-plugins-base-devel \
+            gstreamer1-plugins-good \
+            libxkbcommon \
+            mesa-libEGL
 
-      - name: Build Project
+      - name: Install build dependencies (suse)
+        if: matrix.family == 'suse'
         run: |
-          cmake --build build
+          zypper --non-interactive install -y \
+            cmake \
+            ninja \
+            gcc-c++ \
+            pkgconf \
+            qt6-base-devel \
+            qt6-multimedia-devel \
+            qt6-widgets-devel \
+            qt6-opengl-devel \
+            Mesa-libGL-devel \
+            projectM-devel \
+            projectM-data \
+            python3 \
+            gstreamer-devel \
+            gstreamer-plugins-base-devel \
+            gstreamer-plugins-good \
+            libxkbcommon0 \
+            Mesa-libEGL1
 
-      - name: Package with CPack
+      - name: Configure
         run: |
-          ninja -C build package
+          if [ "${{ matrix.family }}" = "deb" ]; then
+            GENERATORS="DEB;TGZ"
+          else
+            GENERATORS="RPM;TGZ"
+          fi
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DWINAMP_DISTRO_ID="${{ matrix.distro }}" \
+            -DCPACK_GENERATOR="${GENERATORS}"
 
-      - name: Create GitHub Release & Upload Assets
-        uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Build
+        run: cmake --build build --parallel "$(nproc)"
+
+      - name: Test
+        run: |
+          export QT_QPA_PLATFORM=offscreen
+          ctest --test-dir build --output-on-failure
+
+      - name: Package
+        run: ninja -C build package
+
+      - name: List packages
+        run: |
+          echo "Artifacts for ${{ matrix.distro }}:"
+          ls -la build/winamp-* || true
+          find build -maxdepth 1 -type f \( -name 'winamp-*.deb' -o -name 'winamp-*.rpm' -o -name 'winamp-*.tar.gz' \) -print
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
         with:
-          files: |
+          name: packages-${{ matrix.distro }}
+          path: |
             build/winamp-*.deb
+            build/winamp-*.rpm
             build/winamp-*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    # Publish even if some matrix cells failed; only successful artifacts upload.
+    if: always() && !cancelled() && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all packages
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: packages-*
+          merge-multiple: true
+
+      - name: Show release bundle
+        run: |
+          mapfile -t files < <(find dist -type f \( -name 'winamp-*.deb' -o -name 'winamp-*.rpm' -o -name 'winamp-*.tar.gz' \) | sort)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No packages downloaded — all matrix builds failed?"
+            exit 1
+          fi
+          printf '%s\n' "${files[@]}"
+          du -sh "${files[@]}"
+
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Winamp for Linux ${{ github.ref_name }}
+          files: |
+            dist/winamp-*.deb
+            dist/winamp-*.rpm
+            dist/winamp-*.tar.gz
           draft: false
-          prerelease: false
+          # beta / rc / alpha tags are prereleases; v1.0.0 is a full release
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') || contains(github.ref_name, 'alpha') }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          body: |
+            ## Winamp for Linux ${{ github.ref_name }}
+
+            Multi-distro packages built by GitHub Actions:
+
+            | Family | Distros |
+            |--------|---------|
+            | **.deb** | Ubuntu 22.04, 24.04, Resolute · Debian Bookworm, Trixie |
+            | **.rpm** | Fedora 41, 42 · openSUSE Tumbleweed |
+            | **.tar.gz** | Same matrix (portable install layout) |
+
+            Pick the package matching your distribution. Runtime codecs come from your system’s Qt Multimedia / GStreamer (or FFmpeg) stack.
+
+            Arch Linux is not packaged here (upstream projectM 4.x API mismatch); build from source if needed.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

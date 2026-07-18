@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
-# Numeric version for CMake/CPack; full label (incl. beta) lives in src/constants.h
-# and must match the latest GitHub release tag (v0.5.0-beta2 → 0.5.0 / 0.5.0-beta2).
-project(Winamp VERSION 0.5.0 LANGUAGES CXX)
-set(WINAMP_VERSION_FULL "0.5.0-beta2")
+# Numeric version for CMake/CPack; full label lives in src/constants.h
+# and must match the latest GitHub release tag (v1.0.0 → 1.0.0 / 1.0.0).
+project(Winamp VERSION 1.0.0 LANGUAGES CXX)
+set(WINAMP_VERSION_FULL "1.0.0")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -147,16 +147,40 @@ endif()
 add_test(NAME playlist_test COMMAND playlist_tests)
 
 # CPack Packaging
+# Override from CI with e.g. -DWINAMP_DISTRO_ID=ubuntu-24.04 -DCPACK_GENERATOR="DEB;TGZ"
 set(CPACK_PACKAGE_NAME "winamp")
 set(CPACK_PACKAGE_VENDOR "lord3nd3r")
 set(CPACK_PACKAGE_CONTACT "lord3nd3r <https://github.com/lord3nd3r/winamp-linux>")
 set(CPACK_PACKAGE_VERSION "${WINAMP_VERSION_FULL}")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Classic Winamp media player for Linux (${WINAMP_VERSION_FULL})")
-set(CPACK_GENERATOR "DEB;TGZ")
+set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/lord3nd3r/winamp-linux")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE.md")
+
+if(NOT DEFINED WINAMP_DISTRO_ID OR WINAMP_DISTRO_ID STREQUAL "")
+    set(WINAMP_DISTRO_ID "linux")
+endif()
+set(CPACK_SYSTEM_NAME "${WINAMP_DISTRO_ID}")
+set(CPACK_PACKAGE_FILE_NAME "winamp-${WINAMP_VERSION_FULL}-${WINAMP_DISTRO_ID}")
+
+# Default generators; CI sets DEB / RPM / TGZ per distro family.
+if(NOT CPACK_GENERATOR)
+    set(CPACK_GENERATOR "DEB;TGZ")
+endif()
+
+# Debian / Ubuntu
 set(CPACK_DEBIAN_PACKAGE_VERSION "${WINAMP_VERSION_FULL}")
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
 set(CPACK_DEBIAN_PACKAGE_SECTION "sound")
 set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
+set(CPACK_DEBIAN_FILE_NAME "${CPACK_PACKAGE_FILE_NAME}.deb")
+
+# Fedora / openSUSE / RHEL-family
+set(CPACK_RPM_PACKAGE_LICENSE "GPL-2.0-or-later")
+set(CPACK_RPM_PACKAGE_GROUP "Applications/Multimedia")
+set(CPACK_RPM_PACKAGE_AUTOREQ ON)
+set(CPACK_RPM_PACKAGE_AUTOPROV ON)
+set(CPACK_RPM_FILE_NAME "${CPACK_PACKAGE_FILE_NAME}.rpm")
+
 include(CPack)
 
 

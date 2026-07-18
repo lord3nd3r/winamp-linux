@@ -12,11 +12,11 @@
 #include <QUrl>
 #include <QDebug>
 
-// Product version — keep aligned with GitHub release tags (currently v0.5.0-beta2).
-// CMake project(VERSION) uses the numeric 0.5.0; this string is the full label.
-inline constexpr const char *kWinampVersion = "0.5.0-beta2";
-inline constexpr const char *kWinampWindowTitle = "Winamp 0.5.0-beta2 for Linux";
-inline constexpr const char *kWinampAboutLine = "Winamp v0.5.0-beta2 for Linux";
+// Product version — keep aligned with GitHub release tags (currently v1.0.0).
+// CMake project(VERSION) and WINAMP_VERSION_FULL must match this label.
+inline constexpr const char *kWinampVersion = "1.0.0";
+inline constexpr const char *kWinampWindowTitle = "Winamp 1.0.0 for Linux";
+inline constexpr const char *kWinampAboutLine = "Winamp v1.0.0 for Linux";
 
 // Shared Winamp-style QMenu stylesheet (used by all context menus)
 inline constexpr const char *kWinampMenuStyle =

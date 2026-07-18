@@ -1,0 +1,109 @@
+name: CI
+
+# Build and test on major Linux distros for every PR and push to master.
+# Packaging is handled by release.yml (tags / workflow_dispatch).
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.distro }}
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: ubuntu-24.04
+            image: ubuntu:24.04
+            family: deb
+          - distro: ubuntu-22.04
+            image: ubuntu:22.04
+            family: deb
+          - distro: debian-bookworm
+            image: debian:bookworm
+            family: deb
+          - distro: fedora-41
+            image: fedora:41
+            family: rpm
+          - distro: opensuse-tumbleweed
+            image: opensuse/tumbleweed:latest
+            family: suse
+
+    steps:
+      - name: Install bootstrap tools (deb)
+        if: matrix.family == 'deb'
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git
+
+      - name: Install bootstrap tools (rpm)
+        if: matrix.family == 'rpm'
+        run: dnf -y install git which
+
+      - name: Install bootstrap tools (suse)
+        if: matrix.family == 'suse'
+        run: |
+          zypper --non-interactive --gpg-auto-import-keys refresh
+          zypper --non-interactive install -y git which
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies (deb)
+        if: matrix.family == 'deb'
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get install -y --no-install-recommends \
+            cmake ninja-build build-essential pkg-config \
+            qt6-base-dev qt6-multimedia-dev libgl1-mesa-dev \
+            libprojectm-dev projectm-data python3 \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav \
+            libxkbcommon0 libegl1
+
+      - name: Install build dependencies (rpm)
+        if: matrix.family == 'rpm'
+        run: |
+          dnf -y install \
+            cmake ninja-build gcc-c++ pkgconf-pkg-config \
+            qt6-qtbase-devel qt6-qtmultimedia-devel mesa-libGL-devel \
+            libprojectM-devel python3 \
+            gstreamer1-devel gstreamer1-plugins-base-devel gstreamer1-plugins-good \
+            libxkbcommon mesa-libEGL
+
+      - name: Install build dependencies (suse)
+        if: matrix.family == 'suse'
+        run: |
+          zypper --non-interactive install -y \
+            cmake ninja gcc-c++ pkgconf \
+            qt6-base-devel qt6-multimedia-devel qt6-widgets-devel qt6-opengl-devel \
+            Mesa-libGL-devel projectM-devel projectM-data python3 \
+            gstreamer-devel gstreamer-plugins-base-devel gstreamer-plugins-good \
+            libxkbcommon0 Mesa-libEGL1
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel "$(nproc)"
+
+      - name: Test
+        run: |
+          export QT_QPA_PLATFORM=offscreen
+          ctest --test-dir build --output-on-failure

@@ -165,24 +165,53 @@ QT_QPA_PLATFORM=offscreen ctest --test-dir build-qt6 --output-on-failure
 ### Local CPack
 
 ```bash
-cmake -S . -B build-qt6 -G Ninja -DCMAKE_BUILD_TYPE=Release
+# Debian / Ubuntu (default: DEB + TGZ)
+cmake -S . -B build-qt6 -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DWINAMP_DISTRO_ID=ubuntu-24.04
 ninja -C build-qt6 package
-ls -la build-qt6/winamp-*.deb build-qt6/winamp-*.tar.gz
+ls -la build-qt6/winamp-*
+
+# Fedora / openSUSE (RPM + TGZ; needs rpm-build)
+cmake -S . -B build-rpm -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DWINAMP_DISTRO_ID=fedora-41 \
+  -DCPACK_GENERATOR="RPM;TGZ"
+ninja -C build-rpm package
 ```
 
-CPack is configured for **DEB** and **TGZ** generators (`CMakeLists.txt`).
+| CMake option | Purpose |
+|--------------|---------|
+| `WINAMP_DISTRO_ID` | Suffix in package filenames (default `linux`) |
+| `CPACK_GENERATOR` | `DEB;TGZ` (default) or `RPM;TGZ` |
+
+CPack metadata lives in `CMakeLists.txt` (DEB shlibdeps, RPM autoreq, license, contact).
 
 ### GitHub Actions
 
-Workflow: `.github/workflows/release.yml`
+| Workflow | Path | Trigger | What it does |
+|----------|------|---------|--------------|
+| **CI** | `.github/workflows/ci.yml` | Push / PR → `master` | Build + `ctest` on a representative distro matrix |
+| **Release** | `.github/workflows/release.yml` | Tags `v*`, `workflow_dispatch` | Full package matrix → artifacts; on tags, attach to GitHub Release |
 
-- Triggers: tags `v*`, and `workflow_dispatch`
-- Container: Ubuntu Resolute-oriented dependency set
-- Produces packages and attaches them to a GitHub Release on tag pushes
+**Release matrix (packages):**
+
+| Distro ID | Image | Package |
+|-----------|-------|---------|
+| `ubuntu-22.04` | `ubuntu:22.04` | `.deb` + `.tar.gz` |
+| `ubuntu-24.04` | `ubuntu:24.04` | `.deb` + `.tar.gz` |
+| `ubuntu-resolute` | `ubuntu:resolute` | `.deb` + `.tar.gz` |
+| `debian-bookworm` | `debian:bookworm` | `.deb` + `.tar.gz` |
+| `debian-trixie` | `debian:trixie` | `.deb` + `.tar.gz` |
+| `fedora-41` | `fedora:41` | `.rpm` + `.tar.gz` |
+| `fedora-42` | `fedora:42` | `.rpm` + `.tar.gz` |
+| `opensuse-tumbleweed` | `opensuse/tumbleweed` | `.rpm` + `.tar.gz` |
+
+CI uses a smaller matrix (Ubuntu 22.04/24.04, Debian Bookworm, Fedora 41, openSUSE Tumbleweed) for faster PR feedback.
+
+**Arch Linux** is intentionally not in the matrix: distro packages only ship **projectM 4.x**, while Milkdrop support uses the classic 3.x API (`libprojectM/projectM.hpp`).
 
 ### Version
 
-`project(Winamp VERSION 0.5.0 ...)` in `CMakeLists.txt` plus `WINAMP_VERSION_FULL` (`0.5.0-beta2`) and `kWinampVersion` in `src/constants.h` must stay aligned with **GitHub release tags**. Bump all three when cutting a release.
+`project(Winamp VERSION 1.0.0 ...)` in `CMakeLists.txt` plus `WINAMP_VERSION_FULL` (`1.0.0`) and `kWinampVersion` in `src/constants.h` must stay aligned with **GitHub release tags**. Bump all three when cutting a release.
 
 ---
 
