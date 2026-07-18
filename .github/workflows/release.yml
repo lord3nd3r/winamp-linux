@@ -17,10 +17,10 @@ jobs:
       image: ubuntu:resolute
 
     steps:
-      - name: Install Git and Tar
+      - name: Install Git, Tar, and File utility
         run: |
           apt-get update
-          apt-get install -y git tar
+          apt-get install -y git tar file dpkg-dev
 
       - name: Checkout Source Code
         uses: actions/checkout@v4
