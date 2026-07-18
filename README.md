@@ -102,6 +102,30 @@ The install places:
 - Desktop entry: `/usr/share/applications/winamp.desktop`
 - Assets: `/usr/share/winamp`
 
+## Packaging & Releases
+
+The project supports CPack for generating Debian packages (`.deb`) and compressed tarballs (`.tar.gz`) locally or automatically via CI.
+
+### Generate Packages Locally
+
+To generate installation packages on your local machine, run the CPack package target after building:
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+ninja -C build package
+```
+
+This generates `winamp-*.deb` and `winamp-*.tar.gz` package files in the build directory.
+
+### Automated GitHub Releases
+
+When you push a tag matching `v*` (e.g., `v0.5.0-beta2`), a GitHub Actions workflow automatically:
+1. Spins up a build container running `ubuntu:resolute` (Ubuntu 26.04) to match the target runtime environment (e.g., Python 3.15).
+2. Compiles the binary with compiler hardening and optimizations enabled.
+3. Generates the `.deb` and `.tar.gz` packages.
+4. Creates a new GitHub Release and uploads the packages as release assets.
+
+
 ## Asset Search Paths
 
 At runtime, the app looks for skins and resources in:
