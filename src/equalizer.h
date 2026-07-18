@@ -212,7 +212,6 @@ protected:
     
     // Draw EQ frequency response curve using spline interpolation (matches Windows draw_eq_graphthingy)
     void drawEqFrequencyCurve(QPainter &p) {
-        auto &bmp = WinampBitmaps::instance();
         const int left = 86, top = 17;
         const int w = 113, h = 19;
         
@@ -412,7 +411,6 @@ protected:
         QPixmap thumb = ms.getBitmap("player.main.eq.button");
         QPixmap thumbHover = ms.getBitmap("player.main.eq.button.hover");
         int thumbH = thumb.isNull() ? 11 : thumb.height(); // 23px
-        int thumbW = thumb.isNull() ? 13 : thumb.width();   // 13px
         
         auto drawSlider = [&](int sliderIdx, int relX) {
             int pos = (sliderIdx == 0) ? preampValue : eqValues[sliderIdx - 1];
@@ -697,6 +695,8 @@ private:
             for (int i = 0; i < 10; i++)
                 out << "Band" << i << "=" << eqValues[i] << "\n";
             file.close();
+        } else {
+            QMessageBox::warning(this, "Save EQ Preset", "Could not save preset:\n" + file.errorString());
         }
     }
     

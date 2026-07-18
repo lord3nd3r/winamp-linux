@@ -86,19 +86,19 @@ public:
         addPage(skinsItem, "Classic Skins", createClassicSkinsPage());
 
         // Playback category
-        QTreeWidgetItem *playbackItem = addPage(nullptr, "Playback", createPlaybackPage());
+        addPage(nullptr, "Playback", createPlaybackPage());
 
         // Playlist category
-        QTreeWidgetItem *playlistItem = addPage(nullptr, "Playlist", createPlaylistPrefsPage());
+        addPage(nullptr, "Playlist", createPlaylistPrefsPage());
 
         // Bookmarks
         addPage(nullptr, "Bookmarks", createBookmarksPage());
 
         // Visualization category
-        QTreeWidgetItem *visItem = addPage(nullptr, "Visualization", createVisualizationPage());
+        addPage(nullptr, "Visualization", createVisualizationPage());
 
         // Plug-ins category
-        QTreeWidgetItem *pluginsItem = addPage(nullptr, "Plug-ins", createPluginsPage());
+        addPage(nullptr, "Plug-ins", createPluginsPage());
 
         treeWidget->expandAll();
         treeWidget->setCurrentItem(setupItem);

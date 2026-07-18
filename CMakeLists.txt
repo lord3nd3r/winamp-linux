@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-set(QT_REQUIRED_COMPONENTS Core Gui Widgets Multimedia MultimediaWidgets OpenGL)
+set(QT_REQUIRED_COMPONENTS Core Gui Widgets Multimedia MultimediaWidgets OpenGL Network)
 
 # Prefer Qt6, but support Qt5 as a fallback.
 find_package(Qt6 QUIET COMPONENTS ${QT_REQUIRED_COMPONENTS} OpenGLWidgets)
@@ -55,6 +55,18 @@ add_executable(winamp
     src/mpris2_adaptors.h
 )
 
+# Compiler warnings
+target_compile_options(winamp PRIVATE
+    -Wall -Wextra -Wpedantic
+    -Wno-unused-parameter
+)
+
+# Hardening flags
+target_compile_options(winamp PRIVATE
+    -fstack-protector-strong
+)
+target_compile_definitions(winamp PRIVATE _FORTIFY_SOURCE=2)
+
 find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
 find_package(pybind11 CONFIG REQUIRED)
 
@@ -87,3 +99,18 @@ install(TARGETS winamp RUNTIME DESTINATION bin)
 install(FILES winamp.desktop DESTINATION share/applications)
 install(DIRECTORY skins/ DESTINATION share/winamp/skins)
 install(DIRECTORY assets/ DESTINATION share/winamp/resource)
+install(DIRECTORY lang/ DESTINATION share/winamp/lang)
+
+# CPack Packaging
+set(CPACK_PACKAGE_NAME "winamp")
+set(CPACK_PACKAGE_VENDOR "lord3nd3r")
+set(CPACK_PACKAGE_CONTACT "lord3nd3r <https://github.com/lord3nd3r/winamp-linux>")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Classic Winamp Media Player for Linux (Qt6)")
+set(CPACK_GENERATOR "DEB;TGZ")
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+set(CPACK_DEBIAN_PACKAGE_SECTION "sound")
+set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
+include(CPack)
+
+

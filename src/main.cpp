@@ -41,6 +41,7 @@
 #include <random>
 #include <cmath>
 #include <cstring>
+#include <memory>
 #include <QInputDialog>
 #include <QTabWidget>
 #include <QLabel>
@@ -606,6 +607,8 @@ bool PlaylistWindow::eventFilter(QObject *obj, QEvent *event) {
                         out << tracks[i] << "\n";
                     }
                     file.close();
+                } else {
+                    QMessageBox::warning(this, "Save Playlist", "Could not save playlist:\n" + file.errorString());
                 }
             }
             return true;
@@ -1089,7 +1092,6 @@ void PlaylistWindow::paintModernPlaylist(QPainter &p) {
     
     // ---- Playlist content area frame ----
     int fy = 18; // below titlebar
-    int fh = h - 18; // rest of the window
     
     // Frame borders from player.pl.* bitmaps
     QPixmap plTL = ms.getBitmap("player.pl.topleft");       // 6x5
@@ -1742,6 +1744,8 @@ void PlaylistWindow::showListMenu(QPoint globalPos) {
                     out << tracks[i] << "\n";
                 }
                 file.close();
+            } else {
+                QMessageBox::warning(this, "Save Playlist", "Could not save playlist:\n" + file.errorString());
             }
         }
     } else if (selected == genPl) {
@@ -1895,12 +1899,13 @@ class WinampWindow : public QWidget {
     Q_OBJECT
 public:
     WinampWindow(QWidget *parent = nullptr) : QWidget(parent), dragPosition(0,0), isDragging(false),
-                 volume(200), balance(0), hoveredButton(-1), pressedButton(-1),
+                 volume(200), hoveredButton(-1), pressedButton(-1),
                  shuffleOn(false), repeatOn(false), eqBtnOn(false), plBtnOn(false),
                  repeatTrack(false), stopAfterCurrent(false),
-                 isDraggingVolume(false), isDraggingBalance(false), isDraggingPos(false), 
-                 scrollOffset(0), visMode(1), doubleSize(false), shadeMode(false),
-                 alwaysOnTop(false), clutterbarOpen(false) {
+                 isDraggingVolume(false), isDraggingPos(false), isDraggingBalance(false), 
+                 scrollOffset(0), balance(0),
+                 doubleSize(false), shadeMode(false), alwaysOnTop(false), clutterbarOpen(false),
+                 visMode(1) {
         setFixedSize(275, 116);
         setWindowTitle("Winamp 5.666 for Linux");
         setWindowFlags(Qt::FramelessWindowHint);
@@ -2225,6 +2230,7 @@ public:
         delete playlistWindow;
         delete eqWindow;
         delete videoWindow;
+        delete mediaLibraryWindow;
     }
 
     void playFile(const QString &file) {
@@ -3138,6 +3144,12 @@ public:
 
         QNetworkRequest request(url);
         request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+#if QT_VERSION >= QT_VERSION_CHECK(5, 9, 0)
+        request.setMaximumRedirectsAllowed(5);
+#endif
+#if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
+        request.setTransferTimeout(15000);
+#endif
         request.setRawHeader("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:126.0) Gecko/20100101 Firefox/126.0");
         request.setRawHeader("Accept", "*/*");
         request.setRawHeader("Accept-Language", "en-US,en;q=0.9");
@@ -4107,6 +4119,7 @@ protected:
                 // Show file info dialog (same as Alt+3)
                 if (!currentFile.isEmpty()) {
                     FileInfoDialog *dlg = new FileInfoDialog(currentFile, player, this);
+                    dlg->setAttribute(Qt::WA_DeleteOnClose);
                     dlg->show();
                 }
                 return;
@@ -5134,7 +5147,13 @@ int main(int argc, char *argv[]) {
     }
 
     WinampWindow w;
-    PythonPluginManager pyManager(&w);
+    std::unique_ptr<PythonPluginManager> pyManager;
+    try {
+        pyManager = std::make_unique<PythonPluginManager>(&w);
+    } catch (const std::exception &e) {
+        qWarning() << "[Python Plugins] Interpreter init failed:" << e.what();
+        qWarning() << "[Python Plugins] Continuing without plugin support.";
+    }
 
     // If saved skin is modern, trigger modern skin loading
     if (savedIsModern) {
@@ -5194,7 +5213,10 @@ int main(int argc, char *argv[]) {
     }
     
     if (splash) {
-        QTimer::singleShot(1500, splash, &QSplashScreen::close);
+        QTimer::singleShot(1500, splash, [splash]() {
+            splash->close();
+            splash->deleteLater();
+        });
     }
     
     w.show();
@@ -5203,3 +5225,4 @@ int main(int argc, char *argv[]) {
 }
 
 #include "main.moc"
+
