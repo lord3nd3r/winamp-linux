@@ -179,3 +179,108 @@ static inline QString extractSkinArchive(const QString &archivePath) {
 static inline bool isModernSkinDir(const QString &path) {
     return QFile::exists(path + "/skin.xml");
 }
+
+#include <QPoint>
+
+// Shared text.bmp character lookup (5x6 per char)
+static inline QPoint getTextCharPos(QChar ch) {
+    if (ch >= 'A' && ch <= 'Z') return QPoint((ch.toLatin1() - 'A') * 5, 0);
+    if (ch >= 'a' && ch <= 'z') return QPoint((ch.toLatin1() - 'a') * 5, 0);
+    if (ch >= '0' && ch <= '9') return QPoint((ch.toLatin1() - '0') * 5, 6);
+    switch (ch.toLatin1()) {
+        case ' ': return QPoint(142, 0);
+        case ':': return QPoint(60, 6);
+        case '.': return QPoint(55, 6);
+        case '\'': case '`': return QPoint(80, 6);
+        case '(': return QPoint(65, 6);
+        case ')': return QPoint(70, 6);
+        case '-': return QPoint(75, 6);
+        case '!': return QPoint(85, 6);
+        case '_': return QPoint(90, 6);
+        case '+': return QPoint(95, 6);
+        case '\\': return QPoint(100, 6);
+        case '/': return QPoint(105, 6);
+        case '[': case '{': case '<': return QPoint(110, 6);
+        case ']': case '}': case '>': return QPoint(115, 6);
+        case '~': case '^': return QPoint(120, 6);
+        case '&': return QPoint(125, 6);
+        case '%': return QPoint(130, 6);
+        case ',': return QPoint(135, 6);
+        case '=': return QPoint(140, 6);
+        case '$': return QPoint(145, 6);
+        case '#': return QPoint(150, 6);
+        case '"': return QPoint(130, 0);
+        case '@': return QPoint(135, 0);
+        case '?': return QPoint(15, 12);
+        case '*': return QPoint(20, 12);
+    }
+    return QPoint(-1, -1);
+}
+
+// Shared visualization colors array
+extern QColor visColors[24];
+
+// Load viscolor.txt if present (Windows-compatible format: 24 lines of "r,g,b")
+static inline void loadVisColors(const QString &skinPath) {
+    QFile file(skinPath + "/viscolor.txt");
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        // Try case variations
+        file.setFileName(skinPath + "/VISCOLOR.TXT");
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return;
+    }
+    
+    QTextStream in(&file);
+    int idx = 0;
+    while (!in.atEnd() && idx < 24) {
+        QString line = in.readLine().trimmed();
+        if (line.isEmpty() || line.startsWith("#") || line.startsWith(";")) continue;
+        
+        // Parse "r,g,b" format (matching draw.cpp line 402)
+        QStringList parts = line.split(",");
+        if (parts.size() >= 3) {
+            int r = parts[0].trimmed().toInt();
+            int g = parts[1].trimmed().toInt();
+            int b = parts[2].trimmed().toInt();
+            visColors[idx] = QColor(r, g, b);
+            idx++;
+        }
+    }
+}
+
+// Global modern skin and playlist color variables
+extern bool g_isModernSkin;
+class ModernSkinEngine;
+extern ModernSkinEngine *g_modernSkin;
+extern SkinPlaylistColors g_plColors;
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+void fft512(const float *input, float *magnitudes);
+#endif
+
+// Built-in EQ Presets (slider values 0-63, center=32)
+struct EqPreset {
+    const char *name;
+    int values[10];
+};
+
+inline constexpr EqPreset builtinPresets[] = {
+    {"Flat",                {32, 32, 32, 32, 32, 32, 32, 32, 32, 32}},
+    {"Classical",           {32, 32, 32, 32, 32, 32, 44, 44, 44, 48}},
+    {"Club",                {32, 32, 25, 21, 21, 21, 25, 32, 32, 32}},
+    {"Dance",               {14, 18, 27, 32, 32, 40, 43, 43, 32, 32}},
+    {"Full Bass",           {14, 14, 14, 21, 29, 37, 44, 48, 50, 50}},
+    {"Full Bass & Treble",  {18, 21, 32, 43, 37, 28, 16, 12,  8,  6}},
+    {"Full Treble",         {48, 48, 48, 37, 27, 12,  4,  4,  4,  2}},
+    {"Laptop Speakers",     {25, 12, 23, 36, 33, 29, 25, 15,  8,  4}},
+    {"Large Hall",          {14, 14, 21, 21, 32, 37, 37, 37, 32, 32}},
+    {"Live",                {37, 32, 25, 21, 21, 21, 25, 28, 28, 29}},
+    {"Party",               {18, 18, 32, 32, 32, 32, 32, 32, 18, 18}},
+    {"Pop",                 {33, 25, 18, 16, 21, 32, 33, 33, 33, 33}},
+    {"Reggae",              {32, 32, 32, 40, 32, 22, 22, 32, 32, 32}},
+    {"Rock",                {18, 25, 39, 43, 35, 26, 16, 12, 12, 12}},
+    {"Ska",                 {34, 37, 37, 32, 26, 23, 16, 15, 12, 15}},
+    {"Soft",                {25, 29, 32, 34, 32, 25, 16, 14, 12, 10}},
+    {"Soft Rock",           {25, 25, 28, 32, 37, 35, 29, 25, 22, 16}},
+    {"Techno",              {18, 21, 32, 39, 37, 32, 18, 15, 15, 16}},
+};
+inline constexpr int numPresets = sizeof(builtinPresets) / sizeof(builtinPresets[0]);
