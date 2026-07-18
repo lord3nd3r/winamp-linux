@@ -34,7 +34,7 @@ jobs:
             qt6-base-dev \
             qt6-multimedia-dev \
             libprojectm-dev \
-            pybind11-dev \
+            python3 \
             libgstreamer1.0-dev \
             libgstreamer-plugins-base1.0-dev \
             libgl1-mesa-dev

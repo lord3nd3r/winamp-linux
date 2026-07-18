@@ -23,8 +23,7 @@ sudo apt-get install -y \
     libqt6multimediawidgets6 \
     libprojectm-dev \
     projectm-data \
-    python3-dev \
-    pybind11-dev
+    python3
 ```
 
 ---
@@ -91,7 +90,7 @@ graph TD
 - **`PlaylistWindow`** (`src/playlist.h` & `src/playlist.cpp`): Manages the queue of tracks. Supports custom list views, sorting (title, filename, path), file drops, and asynchronous duration probing.
 - **`EqualizerWindow`** (`src/equalizer.h`): Interface for the graphic equalizer. Adjusts 10 discrete frequency bands, stores/loads presets, and routes EQ levels to the DSP.
 - **`George Yohng's EQ10 DSP`** (`src/eq_dsp.h`): The actual DSP engine running in the audio stream path to process raw PCM float/int16 buffers.
-- **`PythonPluginManager`** (`src/python_plugin.h`): Embeds a Python interpreter using `pybind11` to load scripts from `~/.config/winamp/plugins/` and exposes the `winamp.Api` interface to user scripts.
+- **`PythonPluginManager`** (`src/python_plugin.{h,cpp}`): Spawns an out-of-process `python3` host (JSON-RPC) that loads scripts from `~/.config/winamp/plugins/` and exposes the same API proxy methods formerly provided by embedded `winamp.Api`.
 
 ### Snapping & UI Window Mechanics
 Sub-windows (Playlist, Equalizer) automatically snap to the edges of the main window when within a 15-pixel radius. Snapping alignment is maintained when dragging the main window around the desktop:

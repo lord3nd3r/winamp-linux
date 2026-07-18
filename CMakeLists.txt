@@ -59,6 +59,8 @@ add_executable(winamp
     src/milkdrop.h
     src/media_library.h
     src/mpris2_adaptors.h
+    src/python_plugin.h
+    src/python_plugin.cpp
 )
 
 # Compiler warnings
@@ -73,8 +75,9 @@ target_compile_options(winamp PRIVATE
 )
 target_compile_definitions(winamp PRIVATE _FORTIFY_SOURCE=2)
 
-find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
-find_package(pybind11 CONFIG REQUIRED)
+# Python plugins run in an out-of-process host (python3 + JSON-RPC).
+# No embedded interpreter / pybind11 link required.
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 target_link_libraries(winamp
     ${QT_PACKAGE}::Core
@@ -85,7 +88,6 @@ target_link_libraries(winamp
     ${QT_PACKAGE}::OpenGL
     ${QT_PACKAGE}::Network
     ${PROJECTM_LIB}
-    pybind11::embed
 )
 
 if(QT_PACKAGE STREQUAL "Qt6")

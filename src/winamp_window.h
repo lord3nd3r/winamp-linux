@@ -17,9 +17,9 @@
 #include <QToolTip>
 
 #include "compat.h"
+#include "constants.h"   // loadVisColors used by WinampBitmaps
 #include "winamp_bitmaps.h"
 #include "eq_dsp.h"
-#include "constants.h"
 #include "bookmark_manager.h"
 #include "recent_files.h"
 #include "translator.h"
