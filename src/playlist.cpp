@@ -1,5 +1,6 @@
 #include "playlist.h"
 #include "winamp_window.h"
+#include "tag_metadata.h"
 #include <QRandomGenerator>
 #include <QSpinBox>
 #include <QCheckBox>
@@ -7,6 +8,11 @@
 #include <QDirIterator>
 #include <algorithm>
 #include <random>
+
+QString PlaylistWindow::trackDisplayName(int index, const QString &filePath) {
+    // Winamp 2.x default: show "Artist - Title" from ID3 when present.
+    return QString("%1. %2").arg(index + 1).arg(TagMetadata::displayTitle(filePath));
+}
 
 PlaylistWindow::PlaylistWindow(WinampWindow *parent) : QWidget(nullptr), mainWindow(parent) {
     setMinimumSize(275, 116);
@@ -335,12 +341,12 @@ void PlaylistWindow::moveSelectedDown() {
 }
 
 void PlaylistWindow::sortByTitle() {
-    // Sort by display filename (baseName)
+    // Sort by ID3 artist/title (Winamp 2.x "Sort by title"), fall back to filename.
     QList<QPair<QString, qint64>> combined;
     for (int i = 0; i < tracks.size(); i++)
         combined.append({tracks[i], i < trackDurations.size() ? trackDurations[i] : 0});
     std::sort(combined.begin(), combined.end(), [](const auto &a, const auto &b) {
-        return playlistSortLabel(a.first) < playlistSortLabel(b.first);
+        return TagMetadata::sortTitleKey(a.first) < TagMetadata::sortTitleKey(b.first);
     });
     tracks.clear(); trackDurations.clear();
     for (const auto &p : combined) { tracks.append(p.first); trackDurations.append(p.second); }
@@ -1134,16 +1140,14 @@ void PlaylistWindow::showContextMenu(QPoint globalPos) {
     else if (sel == removeAct) removeSelected();
     else if (sel == cropAct) cropSelected();
     else if (sel == fileInfoAct) {
-        // Show basic file info dialog
         int row = listWidget->currentRow();
         if (row >= 0 && row < tracks.size()) {
-            QFileInfo fi(tracks[row]);
-            QString info = QString("File: %1\nPath: %2\nSize: %3 KB\nModified: %4")
-                .arg(fi.fileName())
-                .arg(fi.absolutePath())
-                .arg(fi.size() / 1024)
-                .arg(fi.lastModified().toString("yyyy-MM-dd hh:mm:ss"));
-            QMessageBox::information(this, "File Info", info);
+            auto *dlg = new FileInfoDialog(tracks[row], nullptr, this);
+            dlg->setAttribute(Qt::WA_DeleteOnClose);
+            connect(dlg, &FileInfoDialog::tagsSaved, this, [this](const QString &) {
+                rebuildListDisplay();
+            });
+            dlg->exec();
         }
     }
     else if (sel == editEntryAct) {
@@ -1295,11 +1299,12 @@ void PlaylistWindow::showMiscMenu(QPoint globalPos) {
     if (selected == fileInfoAct) {
         int row = listWidget->currentRow();
         if (row >= 0 && row < tracks.size()) {
-            QFileInfo fi(tracks[row]);
-            QString info = QString("File: %1\nPath: %2\nSize: %3 KB\nModified: %4")
-                .arg(fi.fileName()).arg(fi.absolutePath())
-                .arg(fi.size() / 1024).arg(fi.lastModified().toString("yyyy-MM-dd hh:mm:ss"));
-            QMessageBox::information(this, "File Info", info);
+            auto *dlg = new FileInfoDialog(tracks[row], nullptr, this);
+            dlg->setAttribute(Qt::WA_DeleteOnClose);
+            connect(dlg, &FileInfoDialog::tagsSaved, this, [this](const QString &) {
+                rebuildListDisplay();
+            });
+            dlg->exec();
         }
     }
     else if (selected == editEntryAct) {

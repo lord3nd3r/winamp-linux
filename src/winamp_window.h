@@ -31,6 +31,7 @@
 #include "video.h"
 #include "milkdrop.h"
 #include "media_library.h"
+#include "tag_metadata.h"
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 #if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
@@ -1864,11 +1865,7 @@ protected:
             case Qt::Key_3:
                 if (event->modifiers() & Qt::AltModifier) {
                     // Alt+3 = File info dialog (matches Windows WINAMP_EDIT_ID3 / in_infobox)
-                    if (!currentFile.isEmpty()) {
-                        FileInfoDialog *dlg = new FileInfoDialog(currentFile, player, this);
-                        dlg->setAttribute(Qt::WA_DeleteOnClose);
-                        dlg->exec();
-                    }
+                    openFileInfoDialog(currentFile);
                 }
                 break;
             case Qt::Key_Left:
@@ -2270,11 +2267,7 @@ protected:
             // File Info button: y=42-49
             if (y >= 42 && y < 49) {
                 // Show file info dialog (same as Alt+3)
-                if (!currentFile.isEmpty()) {
-                    FileInfoDialog *dlg = new FileInfoDialog(currentFile, player, this);
-                    dlg->setAttribute(Qt::WA_DeleteOnClose);
-                    dlg->show();
-                }
+                openFileInfoDialog(currentFile);
                 return;
             }
             // Double Size button: y=49-55
@@ -2715,7 +2708,17 @@ public:
             mediaBitrate = 0;
             mediaSampleRate = 0;
             mediaChannels = 0;
-            metaTitle.clear();
+            // TagLib first (Winamp 2.x reads ID3 on open); Qt Multimedia may refine later.
+            metaTitle = TagMetadata::displayTitle(fileName);
+            {
+                MediaAudioInfo ainfo = TagMetadata::readAudioInfo(fileName);
+                if (ainfo.bitrateKbps > 0)
+                    mediaBitrate = ainfo.bitrateKbps;
+                if (ainfo.sampleRate > 0)
+                    mediaSampleRate = ainfo.sampleRate;
+                if (ainfo.channels > 0)
+                    mediaChannels = ainfo.channels;
+            }
             
             // Auto-load EQ preset if AUTO is enabled (matches Windows eq_autoload from Play.cpp line 58)
             if (eqWindow && eqWindow->isAutoEnabled()) {
@@ -2726,6 +2729,7 @@ public:
             player->play();
             RecentFilesManager::instance().addFile(fileName);
             updateTrayTooltip();
+            update();
             
             // Show song change notification (matches Windows balloon tooltips)
             if (showSongNotifications && trayIcon) {
@@ -2736,6 +2740,23 @@ public:
             // Preload next track for gapless playback
             preloadNextTrack();
         }
+    }
+
+    void openFileInfoDialog(const QString &path) {
+        if (path.isEmpty())
+            return;
+        auto *dlg = new FileInfoDialog(path, player, this);
+        dlg->setAttribute(Qt::WA_DeleteOnClose);
+        connect(dlg, &FileInfoDialog::tagsSaved, this, [this](const QString &p) {
+            if (playlistWindow)
+                playlistWindow->rebuildListDisplay();
+            if (p == currentFile) {
+                metaTitle = TagMetadata::displayTitle(p);
+                updateTrayTooltip();
+                update();
+            }
+        });
+        dlg->exec();
     }
     
     // Apply volume to audio outputs — respects EQ DSP path

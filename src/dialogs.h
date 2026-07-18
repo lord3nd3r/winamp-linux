@@ -12,9 +12,9 @@
 #include <QTabWidget>
 #include <QFormLayout>
 #include <QGroupBox>
+#include <QComboBox>
 #include <QFileInfo>
 #include <QDateTime>
-#include <QMediaMetaData>
 #include <QMediaPlayer>
 #include <QMessageBox>
 #include <QDesktopServices>
@@ -23,9 +23,11 @@
 #include <QKeyEvent>
 #include <QPainter>
 #include <QTimer>
+#include <QSignalBlocker>
 #include <cmath>
 #include "constants.h"
 #include "translator.h"
+#include "tag_metadata.h"
 
 class JumpToFileDialog : public QDialog {
     Q_OBJECT
@@ -120,200 +122,290 @@ private:
     int selectedIndex = -1;
 };
 
+// Classic Winamp 2.x File Info / ID3 editor (Alt+3).
+// Loads and saves tags via TagLib (ID3v1+ID3v2 for MP3; native tags for other formats).
 class FileInfoDialog : public QDialog {
     Q_OBJECT
 public:
-    FileInfoDialog(const QString &filePath, QMediaPlayer *player, QWidget *parent = nullptr)
+    FileInfoDialog(const QString &filePath, QMediaPlayer *player = nullptr, QWidget *parent = nullptr)
         : QDialog(parent), m_filePath(filePath), m_player(player)
     {
-        setWindowTitle("File Info - " + QFileInfo(filePath).fileName());
-        setMinimumSize(450, 400);
+        Q_UNUSED(m_player);
+        setWindowTitle(TR("win.fileinfo.title", "File Info") + " - " + QFileInfo(filePath).fileName());
+        setMinimumSize(480, 440);
         setStyleSheet("background-color: #2b2b3d; color: #00ff00;");
-        
+
         QVBoxLayout *mainLayout = new QVBoxLayout(this);
-        
-        // File path display
+
         QLabel *fileLabel = new QLabel("<b>File:</b> " + filePath, this);
         fileLabel->setWordWrap(true);
+        fileLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
         mainLayout->addWidget(fileLabel);
-        
-        // Tab widget for different metadata types (matches Windows IDD_FILEINFO tabs)
+
         QTabWidget *tabs = new QTabWidget(this);
         tabs->setStyleSheet(
             "QTabWidget::pane { border: 1px solid #555; background: #1a1a2e; }"
             "QTabBar::tab { background: #333; color: #00ff00; padding: 6px 12px; margin-right: 2px; }"
             "QTabBar::tab:selected { background: #0000c6; font-weight: bold; }"
         );
-        
-        // Tab 1: Basic Info / Metadata (matches FileInfo_Metadata)
+
+        // --- ID3 / Metadata tab (Winamp 2.x id3 editor fields) ---
         QWidget *metadataTab = new QWidget();
         QFormLayout *metaLayout = new QFormLayout(metadataTab);
         metaLayout->setLabelAlignment(Qt::AlignRight);
-        
-        // Editable metadata fields (matches Windows id3v1_dlgproc strs[])
+
+        const QString editStyle =
+            "background-color: #000; color: #00ff00; border: 1px solid #555; padding: 4px;";
+        const QString comboStyle =
+            "background-color: #000; color: #00ff00; border: 1px solid #555; padding: 2px;"
+            "selection-background-color: #0000c6;";
+
         titleEdit = new QLineEdit(metadataTab);
         artistEdit = new QLineEdit(metadataTab);
         albumEdit = new QLineEdit(metadataTab);
         yearEdit = new QLineEdit(metadataTab);
+        yearEdit->setMaxLength(4);
+        yearEdit->setMaximumWidth(80);
         trackEdit = new QLineEdit(metadataTab);
-        genreEdit = new QLineEdit(metadataTab);
+        trackEdit->setMaximumWidth(80);
+        genreCombo = new QComboBox(metadataTab);
+        genreCombo->setEditable(true);
+        genreCombo->setInsertPolicy(QComboBox::NoInsert);
+        genreCombo->addItem(QString()); // empty genre
+        genreCombo->addItems(TagMetadata::id3v1Genres());
         commentEdit = new QTextEdit(metadataTab);
         commentEdit->setMaximumHeight(80);
-        
-        QString editStyle = "background-color: #000; color: #00ff00; border: 1px solid #555; padding: 4px;";
+
         titleEdit->setStyleSheet(editStyle);
         artistEdit->setStyleSheet(editStyle);
         albumEdit->setStyleSheet(editStyle);
         yearEdit->setStyleSheet(editStyle);
         trackEdit->setStyleSheet(editStyle);
-        genreEdit->setStyleSheet(editStyle);
+        genreCombo->setStyleSheet(comboStyle);
         commentEdit->setStyleSheet(editStyle);
-        
+
+        // Winamp 2.x order: Title, Artist, Album, Year, Track #, Genre, Comment
         metaLayout->addRow("Title:", titleEdit);
         metaLayout->addRow("Artist:", artistEdit);
         metaLayout->addRow("Album:", albumEdit);
         metaLayout->addRow("Year:", yearEdit);
-        metaLayout->addRow("Track:", trackEdit);
-        metaLayout->addRow("Genre:", genreEdit);
+        metaLayout->addRow("Track #:", trackEdit);
+        metaLayout->addRow("Genre:", genreCombo);
         metaLayout->addRow("Comment:", commentEdit);
-        
-        // Load current metadata from player (matches Windows GetDlgItemTextW)
-        if (m_player) {
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-            QMediaMetaData meta = m_player->metaData();
-            titleEdit->setText(meta.stringValue(QMediaMetaData::Title));
-            
-            // Artist (ContributingArtist or AlbumArtist)
-            QString artist = meta.stringValue(QMediaMetaData::AlbumArtist);
-            if (artist.isEmpty()) 
-                artist = meta.stringValue(QMediaMetaData::ContributingArtist);
-            artistEdit->setText(artist);
-            
-            albumEdit->setText(meta.stringValue(QMediaMetaData::AlbumTitle));
-            
-            // Year from Date field
-            QVariant dateVar = meta.value(QMediaMetaData::Date);
-            if (dateVar.canConvert<QDate>()) {
-                yearEdit->setText(QString::number(dateVar.toDate().year()));
-            }
-            
-            // Track number
-            QVariant trackVar = meta.value(QMediaMetaData::TrackNumber);
-            if (trackVar.isValid())
-                trackEdit->setText(trackVar.toString());
-            
-            genreEdit->setText(meta.stringValue(QMediaMetaData::Genre));
-            commentEdit->setPlainText(meta.stringValue(QMediaMetaData::Comment));
-#else
-            titleEdit->setText(m_player->metaData("Title").toString());
-            artistEdit->setText(m_player->metaData("Author").toString());
-            albumEdit->setText(m_player->metaData("AlbumTitle").toString());
-            genreEdit->setText(m_player->metaData("Genre").toString());
-            commentEdit->setPlainText(m_player->metaData("Description").toString());
-#endif
-        }
-        
-        tabs->addTab(metadataTab, "Metadata");
-        
-        // Tab 2: Technical Info (matches FileInfo streamdata/technical info)
+
+        id3StatusLabel = new QLabel(metadataTab);
+        id3StatusLabel->setStyleSheet("color: #888; font-size: 9pt;");
+        metaLayout->addRow(QString(), id3StatusLabel);
+
+        // TagLib is the source of truth (file on disk), matching classic in_mp3 File Info.
+        loadFromDisk();
+
+        tabs->addTab(metadataTab, "ID3");
+
+        // --- Technical tab ---
         QWidget *techTab = new QWidget();
         QFormLayout *techLayout = new QFormLayout(techTab);
         techLayout->setLabelAlignment(Qt::AlignRight);
-        
+
         QFileInfo fi(filePath);
-        techLayout->addRow("File size:", new QLabel(QString::number(fi.size() / 1024) + " KB"));
-        techLayout->addRow("Modified:", new QLabel(fi.lastModified().toString("yyyy-MM-dd hh:mm:ss")));
-        
-        if (m_player) {
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-            QMediaMetaData meta = m_player->metaData();
-            
-            // Audio bitrate
-            QVariant br = meta.value(QMediaMetaData::AudioBitRate);
-            if (br.isValid()) {
-                techLayout->addRow("Bitrate:", new QLabel(QString::number(br.toInt() / 1000) +  " kbps"));
+        techLayout->addRow("File size:",
+            new QLabel(QString::number(fi.size() / 1024.0, 'f', 1) + " KB"));
+        techLayout->addRow("Modified:",
+            new QLabel(fi.lastModified().toString("yyyy-MM-dd hh:mm:ss")));
+        techLayout->addRow("Location:", new QLabel(fi.absolutePath()));
+
+        MediaAudioInfo ainfo = TagMetadata::readAudioInfo(filePath);
+        if (ainfo.valid) {
+            techLayout->addRow("Format:", new QLabel(ainfo.format));
+            if (!ainfo.details.isEmpty())
+                techLayout->addRow("Details:", new QLabel(ainfo.details));
+            if (ainfo.bitrateKbps > 0)
+                techLayout->addRow("Bitrate:",
+                    new QLabel(QString::number(ainfo.bitrateKbps) + " kbps"));
+            if (ainfo.sampleRate > 0)
+                techLayout->addRow("Sample rate:",
+                    new QLabel(QString::number(ainfo.sampleRate) + " Hz"));
+            if (ainfo.channels > 0) {
+                QString ch = (ainfo.channels == 1) ? "Mono"
+                           : (ainfo.channels == 2) ? "Stereo"
+                           : QString::number(ainfo.channels) + " ch";
+                techLayout->addRow("Channels:", new QLabel(ch));
             }
-            
-            // Sample rate (from AudioCodec or extracted if available)
-            techLayout->addRow("Sample rate:", new QLabel("44100 Hz"));  // Qt doesn't expose this easily
-            
-            // Duration
-            if (m_player->duration() > 0) {
-                int secs = m_player->duration() / 1000;
+            if (ainfo.lengthSeconds > 0) {
+                int secs = ainfo.lengthSeconds;
                 int mins = secs / 60;
                 secs %= 60;
-                techLayout->addRow("Duration:", new QLabel(QString("%1:%2").arg(mins).arg(secs, 2, 10, QChar('0'))));
+                techLayout->addRow("Length:",
+                    new QLabel(QString("%1:%2").arg(mins).arg(secs, 2, 10, QChar('0'))));
             }
-            
-            // Audio codec
-            QString codec = meta.stringValue(QMediaMetaData::AudioCodec);
-            if (!codec.isEmpty())
-                techLayout->addRow("Codec:", new QLabel(codec));
-#else
-            QVariant br = m_player->metaData("AudioBitRate");
-            if (br.isValid()) {
-                techLayout->addRow("Bitrate:", new QLabel(QString::number(br.toInt() / 1000) +  " kbps"));
-            }
-#endif
+            QString tagTypes;
+            if (ainfo.hasId3v1) tagTypes += "ID3v1 ";
+            if (ainfo.hasId3v2) tagTypes += "ID3v2 ";
+            if (tagTypes.isEmpty()) tagTypes = "(none / non-ID3)";
+            techLayout->addRow("Tags on disk:", new QLabel(tagTypes.trimmed()));
+        } else if (isRemoteMediaLocation(filePath)) {
+            techLayout->addRow("Note:",
+                new QLabel("Remote stream — tags cannot be written."));
+        } else {
+            techLayout->addRow("Note:",
+                new QLabel("Could not read audio properties for this file."));
         }
-        
-        techLayout->addRow("", new QLabel("")); // Spacer
+
         techLayout->addItem(new QSpacerItem(1, 1, QSizePolicy::Minimum, QSizePolicy::Expanding));
-        
-        tabs->addTab(techTab, "Technical");
-        
+        tabs->addTab(techTab, "MPEG Info");
+
         mainLayout->addWidget(tabs);
-        
-        // Buttons (matches Windows IDOK/IDCANCEL)
+
+        // Buttons: Update (save), Remove tag, Cancel — Winamp-style actions
         QHBoxLayout *btnLayout = new QHBoxLayout();
-        QPushButton *okBtn = new QPushButton("OK", this);
+        QPushButton *updateBtn = new QPushButton("Update", this);
+        QPushButton *removeBtn = new QPushButton("Remove tag", this);
         QPushButton *cancelBtn = new QPushButton("Cancel", this);
-        okBtn->setStyleSheet("background: #0000c6; color: #fff; padding: 6px 20px;");
-        cancelBtn->setStyleSheet("background: #333; color: #00ff00; padding: 6px 20px;");
-        
-        connect(okBtn, &QPushButton::clicked, this, &FileInfoDialog::onSave);
+        updateBtn->setStyleSheet("background: #0000c6; color: #fff; padding: 6px 16px;");
+        removeBtn->setStyleSheet("background: #333; color: #00ff00; padding: 6px 16px;");
+        cancelBtn->setStyleSheet("background: #333; color: #00ff00; padding: 6px 16px;");
+        updateBtn->setDefault(true);
+
+        const bool writable = TagMetadata::canTagFile(filePath) && QFileInfo(filePath).isWritable();
+        updateBtn->setEnabled(writable);
+        removeBtn->setEnabled(writable);
+        if (!writable && !isRemoteMediaLocation(filePath)) {
+            id3StatusLabel->setText("File is not writable — view only.");
+        } else if (isRemoteMediaLocation(filePath)) {
+            id3StatusLabel->setText("Remote URL — tags cannot be edited.");
+            titleEdit->setReadOnly(true);
+            artistEdit->setReadOnly(true);
+            albumEdit->setReadOnly(true);
+            yearEdit->setReadOnly(true);
+            trackEdit->setReadOnly(true);
+            genreCombo->setEnabled(false);
+            commentEdit->setReadOnly(true);
+        }
+
+        connect(updateBtn, &QPushButton::clicked, this, &FileInfoDialog::onSave);
+        connect(removeBtn, &QPushButton::clicked, this, &FileInfoDialog::onRemoveTag);
         connect(cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
-        
+
+        btnLayout->addWidget(removeBtn);
         btnLayout->addStretch();
-        btnLayout->addWidget(okBtn);
+        btnLayout->addWidget(updateBtn);
         btnLayout->addWidget(cancelBtn);
-        
         mainLayout->addLayout(btnLayout);
     }
 
+signals:
+    // Emitted after tags are written so playlist / ticker can refresh (IPC-style).
+    void tagsSaved(const QString &filePath);
+
 private slots:
     void onSave() {
-        // Note: Qt's QMediaPlayer doesn't support writing metadata back to files.
-        // Real implementation would need TagLib or similar library (like Windows in_mp3 plugin).
-        // For now, just show a message that metadata editing would go here.
-        // (Windows equivalent: Metadata::Save() in Metadata.cpp, writes ID3v1/ID3v2 tags)
-        
-        QMessageBox::information(this, "Metadata Save",
-            "Metadata editing requires TagLib integration.\n"
-            "This feature will write ID3 tags once TagLib is linked.",
-            QMessageBox::Ok);
-        
-        // In Windows Winamp, this calls:
-        // - meta->id3v1.SetString() for each field
-        // - meta->id3v2.SetString() for each field  
-        // - meta->Save() to write the file
-        // - SendMessage(WM_WA_IPC, IPC_WRITE_EXTENDED_FILE_INFO) to notify Winamp
-        
+        if (!TagMetadata::canTagFile(m_filePath)) {
+            QMessageBox::warning(this, "File Info",
+                "Cannot write tags for this location.");
+            return;
+        }
+        MediaTags tags = tagsFromUi();
+        QString err;
+        if (!TagMetadata::writeTags(m_filePath, tags, &err)) {
+            QMessageBox::critical(this, "File Info",
+                "Failed to save tags:\n" + err);
+            return;
+        }
+        emit tagsSaved(m_filePath);
         accept();
     }
 
+    void onRemoveTag() {
+        if (!TagMetadata::canTagFile(m_filePath))
+            return;
+        auto reply = QMessageBox::question(this, "Remove tag",
+            "Remove all embedded tags from this file?\n"
+            "(ID3v1 and ID3v2 on MPEG; clears native tags on other formats.)",
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (reply != QMessageBox::Yes)
+            return;
+        QString err;
+        if (!TagMetadata::stripTags(m_filePath, &err)) {
+            QMessageBox::critical(this, "File Info",
+                "Failed to remove tags:\n" + err);
+            return;
+        }
+        // Clear UI to match disk
+        titleEdit->clear();
+        artistEdit->clear();
+        albumEdit->clear();
+        yearEdit->clear();
+        trackEdit->clear();
+        genreCombo->setCurrentIndex(0);
+        genreCombo->setEditText(QString());
+        commentEdit->clear();
+        id3StatusLabel->setText("Tags removed.");
+        emit tagsSaved(m_filePath);
+    }
+
 private:
+    void loadFromDisk() {
+        MediaTags tags = TagMetadata::readTags(m_filePath);
+        if (!tags.valid && !isRemoteMediaLocation(m_filePath)) {
+            id3StatusLabel->setText("No tags found (or format not supported).");
+            return;
+        }
+        titleEdit->setText(tags.title);
+        artistEdit->setText(tags.artist);
+        albumEdit->setText(tags.album);
+        yearEdit->setText(tags.year);
+        trackEdit->setText(tags.track > 0 ? QString::number(tags.track) : QString());
+        {
+            QSignalBlocker b(genreCombo);
+            int idx = genreCombo->findText(tags.genre, Qt::MatchFixedString);
+            if (idx >= 0)
+                genreCombo->setCurrentIndex(idx);
+            else {
+                genreCombo->setCurrentIndex(0);
+                genreCombo->setEditText(tags.genre);
+            }
+        }
+        commentEdit->setPlainText(tags.comment);
+
+        MediaAudioInfo ainfo = TagMetadata::readAudioInfo(m_filePath);
+        QStringList bits;
+        if (ainfo.hasId3v1) bits << "ID3v1";
+        if (ainfo.hasId3v2) bits << "ID3v2";
+        if (bits.isEmpty() && tags.valid &&
+            (!tags.title.isEmpty() || !tags.artist.isEmpty() || !tags.album.isEmpty()))
+            bits << "embedded tag";
+        if (!bits.isEmpty())
+            id3StatusLabel->setText("Present: " + bits.join(", "));
+        else
+            id3StatusLabel->setText("No ID3 tags yet — Update will create them.");
+    }
+
+    MediaTags tagsFromUi() const {
+        MediaTags t;
+        t.title = titleEdit->text().trimmed();
+        t.artist = artistEdit->text().trimmed();
+        t.album = albumEdit->text().trimmed();
+        t.year = yearEdit->text().trimmed();
+        t.genre = genreCombo->currentText().trimmed();
+        t.comment = commentEdit->toPlainText().trimmed();
+        bool ok = false;
+        int trk = trackEdit->text().trimmed().toInt(&ok);
+        t.track = (ok && trk > 0) ? trk : 0;
+        t.valid = true;
+        return t;
+    }
+
     QString m_filePath;
-    QMediaPlayer *m_player;
-    
-    // Edit fields (matches Windows IDD_INFO_ID3V1 control IDs)
-    QLineEdit *titleEdit;
-    QLineEdit *artistEdit;
-    QLineEdit *albumEdit;
-    QLineEdit *yearEdit;
-    QLineEdit *trackEdit;
-    QLineEdit *genreEdit;
-    QTextEdit *commentEdit;
+    QMediaPlayer *m_player = nullptr;
+
+    QLineEdit *titleEdit = nullptr;
+    QLineEdit *artistEdit = nullptr;
+    QLineEdit *albumEdit = nullptr;
+    QLineEdit *yearEdit = nullptr;
+    QLineEdit *trackEdit = nullptr;
+    QComboBox *genreCombo = nullptr;
+    QTextEdit *commentEdit = nullptr;
+    QLabel *id3StatusLabel = nullptr;
 };
 
 class AboutDialog : public QDialog {

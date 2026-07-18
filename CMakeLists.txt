@@ -40,6 +40,10 @@ endif()
 # Install: sudo apt-get install libprojectm-dev projectm-data
 find_library(PROJECTM_LIB projectM REQUIRED)
 
+# TagLib — ID3v1/v2 + multi-format tag read/write (Winamp 2.x File Info)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(TAGLIB REQUIRED IMPORTED_TARGET taglib)
+
 add_executable(winamp
     src/main.cpp
     src/winamp_window.h
@@ -51,6 +55,8 @@ add_executable(winamp
     src/bookmark_manager.h
     src/recent_files.h
     src/dialogs.h
+    src/tag_metadata.h
+    src/tag_metadata.cpp
     src/preferences.h
     src/preferences.cpp
     src/modern_skin.h
@@ -92,6 +98,7 @@ target_link_libraries(winamp
     ${QT_PACKAGE}::OpenGL
     ${QT_PACKAGE}::Network
     ${PROJECTM_LIB}
+    PkgConfig::TAGLIB
 )
 
 if(QT_PACKAGE STREQUAL "Qt6")
@@ -131,6 +138,8 @@ add_executable(playlist_tests
     src/equalizer.cpp
     src/preferences.cpp
     src/video.cpp
+    src/tag_metadata.cpp
+    src/dialogs.h
 )
 target_link_libraries(playlist_tests PRIVATE
     ${QT_PACKAGE}::Core
@@ -141,11 +150,23 @@ target_link_libraries(playlist_tests PRIVATE
     ${QT_PACKAGE}::OpenGL
     ${QT_PACKAGE}::Network
     ${QT_PACKAGE}::Test
+    PkgConfig::TAGLIB
 )
 if(QT_PACKAGE STREQUAL "Qt6")
     target_link_libraries(playlist_tests PRIVATE Qt6::OpenGLWidgets)
 endif()
 add_test(NAME playlist_test COMMAND playlist_tests)
+
+add_executable(tag_metadata_tests
+    tests/test_tag_metadata.cpp
+    src/tag_metadata.cpp
+)
+target_link_libraries(tag_metadata_tests PRIVATE
+    ${QT_PACKAGE}::Core
+    ${QT_PACKAGE}::Test
+    PkgConfig::TAGLIB
+)
+add_test(NAME tag_metadata_test COMMAND tag_metadata_tests)
 
 # CPack Packaging
 # Override from CI with e.g. -DWINAMP_DISTRO_ID=ubuntu-24.04 -DCPACK_GENERATOR="DEB;TGZ"

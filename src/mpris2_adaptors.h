@@ -12,6 +12,8 @@
 #include <QDBusConnection>
 #endif
 #include <QApplication>
+#include <QMediaPlayer>
+#include <QMediaMetaData>
 
 #if defined(QT_DBUS_LIB) && QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 class Mpris2RootAdaptor : public QDBusAbstractAdaptor {
