@@ -90,6 +90,7 @@ jobs:
             pkg-config \
             qt6-base-dev \
             qt6-multimedia-dev \
+            libqt6opengl6-dev \
             libgl1-mesa-dev \
             libprojectm-dev \
             projectm-data \
@@ -131,8 +132,10 @@ jobs:
             pkgconf \
             qt6-base-devel \
             qt6-multimedia-devel \
+            qt6-multimediawidgets-devel \
             qt6-widgets-devel \
             qt6-opengl-devel \
+            qt6-openglwidgets-devel \
             Mesa-libGL-devel \
             projectM-devel \
             projectM-data \

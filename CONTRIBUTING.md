@@ -54,6 +54,7 @@ sudo apt-get install -y \
   dpkg-dev \
   qt6-base-dev \
   qt6-multimedia-dev \
+  libqt6opengl6-dev \
   libqt6multimediawidgets6 \
   libgl-dev \
   libprojectm-dev \
