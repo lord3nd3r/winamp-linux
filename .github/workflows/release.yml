@@ -11,17 +11,23 @@ permissions:
 
 jobs:
   build:
-    name: Build & Package (Ubuntu)
+    name: Build & Package (Ubuntu Resolute)
     runs-on: ubuntu-latest
+    container:
+      image: ubuntu:resolute
 
     steps:
+      - name: Install Git and Tar
+        run: |
+          apt-get update
+          apt-get install -y git tar
+
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
       - name: Install System Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          apt-get install -y \
             cmake \
             ninja-build \
             build-essential \
