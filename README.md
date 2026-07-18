@@ -86,7 +86,7 @@ Classic Winamp defined how a generation listened to music on the desktop: skinna
 | **[CONTRIBUTING.md](CONTRIBUTING.md)** | Dependencies, Qt 5/6 builds, tests, packaging, architecture, coding standards, PR workflow |
 | **[CONFIGURATION.md](CONFIGURATION.md)** | Paths, `winamp.conf` keys (verified against source), skins, plugins dir, bookmarks |
 | **[PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md)** | Sandbox model, lifecycle hooks, full API reference, examples, Icecast DJ notes |
-| **[docs/images/](docs/images/)** | README screenshots and image provenance |
+| **[winamp.png](winamp.png)** | README hero screenshot (classic main + equalizer) |
 
 ---
 
@@ -291,7 +291,8 @@ winamp-linux/
 ├── skins/default/            # Default classic skin files
 ├── assets/                   # Classic resource bitmaps / icons
 ├── lang/                     # Translation packs
-├── docs/images/              # README illustrations
+├── docs/images/              # Extra documentation illustrations
+├── winamp.png                # README hero (classic main + equalizer)
 ├── CMakeLists.txt
 └── winamp.desktop
 ```
