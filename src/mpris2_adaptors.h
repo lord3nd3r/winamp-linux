@@ -13,6 +13,7 @@
 #endif
 #include <QApplication>
 
+#if defined(QT_DBUS_LIB) && QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 class Mpris2RootAdaptor : public QDBusAbstractAdaptor {
     Q_OBJECT
     Q_CLASSINFO("D-Bus Interface", "org.mpris.MediaPlayer2")
@@ -162,4 +163,5 @@ private:
     QMediaPlayer *m_player;
     QAudioOutput *m_audioOutput;
 };
+#endif
 

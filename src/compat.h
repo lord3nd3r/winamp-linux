@@ -51,7 +51,7 @@ static inline void waSetNetworkStream(QMediaPlayer *player, QIODevice *device, c
     Q_UNUSED(sourceUrl);
 }
 
-static QIcon createFallbackAppIcon() {
+static inline QIcon createFallbackAppIcon() {
     QPixmap pix(64, 64);
     pix.fill(QColor(18, 18, 18));
 
@@ -102,7 +102,7 @@ static inline void waSetNetworkStream(QMediaPlayer *player, QIODevice *device, c
     player->setSourceDevice(device, sourceUrl);
 }
 
-static QIcon createFallbackAppIcon() {
+static inline QIcon createFallbackAppIcon() {
     QPixmap pix(64, 64);
     pix.fill(QColor(18, 18, 18));
 

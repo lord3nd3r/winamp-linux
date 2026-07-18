@@ -8,6 +8,7 @@
 #include <QXmlStreamReader>
 #include <QFile>
 #include <QDir>
+#include <QSet>
 #include <QDebug>
 #include "constants.h"
 
@@ -48,7 +49,8 @@ public:
         }
 
         qDebug() << "ModernSkin: parsing skin from" << skinDir;
-        parseFile(skinXml);
+        QSet<QString> visited;
+        parseFile(skinXml, 0, visited);
         qDebug() << "ModernSkin: parsed" << bitmapDefs.size() << "bitmap defs," << bitmapFonts.size() << "fonts";
         loadAllBitmaps();
         qDebug() << "ModernSkin: loaded" << loadedBitmaps.size() << "bitmaps from" << imageCache.size() << "image files";
@@ -193,9 +195,27 @@ public:
     }
 
 private:
-    void parseFile(const QString &filePath) {
+    static constexpr int kMaxIncludeDepth = 10;
+
+    void parseFile(const QString &filePath, int depth, QSet<QString> &visited) {
+        // Guard against excessive include depth (malicious/malformed skins)
+        if (depth > kMaxIncludeDepth) {
+            qWarning() << "ModernSkin: include depth limit exceeded at" << filePath;
+            return;
+        }
+
         // Case-insensitive file open for Linux
         QString resolved = resolveCasePath(filePath);
+        QString canonical = QFileInfo(resolved).canonicalFilePath();
+        if (canonical.isEmpty()) canonical = resolved;
+
+        // Guard against circular includes
+        if (visited.contains(canonical)) {
+            qWarning() << "ModernSkin: circular include detected, skipping" << filePath;
+            return;
+        }
+        visited.insert(canonical);
+
         QFile file(resolved);
         if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return;
 
@@ -210,7 +230,7 @@ private:
                     if (!includeFile.isEmpty()) {
                         // Resolve include path case-insensitively
                         QString includePath = resolveCasePath(baseDir + "/" + includeFile);
-                        parseFile(includePath);
+                        parseFile(includePath, depth + 1, visited);
                     }
                 } else if (xml.name() == u"skininfo") {
                     while (!(xml.isEndElement() && xml.name() == u"skininfo") && !xml.atEnd()) {
@@ -225,6 +245,10 @@ private:
                     parseBitmapFontElement(xml);
                 }
             }
+        }
+
+        if (xml.hasError()) {
+            qWarning() << "ModernSkin: XML parse error in" << filePath << ":" << xml.errorString();
         }
     }
 

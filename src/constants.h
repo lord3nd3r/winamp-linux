@@ -12,7 +12,7 @@
 #include <QUrl>
 
 // Shared Winamp-style QMenu stylesheet (used by all context menus)
-static const char *kWinampMenuStyle =
+inline constexpr const char *kWinampMenuStyle =
     "QMenu { background-color: #2b2d3d; color: #00ff00; border: 1px solid #555; font-size: 9pt; }"
     "QMenu::item:selected { background-color: #0000c6; }"
     "QMenu::item:checked { font-weight: bold; }"
@@ -20,7 +20,7 @@ static const char *kWinampMenuStyle =
     "QMenu::separator { height: 1px; background: #555; margin: 2px 4px; }";
 
 // Shared audio file filter string for all file dialogs
-static const char *kAudioFileFilter =
+inline constexpr const char *kAudioFileFilter =
     "Audio Files (*.mp3 *.wav *.flac *.ogg *.m4a *.aac *.wma *.opus);;All Files (*)";
 
 // Config file path helper
@@ -167,7 +167,7 @@ static inline QString extractSkinArchive(const QString &archivePath) {
     proc.start("unzip", QStringList() << "-o" << "-j" << archivePath << "-d" << extractDir);
     proc.waitForFinished(10000);
     
-    if (proc.exitCode() != 0) {
+    if (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0) {
         qWarning() << "Failed to extract skin archive:" << archivePath << proc.readAllStandardError();
         return {};
     }
