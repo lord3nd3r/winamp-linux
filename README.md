@@ -2,7 +2,7 @@
 
 **A native classic Winamp 2.x–style media player for modern Linux desktops.**
 
-**Current release: [v0.5.0-beta2](https://github.com/lord3nd3r/winamp-linux/releases/tag/v0.5.0-beta2)**
+**Current release: [v1.0.0](https://github.com/lord3nd3r/winamp-linux/releases/tag/v1.0.0)**
 
 Built in **C++17** with **Qt 6** (Qt 5 fallback), faithful classic skins, a real 10-band EQ, gapless dual-player audio, out-of-process Python plugins, and desktop integration via MPRIS2.
 
@@ -15,7 +15,7 @@ Built in **C++17** with **Qt 6** (Qt 5 fallback), faithful classic skins, a real
   <img src="https://img.shields.io/badge/C%2B%2B-17-00599C?style=flat-square&logo=cplusplus&logoColor=white" alt="C++17">
   <img src="https://img.shields.io/badge/Qt-6%20%2F%205-41CD52?style=flat-square&logo=qt&logoColor=white" alt="Qt 6/5">
   <img src="https://img.shields.io/badge/platform-Linux-FCC624?style=flat-square&logo=linux&logoColor=black" alt="Linux">
-  <img src="https://img.shields.io/badge/version-0.5.0--beta2-00FF00?style=flat-square" alt="Version 0.5.0-beta2">
+  <img src="https://img.shields.io/badge/version-1.0.0-00FF00?style=flat-square" alt="Version 1.0.0">
 </p>
 
 <p align="center">
@@ -171,9 +171,14 @@ QT_QPA_PLATFORM=offscreen ctest --test-dir build-qt6 --output-on-failure
 # Install into a prefix (example)
 cmake --install build-qt6 --prefix /usr/local
 
-# Or build distribution packages
+# Or build distribution packages (DEB + TGZ by default)
 ninja -C build-qt6 package
 # → build-qt6/winamp-*.deb and .tar.gz
+
+# RPM (Fedora / openSUSE) — needs rpm-build installed
+cmake -S . -B build-rpm -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DWINAMP_DISTRO_ID=fedora-41 -DCPACK_GENERATOR="RPM;TGZ"
+ninja -C build-rpm package
 ```
 
 Default install layout (CMake `install` rules):
@@ -186,18 +191,34 @@ Default install layout (CMake `install` rules):
 | `share/winamp/resource/` | Classic resource bitmaps |
 | `share/winamp/lang/` | Language packs |
 
+### GitHub multi-distro builds
+
+| Workflow | When | Distros |
+|----------|------|---------|
+| **CI** (`.github/workflows/ci.yml`) | Push / PR to `master` | Ubuntu 22.04 & 24.04, Debian Bookworm, Fedora 41, openSUSE Tumbleweed — build + test |
+| **Release** (`.github/workflows/release.yml`) | Tags `v*` or manual dispatch | Ubuntu 22.04 / 24.04 / Resolute, Debian Bookworm / Trixie, Fedora 41 / 42, openSUSE Tumbleweed — package + upload |
+
+Release assets are named per distro, for example:
+
+- `winamp-1.0.0-ubuntu-24.04.deb`
+- `winamp-1.0.0-fedora-41.rpm`
+- matching `.tar.gz` for each matrix entry
+
+**Not packaged in CI:** Arch Linux (repo only ships **projectM 4.x**; this tree still uses the classic 3.x `libprojectM` C++ API). Build from source on Arch once a compatible `libprojectM` is available, or vendor the 3.x library.
+
 ### Containerized package build
 
 ```bash
-docker run --rm -it -v "$(pwd)":/workspace -w /workspace ubuntu:resolute bash
+docker run --rm -it -v "$(pwd)":/workspace -w /workspace ubuntu:24.04 bash
 # inside:
 apt-get update && apt-get install -y \
   cmake ninja-build build-essential \
   qt6-base-dev qt6-multimedia-dev \
-  libprojectm-dev python3 \
+  libprojectm-dev projectm-data python3 \
   libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
   libgl1-mesa-dev file dpkg-dev git
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DWINAMP_DISTRO_ID=ubuntu-24.04
 ninja -C build package
 ```
 

@@ -159,17 +159,16 @@ void TestPlaylist::testRemoveDeadFiles() {
     QString missingFile = dir.filePath("test_missing.mp3");
     
     PlaylistWindow playlist;
-    playlist.addTrack(existingFile);
-    QCOMPARE(playlist.trackCount(), 1);
-    
-    // We cannot use addTrack for a missing local file directly since addTrack
-    // validates existence. We manually inject it into the tracks list to test removeDeadFiles.
+    // Inject both paths without addTrack: addTrack queues a QMediaPlayer duration
+    // probe that can SIGSEGV in headless CI when GStreamer lacks a full graph.
+    // removeDeadFiles() only checks QFile::exists / remote URLs.
+    playlist.tracks.append(existingFile);
     playlist.tracks.append(missingFile);
+    playlist.trackDurations.append(0);
     playlist.trackDurations.append(0);
     playlist.rebuildListDisplay();
     QCOMPARE(playlist.trackCount(), 2);
     
-    // Remove dead files (should filter out the missing track)
     playlist.removeDeadFiles();
     QCOMPARE(playlist.trackCount(), 1);
     QCOMPARE(playlist.trackAt(0), existingFile);
