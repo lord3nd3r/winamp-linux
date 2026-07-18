@@ -14,7 +14,7 @@ A fast, lightweight, native classic Winamp (2.x) clone for modern Linux desktops
 - **Graphic Equalizer**: Faithful port of **George Yohng's EQ10 DSP** algorithm with asymmetric Q factor, preamp control, and 10 graphic bands.
 - **Fast Audio Pipeline**: Pre-allocated buffers, dual-player preloading for gapless playback, and a logarithmic spectrum analyzer matching the original Winamp frequency mapping.
 - **Robust URL Streaming**: Support for HTTP/HTTPS stream URL playback with automatic redirects and format decoding.
-- **Embedded Python Engine**: Extend functionality using Python scripts with lifecycle callbacks and player API access.
+- **Sandboxed Python plugins**: Extend functionality via out-of-process Python scripts (JSON-RPC host) with lifecycle callbacks and a stable player API.
 - **MPRIS2 Integration**: System media key controls, KDE Connect compatibility, and lock screen media player widget support (Qt6 only).
 - **Visualization Support**: Demoscene visualizer matching Milkdrop presets (utilizing `libprojectM`).
 
