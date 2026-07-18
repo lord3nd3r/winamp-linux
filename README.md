@@ -25,7 +25,7 @@ A fast, lightweight, native classic Winamp (2.x) clone for modern Linux desktops
 To keep the repository clean and developer-friendly, the documentation has been split into dedicated guides:
 
 - 🛠️ **[CONTRIBUTING.md](CONTRIBUTING.md)**: Setup compiler packages, build with Qt5/Qt6, run the test suites (CTest), package release binaries (`.deb`/`.tar.gz`), and review architectural designs.
-- 🐍 **[PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md)**: Write user-defined Python plugins under `~/.config/winamp/plugins/`, use lifecycle callbacks, thread safety rules, and review the full `winamp.Api` method reference.
+- 🐍 **[PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md)**: Write user-defined Python plugins under `~/.config/winamp/plugins/`, use lifecycle callbacks, and review the full API proxy method reference.
 - ⚙️ **[CONFIGURATION.md](CONFIGURATION.md)**: Browse configuration file paths, bookmarks lists, and check INI property options for `winamp.conf`.
 
 ---
@@ -64,9 +64,9 @@ ninja -C build-qt6
   - `winamp_window.h` — Main Winamp widget (player logic, volumes, balance, skins).
   - `winamp_bitmaps.h` — Asset resource manager for classic bitmaps.
   - `playlist.h` & `playlist.cpp` — Playlist widget, queue sorting, async duration scanner.
-  - `equalizer.h` — Equalizer slider panel.
+  - `equalizer.h` & `equalizer.cpp` — Equalizer slider panel.
   - `eq_dsp.h` — Core George Yohng EQ10 DSP process.
-  - `python_plugin.h` — Embedded Python interpreter bindings.
+  - `python_plugin.h` & `python_plugin.cpp` — Out-of-process Python plugin host (JSON-RPC).
   - `constants.h` — Global layouts, static variables, text glyph mappings, and skin loader.
 - `tests/` — Automated Qt Test suite.
 - `plugins/examples/` — Pre-loaded Python plugin templates (e.g. Icecast DJ).
