@@ -8,6 +8,7 @@
 #include <QFile>
 #include <QTextStream>
 #include <QFileInfo>
+#include "constants.h"
 
 class Translator {
 public:
@@ -116,7 +117,7 @@ private:
     
     void loadEnglishDefaults() {
         // Window titles
-        strings["win.main.title"] = "Winamp 5.666 for Linux";
+        strings["win.main.title"] = QString::fromUtf8(kWinampWindowTitle);
         strings["win.playlist.title"] = "Winamp Playlist Editor";
         strings["win.equalizer.title"] = "Winamp Equalizer";
         strings["win.video.title"] = "Winamp Video";

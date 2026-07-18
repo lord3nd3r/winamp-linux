@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
-project(Winamp VERSION 5.9.0 LANGUAGES CXX)
+# Numeric version for CMake/CPack; full label (incl. beta) lives in src/constants.h
+# and must match the latest GitHub release tag (v0.5.0-beta2 → 0.5.0 / 0.5.0-beta2).
+project(Winamp VERSION 0.5.0 LANGUAGES CXX)
+set(WINAMP_VERSION_FULL "0.5.0-beta2")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -147,9 +150,10 @@ add_test(NAME playlist_test COMMAND playlist_tests)
 set(CPACK_PACKAGE_NAME "winamp")
 set(CPACK_PACKAGE_VENDOR "lord3nd3r")
 set(CPACK_PACKAGE_CONTACT "lord3nd3r <https://github.com/lord3nd3r/winamp-linux>")
-set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Classic Winamp Media Player for Linux (Qt6)")
+set(CPACK_PACKAGE_VERSION "${WINAMP_VERSION_FULL}")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Classic Winamp media player for Linux (${WINAMP_VERSION_FULL})")
 set(CPACK_GENERATOR "DEB;TGZ")
+set(CPACK_DEBIAN_PACKAGE_VERSION "${WINAMP_VERSION_FULL}")
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
 set(CPACK_DEBIAN_PACKAGE_SECTION "sound")
 set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
