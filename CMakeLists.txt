@@ -8,17 +8,17 @@ set(CMAKE_AUTOMOC ON)
 set(QT_REQUIRED_COMPONENTS Core Gui Widgets Multimedia MultimediaWidgets OpenGL Network)
 
 # Prefer Qt6, but support Qt5 as a fallback.
-find_package(Qt6 QUIET COMPONENTS ${QT_REQUIRED_COMPONENTS} OpenGLWidgets)
+find_package(Qt6 QUIET COMPONENTS ${QT_REQUIRED_COMPONENTS} OpenGLWidgets Test)
 if(Qt6_FOUND)
     set(QT_PACKAGE Qt6)
     set(QT_DBUS_FOUND_VAR Qt6DBus_FOUND)
-    find_package(Qt6 REQUIRED COMPONENTS ${QT_REQUIRED_COMPONENTS} OpenGLWidgets)
+    find_package(Qt6 REQUIRED COMPONENTS ${QT_REQUIRED_COMPONENTS} OpenGLWidgets Test)
     find_package(Qt6 COMPONENTS DBus QUIET)
     message(STATUS "Using Qt6")
 else()
     set(QT_PACKAGE Qt5)
     set(QT_DBUS_FOUND_VAR Qt5DBus_FOUND)
-    find_package(Qt5 REQUIRED COMPONENTS ${QT_REQUIRED_COMPONENTS})
+    find_package(Qt5 REQUIRED COMPONENTS ${QT_REQUIRED_COMPONENTS} Test)
     find_package(Qt5 COMPONENTS DBus QUIET)
     message(STATUS "Using Qt5")
 endif()
@@ -38,6 +38,8 @@ find_library(PROJECTM_LIB projectM REQUIRED)
 
 add_executable(winamp
     src/main.cpp
+    src/winamp_window.h
+    src/winamp_bitmaps.h
     src/compat.h
     src/eq_dsp.h
     src/constants.h
@@ -48,6 +50,7 @@ add_executable(winamp
     src/preferences.h
     src/modern_skin.h
     src/playlist.h
+    src/playlist.cpp
     src/equalizer.h
     src/video.h
     src/milkdrop.h
@@ -100,6 +103,17 @@ install(FILES winamp.desktop DESTINATION share/applications)
 install(DIRECTORY skins/ DESTINATION share/winamp/skins)
 install(DIRECTORY assets/ DESTINATION share/winamp/resource)
 install(DIRECTORY lang/ DESTINATION share/winamp/lang)
+
+# Testing
+enable_testing()
+add_executable(winamp_tests
+    tests/test_eq_dsp.cpp
+)
+target_link_libraries(winamp_tests PRIVATE
+    ${QT_PACKAGE}::Core
+    ${QT_PACKAGE}::Test
+)
+add_test(NAME eq_dsp_test COMMAND winamp_tests)
 
 # CPack Packaging
 set(CPACK_PACKAGE_NAME "winamp")
