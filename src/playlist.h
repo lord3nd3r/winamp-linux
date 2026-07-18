@@ -120,6 +120,16 @@ public:
     }
     bool isShadeMode() const { return shadeMode; }
 
+    // Rebuild list rows (e.g. after ID3 tags are edited).
+    void rebuildListDisplay() {
+        listWidget->clear();
+        for (int i = 0; i < tracks.size(); i++) {
+            QListWidgetItem *item = new QListWidgetItem(trackDisplayName(i, tracks[i]));
+            item->setData(Qt::UserRole, tracks[i]);
+            listWidget->addItem(item);
+        }
+    }
+
 signals:
     void trackDoubleClicked(const QString &filePath);
 
@@ -172,17 +182,7 @@ private:
     void randomizeList();
     void exploreFolderOfSelected();
     void generateHtmlPlaylist();
-    QString trackDisplayName(int index, const QString &filePath) {
-        return QString("%1. %2").arg(index + 1).arg(playlistEntryLabel(filePath));
-    }
-    void rebuildListDisplay() {
-        listWidget->clear();
-        for (int i = 0; i < tracks.size(); i++) {
-            QListWidgetItem *item = new QListWidgetItem(trackDisplayName(i, tracks[i]));
-            item->setData(Qt::UserRole, tracks[i]); // Store full file path for drag-out
-            listWidget->addItem(item);
-        }
-    }
+    QString trackDisplayName(int index, const QString &filePath);
 
     PlaylistListWidget *listWidget;
     QList<QString> tracks;

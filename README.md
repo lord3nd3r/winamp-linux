@@ -41,6 +41,7 @@ Classic Winamp defined how a generation listened to music on the desktop: skinna
 | Feature | Details |
 |---------|---------|
 | **Local media** | Plays common audio/video formats supported by the Qt Multimedia backend (typically GStreamer or FFmpeg on Linux). |
+| **ID3 tags (Winamp 2.x)** | Full **read/write** via TagLib: File Info (Alt+3), ID3v1+ID3v2 on MP3, playlist “Artist - Title”, sort by title. |
 | **Gapless dual-player** | Next track is preloaded on a second `QMediaPlayer` and swapped at end-of-track to reduce silence between songs. |
 | **URL / radio streams** | HTTP(S) and related schemes via `QNetworkAccessManager`, with redirect limits and request timeouts. |
 | **Volume & balance** | Classic 0–255 volume scale and stereo balance, persisted across sessions. |
@@ -121,6 +122,8 @@ sudo apt-get install -y \
   libgl-dev \
   libprojectm-dev \
   projectm-data \
+  libtag1-dev \
+  pkg-config \
   python3 \
   file \
   dpkg-dev
@@ -130,6 +133,7 @@ sudo apt-get install -y \
 |---------|------|
 | `qt6-base-dev`, `libqt6opengl6-dev`, multimedia | UI + OpenGL + playback |
 | `libprojectm-dev`, `projectm-data` | Milkdrop-compatible visualizations |
+| `libtag1-dev` | ID3v1/v2 + multi-format tag **read and write** (File Info / Alt+3) |
 | `python3` | Out-of-process plugin host (not linked into the binary) |
 | `file`, `dpkg-dev` | CPack `.deb` packaging helpers |
 

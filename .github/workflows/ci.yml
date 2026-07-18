@@ -72,7 +72,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             cmake ninja-build build-essential pkg-config \
             qt6-base-dev qt6-multimedia-dev libqt6opengl6-dev libgl1-mesa-dev \
-            libprojectm-dev projectm-data python3 \
+            libprojectm-dev projectm-data libtag1-dev pkg-config python3 \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav \
             libxkbcommon0 libegl1
@@ -83,7 +83,7 @@ jobs:
           dnf -y install \
             cmake ninja-build gcc-c++ pkgconf-pkg-config \
             qt6-qtbase-devel qt6-qtmultimedia-devel mesa-libGL-devel \
-            libprojectM-devel python3 \
+            libprojectM-devel taglib-devel python3 \
             gstreamer1-devel gstreamer1-plugins-base-devel gstreamer1-plugins-good \
             libxkbcommon mesa-libEGL
 
@@ -94,7 +94,7 @@ jobs:
             cmake ninja gcc-c++ pkgconf \
             qt6-base-devel qt6-multimedia-devel qt6-multimediawidgets-devel \
             qt6-widgets-devel qt6-opengl-devel qt6-openglwidgets-devel \
-            Mesa-libGL-devel projectM-devel projectM-data python3 \
+            Mesa-libGL-devel projectM-devel projectM-data libtag-devel python3 \
             gstreamer-devel gstreamer-plugins-base-devel gstreamer-plugins-good \
             libxkbcommon0 Mesa-libEGL1
 

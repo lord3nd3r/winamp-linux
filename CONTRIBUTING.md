@@ -59,6 +59,8 @@ sudo apt-get install -y \
   libgl-dev \
   libprojectm-dev \
   projectm-data \
+  libtag1-dev \
+  pkg-config \
   python3 \
   gstreamer1.0-plugins-good \
   gstreamer1.0-plugins-bad \

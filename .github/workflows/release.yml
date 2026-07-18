@@ -94,6 +94,8 @@ jobs:
             libgl1-mesa-dev \
             libprojectm-dev \
             projectm-data \
+            libtag1-dev \
+            pkg-config \
             python3 \
             libgstreamer1.0-dev \
             libgstreamer-plugins-base1.0-dev \
@@ -115,6 +117,8 @@ jobs:
             qt6-qtmultimedia-devel \
             mesa-libGL-devel \
             libprojectM-devel \
+            taglib-devel \
+            pkgconf-pkg-config \
             python3 \
             gstreamer1-devel \
             gstreamer1-plugins-base-devel \
@@ -139,6 +143,8 @@ jobs:
             Mesa-libGL-devel \
             projectM-devel \
             projectM-data \
+            libtag-devel \
+            pkgconf \
             python3 \
             gstreamer-devel \
             gstreamer-plugins-base-devel \
