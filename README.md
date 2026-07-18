@@ -116,6 +116,7 @@ sudo apt-get install -y \
   ninja-build \
   qt6-base-dev \
   qt6-multimedia-dev \
+  libqt6opengl6-dev \
   libqt6multimediawidgets6 \
   libgl-dev \
   libprojectm-dev \
@@ -127,7 +128,7 @@ sudo apt-get install -y \
 
 | Package | Role |
 |---------|------|
-| `qt6-base-dev`, multimedia widgets | UI + playback |
+| `qt6-base-dev`, `libqt6opengl6-dev`, multimedia | UI + OpenGL + playback |
 | `libprojectm-dev`, `projectm-data` | Milkdrop-compatible visualizations |
 | `python3` | Out-of-process plugin host (not linked into the binary) |
 | `file`, `dpkg-dev` | CPack `.deb` packaging helpers |
