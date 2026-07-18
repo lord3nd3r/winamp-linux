@@ -1,81 +1,343 @@
 # Winamp for Linux
 
-A fast, lightweight, native classic Winamp (2.x) clone for modern Linux desktops, written in C++17 and Qt6 (with Qt5 fallback).
+**A native classic Winamp 2.x–style media player for modern Linux desktops.**
 
-![Winamp Linux](https://img.shields.io/badge/Winamp-Linux-00FF00?style=for-the-badge&logo=linux&logoColor=white)
-![Qt](https://img.shields.io/badge/Qt6%2FQt5-Multimedia-41CD52?style=for-the-badge&logo=qt&logoColor=white)
-![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C?style=for-the-badge&logo=cplusplus&logoColor=white)
+Built in **C++17** with **Qt 6** (Qt 5 fallback), faithful classic skins, a real 10-band EQ, gapless dual-player audio, out-of-process Python plugins, and desktop integration via MPRIS2.
 
----
+<p align="center">
+  <img src="docs/images/winamp-classic-stack.png" alt="Classic Winamp 2.x style main window, equalizer, and playlist stack" width="320">
+</p>
 
-## Key Features
+<p align="center">
+  <img src="https://img.shields.io/badge/license-GPL--2.0-blue?style=flat-square" alt="GPL-2.0">
+  <img src="https://img.shields.io/badge/C%2B%2B-17-00599C?style=flat-square&logo=cplusplus&logoColor=white" alt="C++17">
+  <img src="https://img.shields.io/badge/Qt-6%20%2F%205-41CD52?style=flat-square&logo=qt&logoColor=white" alt="Qt 6/5">
+  <img src="https://img.shields.io/badge/platform-Linux-FCC624?style=flat-square&logo=linux&logoColor=black" alt="Linux">
+  <img src="https://img.shields.io/badge/version-5.9.0-00FF00?style=flat-square" alt="Version 5.9.0">
+</p>
 
-- **Classic Skin Engine**: Supports classic Winamp skin archives (`.wsz` or `.zip`) and uncompressed skin folders.
-- **Graphic Equalizer**: Faithful port of **George Yohng's EQ10 DSP** algorithm with asymmetric Q factor, preamp control, and 10 graphic bands.
-- **Fast Audio Pipeline**: Pre-allocated buffers, dual-player preloading for gapless playback, and a logarithmic spectrum analyzer matching the original Winamp frequency mapping.
-- **Robust URL Streaming**: Support for HTTP/HTTPS stream URL playback with automatic redirects and format decoding.
-- **Sandboxed Python plugins**: Extend functionality via out-of-process Python scripts (JSON-RPC host) with lifecycle callbacks and a stable player API.
-- **MPRIS2 Integration**: System media key controls, KDE Connect compatibility, and lock screen media player widget support (Qt6 only).
-- **Visualization Support**: Demoscene visualizer matching Milkdrop presets (utilizing `libprojectM`).
-
----
-
-## Detailed Documentation Guides
-
-To keep the repository clean and developer-friendly, the documentation has been split into dedicated guides:
-
-- 🛠️ **[CONTRIBUTING.md](CONTRIBUTING.md)**: Setup compiler packages, build with Qt5/Qt6, run the test suites (CTest), package release binaries (`.deb`/`.tar.gz`), and review architectural designs.
-- 🐍 **[PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md)**: Write user-defined Python plugins under `~/.config/winamp/plugins/`, use lifecycle callbacks, and review the full API proxy method reference.
-- ⚙️ **[CONFIGURATION.md](CONFIGURATION.md)**: Browse configuration file paths, bookmarks lists, and check INI property options for `winamp.conf`.
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#documentation">Docs</a> ·
+  <a href="#command-line">CLI</a> ·
+  <a href="#repository-layout">Layout</a> ·
+  <a href="#license">License</a>
+</p>
 
 ---
 
-## Quick Start
+## Why this project?
 
-### Build Prerequisites (Debian/Ubuntu)
+Classic Winamp defined how a generation listened to music on the desktop: skinnable chrome, a green spectrum, an always-there playlist editor, and an EQ that actually changed the sound. **Winamp for Linux** brings that workflow to native Linux without a Windows compatibility layer—same interaction model, modern backends (GStreamer / FFmpeg via Qt Multimedia), and safe extensibility through sandboxed Python plugins.
+
+<p align="center">
+  <img src="docs/images/winamp-main.png" alt="Classic Winamp main window chrome (default skin)" width="480">
+</p>
+
+<p align="center"><sub>Default classic skin main window (project assets, 3× nearest-neighbor). The full stack image above shows main + equalizer + playlist as used in a typical session.</sub></p>
+
+---
+
+## Features
+
+### Playback & audio
+| Feature | Details |
+|---------|---------|
+| **Local media** | Plays common audio/video formats supported by the Qt Multimedia backend (typically GStreamer or FFmpeg on Linux). |
+| **Gapless dual-player** | Next track is preloaded on a second `QMediaPlayer` and swapped at end-of-track to reduce silence between songs. |
+| **URL / radio streams** | HTTP(S) and related schemes via `QNetworkAccessManager`, with redirect limits and request timeouts. |
+| **Volume & balance** | Classic 0–255 volume scale and stereo balance, persisted across sessions. |
+| **Shuffle / repeat** | Playlist shuffle, playlist repeat, and single-track repeat. |
+| **Stop after current** | Optional stop when the playing track ends. |
+
+### Classic UI & skins
+| Feature | Details |
+|---------|---------|
+| **Classic skin engine** | Loads classic Winamp bitmaps (folder, or `.wsz` / `.zip` skin packs where supported). |
+| **Default skin** | Ships with classic assets under `assets/` and `skins/default/`. |
+| **Window snapping** | Main, equalizer, and playlist windows snap and follow each other like the original. |
+| **Double size & shade** | Double-size mode and shade (title-bar compact) modes. |
+| **Always on top** | Optional stay-on-top for the main window. |
+| **System tray** | Tray icon, minimize-to-tray options, and song-change notifications. |
+| **Spectrum analyzer** | Logarithmic spectrum matching classic Winamp band mapping (`sa_tab[]`-style distribution). |
+
+### Equalizer
+| Feature | Details |
+|---------|---------|
+| **10-band graphic EQ** | Bands aligned with classic Winamp (≈60 Hz … 16 kHz). |
+| **EQ10 DSP** | Port of **George Yohng’s EQ10** algorithm with preamp and asymmetric Q. |
+| **Presets** | Built-in and user-facing preset workflow from the equalizer UI. |
+| **Glitch-conscious path** | Pre-allocated DSP buffers on the real-time path (no heap churn in the audio process loop). |
+
+### Extensibility & desktop
+| Feature | Details |
+|---------|---------|
+| **Python plugins** | Out-of-process `python3` host, JSON-RPC over stdin/stdout. A bad plugin cannot crash the player process. |
+| **Plugin manager UI** | Preferences → Plug-ins: enable/disable, add, remove, open config. |
+| **Example plugins** | `hello_winamp.py`, production-oriented `icecast_dj.py` (Icecast via `ffmpeg`). |
+| **MPRIS2** | Media keys, lock-screen controls, KDE Connect–style clients (**Qt 6 + Qt DBus**). |
+| **Milkdrop / projectM** | Visualization via `libprojectM` when available. |
+| **Video window** | Video surface for video tracks. |
+| **Media library browser** | Filesystem-oriented media browser window. |
+| **Localization** | Language packs under `lang/` (e.g. German, Spanish). |
+| **Bookmarks & recent files** | Bookmarked paths/URLs and recent-file history. |
+
+---
+
+## Documentation
+
+| Guide | What it covers |
+|-------|----------------|
+| **[CONTRIBUTING.md](CONTRIBUTING.md)** | Dependencies, Qt 5/6 builds, tests, packaging, architecture, coding standards, PR workflow |
+| **[CONFIGURATION.md](CONFIGURATION.md)** | Paths, `winamp.conf` keys (verified against source), skins, plugins dir, bookmarks |
+| **[PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md)** | Sandbox model, lifecycle hooks, full API reference, examples, Icecast DJ notes |
+| **[docs/images/](docs/images/)** | README screenshots and image provenance |
+
+---
+
+## Quick start
+
+### Runtime dependencies (playback)
+
+Decoding is provided by the Qt Multimedia backend. On most Debian/Ubuntu systems install GStreamer plugins:
+
+```bash
+sudo apt-get install -y \
+  gstreamer1.0-plugins-good \
+  gstreamer1.0-plugins-bad \
+  gstreamer1.0-plugins-ugly \
+  gstreamer1.0-libav
+```
+
+### Build dependencies (Debian / Ubuntu)
+
 ```bash
 sudo apt-get update
 sudo apt-get install -y \
-  cmake ninja-build \
-  qt6-base-dev qt6-multimedia-dev libqt6multimediawidgets6 \
-  libgl-dev libprojectm-dev projectm-data \
-  python3
+  build-essential \
+  cmake \
+  ninja-build \
+  qt6-base-dev \
+  qt6-multimedia-dev \
+  libqt6multimediawidgets6 \
+  libgl-dev \
+  libprojectm-dev \
+  projectm-data \
+  python3 \
+  file \
+  dpkg-dev
 ```
 
-*Note: GStreamer plugins (`gstreamer1.0-plugins-good/bad/ugly`) are required at runtime for audio decoding.*
+| Package | Role |
+|---------|------|
+| `qt6-base-dev`, multimedia widgets | UI + playback |
+| `libprojectm-dev`, `projectm-data` | Milkdrop-compatible visualizations |
+| `python3` | Out-of-process plugin host (not linked into the binary) |
+| `file`, `dpkg-dev` | CPack `.deb` packaging helpers |
 
-### Compilation (Qt6)
+### Build (Qt 6 — preferred)
+
 ```bash
-cmake -S . -B build-qt6 -G Ninja
+cmake -S . -B build-qt6 -G Ninja -DCMAKE_BUILD_TYPE=Release
 ninja -C build-qt6
+./build-qt6/winamp
 ```
 
-### Execution
+### Build (Qt 5 — fallback)
+
 ```bash
-./build-qt6/winamp
+cmake -S . -B build-qt5 -G Ninja \
+  -DCMAKE_DISABLE_FIND_PACKAGE_Qt6=ON \
+  -DCMAKE_BUILD_TYPE=Release
+ninja -C build-qt5
+./build-qt5/winamp
+```
+
+Qt 5 builds disable MPRIS2 (DBus media player interface is Qt 6–oriented in this tree).
+
+### Tests
+
+```bash
+ctest --test-dir build-qt6 --output-on-failure
+# Headless / CI:
+QT_QPA_PLATFORM=offscreen ctest --test-dir build-qt6 --output-on-failure
+```
+
+| Test target | Coverage |
+|-------------|----------|
+| `eq_dsp_test` | EQ helpers and process path (`tests/test_eq_dsp.cpp`) |
+| `playlist_test` | Playlist ops, selection, async folder add (`tests/test_playlist.cpp`) |
+
+### Install / package
+
+```bash
+# Install into a prefix (example)
+cmake --install build-qt6 --prefix /usr/local
+
+# Or build distribution packages
+ninja -C build-qt6 package
+# → build-qt6/winamp-*.deb and .tar.gz
+```
+
+Default install layout (CMake `install` rules):
+
+| Path | Content |
+|------|---------|
+| `bin/winamp` | Executable |
+| `share/applications/winamp.desktop` | Desktop entry |
+| `share/winamp/skins/` | Skins |
+| `share/winamp/resource/` | Classic resource bitmaps |
+| `share/winamp/lang/` | Language packs |
+
+### Containerized package build
+
+```bash
+docker run --rm -it -v "$(pwd)":/workspace -w /workspace ubuntu:resolute bash
+# inside:
+apt-get update && apt-get install -y \
+  cmake ninja-build build-essential \
+  qt6-base-dev qt6-multimedia-dev \
+  libprojectm-dev python3 \
+  libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+  libgl1-mesa-dev file dpkg-dev git
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+ninja -C build package
 ```
 
 ---
 
-## Repository Structure
+## Command line
 
-- `src/` — Modular C++ C++17 source modules:
-  - `main.cpp` — Application initialization and CLI flag parser.
-  - `winamp_window.h` — Main Winamp widget (player logic, volumes, balance, skins).
-  - `winamp_bitmaps.h` — Asset resource manager for classic bitmaps.
-  - `playlist.h` & `playlist.cpp` — Playlist widget, queue sorting, async duration scanner.
-  - `equalizer.h` & `equalizer.cpp` — Equalizer slider panel.
-  - `eq_dsp.h` — Core George Yohng EQ10 DSP process.
-  - `python_plugin.h` & `python_plugin.cpp` — Out-of-process Python plugin host (JSON-RPC).
-  - `constants.h` — Global layouts, static variables, text glyph mappings, and skin loader.
-- `tests/` — Automated Qt Test suite.
-- `plugins/examples/` — Pre-loaded Python plugin templates (e.g. Icecast DJ).
-- `skins/` — Default classic skin assets.
-- `assets/` — Embedded Winamp retro graphical components.
-- `lang/` — Localization properties for language pack transitions.
+```text
+winamp [options] [files-or-directories...]
+```
+
+| Argument | Behavior |
+|----------|----------|
+| *file* | Add to playlist; plays the first file unless `-enqueue` |
+| *directory* | Scan/add folder asynchronously |
+| `-enqueue` / `--enqueue` | Add only; do not auto-start playback |
+| `-play` / `--play` | Prefer play after enqueue (default for files) |
+| `-pause` / `--pause` | Pause if currently playing |
+| `-stop` / `--stop` | Stop playback |
+
+Examples:
+
+```bash
+./build-qt6/winamp ~/Music/album/*.flac
+./build-qt6/winamp -enqueue ~/Music/incoming/
+./build-qt6/winamp "https://example.com/stream.mp3"
+```
+
+---
+
+## Python plugins (overview)
+
+Plugins live in:
+
+```text
+~/.config/winamp/plugins/*.py
+```
+
+They run inside a **separate `python3` process**. The player generates a host script under the cache directory and speaks JSON-RPC on stdin/stdout. Prefer `print(..., file=sys.stderr)` so logs never corrupt the control channel.
+
+Minimal plugin:
+
+```python
+def on_winamp_start(api):
+    import sys
+    print(f"volume={api.get_volume()}", file=sys.stderr)
+
+def on_winamp_exit():
+    pass
+```
+
+Full API, lifecycle rules, and the Icecast DJ example: **[PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md)**.
+
+---
+
+## Configuration (overview)
+
+| Path | Purpose |
+|------|---------|
+| `~/.config/winamp/winamp.conf` | Main INI settings (geometry, playback, EQ, playlist) |
+| `~/.config/winamp/plugins/` | User Python plugins |
+| `~/.config/winamp/bookmarks.txt` | Bookmarks |
+| `~/.cache/winamp/` | Generated plugin host script (not user-edited) |
+| `/usr/share/winamp/` | System skins, resources, languages (when installed) |
+
+Full key reference: **[CONFIGURATION.md](CONFIGURATION.md)**.
+
+---
+
+## Repository layout
+
+```text
+winamp-linux/
+├── src/
+│   ├── main.cpp              # App entry, splash, CLI, plugin manager lifetime
+│   ├── winamp_window.h       # Main window, playback, skins, network streams
+│   ├── playlist.{h,cpp}      # Playlist editor + async metadata
+│   ├── equalizer.{h,cpp}     # EQ UI
+│   ├── eq_dsp.h              # EQ10 DSP core
+│   ├── python_plugin.{h,cpp} # Out-of-process plugin host
+│   ├── preferences.{h,cpp}   # Preferences dialog (incl. plugin manager)
+│   ├── video.{h,cpp}         # Video window
+│   ├── milkdrop.h            # projectM visualization window
+│   ├── media_library.h       # Media library browser
+│   ├── mpris2_adaptors.h     # MPRIS2 DBus (Qt6)
+│   ├── modern_skin.h         # Modern skin XML (depth-limited includes)
+│   ├── dialogs.h             # File info, open URL, search, about, …
+│   ├── constants.h           # Layout constants, vis colors, presets
+│   ├── compat.h              # Qt5/Qt6 compatibility shims
+│   └── …
+├── tests/                    # Qt Test suites
+├── plugins/examples/         # Example Python plugins
+├── skins/default/            # Default classic skin files
+├── assets/                   # Classic resource bitmaps / icons
+├── lang/                     # Translation packs
+├── docs/images/              # README illustrations
+├── CMakeLists.txt
+└── winamp.desktop
+```
+
+Architecture diagram and contribution workflow: **[CONTRIBUTING.md](CONTRIBUTING.md)**.
+
+---
+
+## Security & hardening notes
+
+- Compiler flags: `-Wall -Wextra -Wpedantic`, `-fstack-protector-strong`, `_FORTIFY_SOURCE=2`.
+- HTTP streams: redirect policy + max redirects (5) + transfer timeout (15s).
+- Modern skin XML: include recursion depth limit and circular-include detection.
+- Python plugins: process isolation (crash boundary). Plugins still have full OS privileges of the `python3` user process—treat third-party plugins like any untrusted script.
+
+---
+
+## Roadmap-style known limits
+
+These are intentional or inherited constraints, not silent omissions:
+
+- **Classic skins first** — modern Winamp 5 skin support is limited; classic is the primary path.
+- **MPRIS2 on Qt 6 only** — Qt 5 builds skip the DBus media player interface.
+- **Plugin sandbox** — process isolation, not full OS sandbox (no seccomp/cgroup jail by default).
+- **Test surface** — EQ DSP and playlist logic covered; full UI automation is not yet in-tree.
 
 ---
 
 ## License
 
-This project is licensed under the [GNU General Public License v2.0](LICENSE.md).
+This project is licensed under the **[GNU General Public License v2.0](LICENSE.md)**.
+
+Classic Winamp is a trademark of its respective owners. This project is an independent Linux reimplementation inspired by the classic player; it is not affiliated with or endorsed by the original Winamp vendors.
+
+---
+
+## Credits
+
+- Classic Winamp UX — the original Nullsoft Winamp 2.x design language
+- **George Yohng** — EQ10 equalizer algorithm (ported in `eq_dsp.h`)
+- **projectM** — Milkdrop-compatible visualization engine
+- **Qt Project** — application framework and multimedia stack
+- Contributors to this repository and its example plugins
