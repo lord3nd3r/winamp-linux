@@ -48,11 +48,14 @@ add_executable(winamp
     src/recent_files.h
     src/dialogs.h
     src/preferences.h
+    src/preferences.cpp
     src/modern_skin.h
     src/playlist.h
     src/playlist.cpp
     src/equalizer.h
+    src/equalizer.cpp
     src/video.h
+    src/video.cpp
     src/milkdrop.h
     src/media_library.h
     src/mpris2_adaptors.h
@@ -119,6 +122,9 @@ add_test(NAME eq_dsp_test COMMAND winamp_tests)
 add_executable(playlist_tests
     tests/test_playlist.cpp
     src/playlist.cpp
+    src/equalizer.cpp
+    src/preferences.cpp
+    src/video.cpp
 )
 target_link_libraries(playlist_tests PRIVATE
     ${QT_PACKAGE}::Core

@@ -246,17 +246,7 @@ ModernSkinEngine *g_modernSkin = nullptr;
 // Playlist Window Constructor
 
 // Equalizer Window Constructor
-EqualizerWindow::EqualizerWindow(WinampWindow *parent) : QWidget(nullptr), mainWindow(parent) {
-    setFixedSize(275, 116);
-    setWindowTitle(TR("win.equalizer.title", "Winamp Equalizer"));
-    setWindowFlags(Qt::Tool | Qt::FramelessWindowHint);
-    
-    // Initialize EQ bands to center position (32 out of 63)
-    for (int i = 0; i < 10; i++) {
-        eqValues[i] = 32;
-    }
-    preampValue = 32;
-}
+
 
 // ============================================================
 // VideoWindow — Video playback window with skin support
@@ -292,29 +282,9 @@ EqualizerWindow::EqualizerWindow(WinampWindow *parent) : QWidget(nullptr), mainW
 // PlaylistWindow snap methods
 
 // EqualizerWindow snap methods
-void EqualizerWindow::checkSnap() {
-    if (!mainWindow) return;
-    
-    const int snapDist = 15;
-    QPoint mainPos = mainWindow->pos();
-    QSize mainSize = mainWindow->size();
-    QPoint myPos = pos();
-    
-    // Snap below main, aligned to left edge
-    if (qAbs(myPos.x() - mainPos.x()) < snapDist &&
-        qAbs(myPos.y() - (mainPos.y() + mainSize.height())) < snapDist) {
-        move(mainPos.x(), mainPos.y() + mainSize.height());
-        isSnappedToMain = true;
-    } else {
-        isSnappedToMain = false;
-    }
-}
 
-void EqualizerWindow::followMain() {
-    if (isSnappedToMain && mainWindow && isVisible()) {
-        move(mainWindow->pos().x(), mainWindow->pos().y() + mainWindow->height());
-    }
-}
+
+
 
 // MPRIS2 out-of-line method implementations (need full WinampWindow definition)
 #if defined(QT_DBUS_LIB) && QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
@@ -472,6 +442,7 @@ int main(int argc, char *argv[]) {
     // Process command-line arguments (matches Windows cmdline.cpp)
     // Supported: file paths to play, directories to scan, -play, -pause, -stop, -enqueue
     QStringList filesToPlay;
+    QStringList dirsToPlay;
     bool enqueueMode = false;
     for (int i = 1; i < argc; i++) {
         QString arg = QString::fromLocal8Bit(argv[i]);
@@ -492,11 +463,7 @@ int main(int argc, char *argv[]) {
             // Treat as file or directory path
             QFileInfo fi(arg);
             if (fi.isDir()) {
-                // Scan directory for audio files
-                QDir dir(arg);
-                QStringList audioExts = {"*.mp3", "*.wav", "*.ogg", "*.flac", "*.m4a", "*.aac", "*.wma", "*.opus"};
-                for (const QFileInfo &entry : dir.entryInfoList(audioExts, QDir::Files, QDir::Name))
-                    filesToPlay << entry.absoluteFilePath();
+                dirsToPlay << fi.absoluteFilePath();
             } else if (fi.exists()) {
                 filesToPlay << fi.absoluteFilePath();
             }
@@ -504,20 +471,22 @@ int main(int argc, char *argv[]) {
     }
     
     // Add CLI files to playlist and optionally play
-    if (!filesToPlay.isEmpty()) {
-        PlaylistWindow *pl = w.getPlaylistWindow();
-        if (pl) {
-            if (!enqueueMode) {
-                // Clear existing playlist before adding CLI files
-                // (enqueue mode preserves existing playlist)
-            }
-            for (const QString &f : filesToPlay)
-                pl->addTrack(f);
-            // Auto-play first file unless in enqueue mode
-            if (!enqueueMode && pl->trackCount() > 0) {
-                pl->setCurrentTrackIndex(0);
-                w.playTrack(pl->trackAt(0));
-            }
+    PlaylistWindow *pl = w.getPlaylistWindow();
+    if (pl) {
+        // Enqueue directories asynchronously
+        for (const QString &dir : dirsToPlay) {
+            pl->addFolderAsync(dir, !enqueueMode && filesToPlay.isEmpty() && (dir == dirsToPlay.first()));
+        }
+        
+        // Enqueue regular files
+        for (const QString &f : filesToPlay) {
+            pl->addTrack(f);
+        }
+        
+        // Auto-play first file unless in enqueue mode
+        if (!enqueueMode && !filesToPlay.isEmpty() && pl->trackCount() > 0) {
+            pl->setCurrentTrackIndex(0);
+            w.playTrack(pl->trackAt(0));
         }
     }
     

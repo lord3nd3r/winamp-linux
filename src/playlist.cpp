@@ -1,6 +1,10 @@
 #include "playlist.h"
 #include "winamp_window.h"
 #include <QRandomGenerator>
+#include <QSpinBox>
+#include <QCheckBox>
+#include <QThread>
+#include <QDirIterator>
 #include <algorithm>
 #include <random>
 
@@ -470,6 +474,34 @@ void PlaylistWindow::addTrack(const QString &filePath) {
     }
 }
 
+void PlaylistWindow::addFolderAsync(const QString &dirPath, bool autoPlay) {
+    QThread *thread = QThread::create([this, dirPath, autoPlay]() {
+        QDirIterator it(dirPath, {"*.mp3", "*.wav", "*.flac", "*.ogg", "*.m4a", "*.aac", "*.wma", "*.opus"}, 
+                        QDir::Files, QDirIterator::Subdirectories);
+        QStringList files;
+        while (it.hasNext()) {
+            files.append(it.next());
+        }
+        std::sort(files.begin(), files.end());
+        
+        QMetaObject::invokeMethod(this, [this, files, autoPlay]() {
+            int startIdx = tracks.size();
+            for (const QString &file : files) {
+                addTrack(file);
+            }
+            if (autoPlay && startIdx < tracks.size()) {
+                setCurrentTrackIndex(startIdx);
+                if (mainWindow) {
+                    mainWindow->playTrack(tracks[startIdx]);
+                }
+            }
+        }, Qt::QueuedConnection);
+    });
+    
+    connect(thread, &QThread::finished, thread, &QThread::deleteLater);
+    thread->start();
+}
+
 void PlaylistWindow::startNextDurationProbe() {
     if (durationProbeQueue.isEmpty()) {
         durationProbeActive = false;
@@ -892,7 +924,12 @@ void PlaylistWindow::dropEvent(QDropEvent *event) {
         for (const QUrl &url : mimeData->urls()) {
             QString filePath = url.toLocalFile();
             if (!filePath.isEmpty()) {
-                addTrack(filePath);
+                QFileInfo fi(filePath);
+                if (fi.isDir()) {
+                    addFolderAsync(filePath);
+                } else {
+                    addTrack(filePath);
+                }
             }
         }
         event->acceptProposedAction();
@@ -1157,12 +1194,7 @@ void PlaylistWindow::showAddMenu(QPoint globalPos) {
     } else if (selected == addDir) {
         QString dir = QFileDialog::getExistingDirectory(this, "Add Directory");
         if (!dir.isEmpty()) {
-            QDir directory(dir);
-            QStringList filters = {"*.mp3", "*.wav", "*.flac", "*.ogg", "*.m4a", "*.aac"};
-            QStringList files = directory.entryList(filters, QDir::Files, QDir::Name);
-            for (const QString &file : files) {
-                addTrack(directory.absoluteFilePath(file));
-            }
+            addFolderAsync(dir);
         }
     } else if (selected == addUrl) {
         bool ok;
