@@ -129,7 +129,7 @@ jobs:
       - name: Install build dependencies (suse)
         if: matrix.family == 'suse'
         run: |
-          zypper --non-interactive install -y \
+          zypper --non-interactive install -y --force-resolution \
             cmake \
             ninja \
             gcc-c++ \
@@ -140,11 +140,11 @@ jobs:
             qt6-widgets-devel \
             qt6-opengl-devel \
             qt6-openglwidgets-devel \
+            qt6-printsupport-devel \
             Mesa-libGL-devel \
             projectM-devel \
             projectM-data \
             libtag-devel \
-            pkgconf \
             python3 \
             gstreamer-devel \
             gstreamer-plugins-base-devel \

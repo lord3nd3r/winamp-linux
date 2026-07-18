@@ -5,23 +5,26 @@
 #include <QFile>
 #include <QUrl>
 
+#include <taglib.h>
 #include <fileref.h>
 #include <tag.h>
-#include <tpropertymap.h>
 #include <mpegfile.h>
 #include <id3v2tag.h>
 #include <id3v1tag.h>
 #include <id3v1genres.h>
 #include <flacfile.h>
 #include <vorbisfile.h>
-#include <oggflacfile.h>
 #include <mp4file.h>
 #include <wavfile.h>
 #include <aifffile.h>
 #include <audioproperties.h>
 #include <tstring.h>
 #include <tfile.h>
-#include <id3v2.h>
+
+#if TAGLIB_MAJOR_VERSION >= 2
+#  include <id3v2.h>
+#  include <tpropertymap.h>
+#endif
 
 // Optional formats — available in TagLib 1.x/2.x depending on build
 #if __has_include(<opusfile.h>)
@@ -118,10 +121,15 @@ bool writeMpegTags(TagLib::MPEG::File &mpeg, const MediaTags &tags) {
     applyTagFields(v2, tags);
     applyTagFields(v1, tags);
     // ID3v1 title/artist/album are 30-char; TagLib truncates on write.
+#if TAGLIB_MAJOR_VERSION >= 2
     return mpeg.save(TagLib::MPEG::File::AllTags,
                      TagLib::File::StripOthers,
                      TagLib::ID3v2::v4,
                      TagLib::File::Duplicate);
+#else
+    // TagLib 1.x: save(tags, stripOthers, id3v2Version, duplicateTags)
+    return mpeg.save(TagLib::MPEG::File::AllTags, true, 4, true);
+#endif
 }
 
 QString formatFromMimeOrExt(const QString &path, TagLib::File *file) {
@@ -291,7 +299,11 @@ MediaAudioInfo readAudioInfo(const QString &filePath) {
     }
 
     if (TagLib::AudioProperties *props = ref.audioProperties()) {
+#if TAGLIB_MAJOR_VERSION >= 2
         info.lengthSeconds = props->lengthInSeconds();
+#else
+        info.lengthSeconds = props->length();
+#endif
         info.bitrateKbps = props->bitrate();
         info.sampleRate = props->sampleRate();
         info.channels = props->channels();
