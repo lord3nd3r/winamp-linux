@@ -368,9 +368,9 @@ public:
             }
         });
         
-        // Position windows: EQ below main, playlist to the right of main
-        playlistWindow->move(x() + width(), y());  // right of main
-        eqWindow->move(x(), y() + height());
+        // Position windows: EQ below main, playlist to the right of main (docked)
+        eqWindow->dockBelowMain();
+        playlistWindow->dockRightOfMain();
         
         // Load bookmarks and recent files
         BookmarkManager::instance().load();
@@ -378,6 +378,14 @@ public:
         
         // Load saved settings (overrides defaults above)
         loadAllSettings();
+    }
+
+    // Keep docked EQ / playlist glued to the main window (Winamp 2.x sticky stack).
+    void reflowDockedWindows() {
+        if (eqWindow && eqWindow->isVisible() && eqWindow->isSnapped())
+            eqWindow->followMain();
+        if (playlistWindow && playlistWindow->isVisible() && playlistWindow->isSnapped())
+            playlistWindow->followMain();
     }
     
     ~WinampWindow() {
@@ -476,6 +484,7 @@ public slots:
         } else {
             setFixedSize(275, 116);
         }
+        reflowDockedWindows();
         update();
     }
     
@@ -489,6 +498,7 @@ public slots:
             else
                 setFixedSize(275, 116);
         }
+        reflowDockedWindows();
         update();
     }
 
@@ -2108,12 +2118,24 @@ protected:
         else if (sel == repOneAct) { repeatOn = true; repeatTrack = true; update(); }
         else if (sel == eqTogAct) {
             eqBtnOn = sel->isChecked();
-            if (eqBtnOn) eqWindow->show(); else eqWindow->hide();
+            if (eqBtnOn) {
+                eqWindow->show();
+                if (eqWindow->isSnapped()) eqWindow->followMain();
+                else eqWindow->dockBelowMain();
+            } else {
+                eqWindow->hide();
+            }
             update();
         }
         else if (sel == plTogAct) {
             plBtnOn = sel->isChecked();
-            if (plBtnOn) playlistWindow->show(); else playlistWindow->hide();
+            if (plBtnOn) {
+                playlistWindow->show();
+                if (playlistWindow->isSnapped()) playlistWindow->followMain();
+                else playlistWindow->dockRightOfMain();
+            } else {
+                playlistWindow->hide();
+            }
             update();
         }
         else if (sel == vidTogAct) {
@@ -2323,7 +2345,13 @@ protected:
         // EQ button: (219,58) to (242,70)
         if (x >= 219 && x < 242 && y >= 58 && y < 70) {
             eqBtnOn = !eqBtnOn;
-            if (eqBtnOn) eqWindow->show(); else eqWindow->hide();
+            if (eqBtnOn) {
+                eqWindow->show();
+                if (eqWindow->isSnapped()) eqWindow->followMain();
+                else eqWindow->dockBelowMain();
+            } else {
+                eqWindow->hide();
+            }
             update();
             return;
         }
@@ -2331,7 +2359,13 @@ protected:
         // PL button: (242,58) to (265,70)
         if (x >= 242 && x < 265 && y >= 58 && y < 70) {
             plBtnOn = !plBtnOn;
-            if (plBtnOn) playlistWindow->show(); else playlistWindow->hide();
+            if (plBtnOn) {
+                playlistWindow->show();
+                if (playlistWindow->isSnapped()) playlistWindow->followMain();
+                else playlistWindow->dockRightOfMain();
+            } else {
+                playlistWindow->hide();
+            }
             update();
             return;
         }
@@ -2396,8 +2430,7 @@ protected:
             // Window drag
             if (isDragging) {
                 move(waMouseGlobalPos(event) - dragPosition);
-                playlistWindow->followMain();
-                eqWindow->followMain();
+                reflowDockedWindows();
                 return;
             }
             // Hover tracking
@@ -2474,14 +2507,20 @@ protected:
         
         if (isDragging) {
             move(waMouseGlobalPos(event) - dragPosition);
-            playlistWindow->followMain();
-            eqWindow->followMain();
+            reflowDockedWindows();
         }
     }
     
     void mouseReleaseEvent(QMouseEvent *event) override {
         // ---- Modern skin mouse release ----
         if (isModernSkin) {
+            if (isDragging) {
+                isDragging = false;
+                // Re-attract children that were near snap edges after the drag
+                if (eqWindow) eqWindow->checkSnap();
+                if (playlistWindow) playlistWindow->checkSnap();
+                reflowDockedWindows();
+            }
             if (modernDraggingSeek || modernDraggingVolume) {
                 modernDraggingSeek = false;
                 modernDraggingVolume = false;
@@ -2603,10 +2642,18 @@ protected:
             update();
         }
         
+        const bool wasDragging = isDragging;
         isDraggingVolume = false;
         isDraggingBalance = false;
         isDraggingPos = false;
         isDragging = false;
+        if (wasDragging) {
+            // After moving main, re-attach any child that is still near a snap edge
+            // and reflow already-docked ones so the stack stays flush.
+            if (eqWindow) eqWindow->checkSnap();
+            if (playlistWindow) playlistWindow->checkSnap();
+            reflowDockedWindows();
+        }
     }
     
     void openFile() {
@@ -2872,9 +2919,10 @@ public:
         eqWindow->loadSettings(s);
         playlistWindow->loadSettings(s);
         
-        // Position child windows relative to loaded main position
-        eqWindow->move(x(), y() + height());
-        playlistWindow->move(x() + width(), y());  // right of main
+        // Classic layout: force-dock EQ under main, playlist to the right, and
+        // mark them snapped so followMain works when the main window is dragged.
+        eqWindow->dockBelowMain();
+        playlistWindow->dockRightOfMain();
         
         // Show/hide child windows based on saved state
         if (eqBtnOn) eqWindow->show();

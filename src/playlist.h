@@ -61,9 +61,16 @@ public:
     void addTrack(const QString &filePath);
     void addFolderAsync(const QString &dirPath, bool autoPlay = false);
     void clearPlaylist();
-    bool isSnapped() const { return isSnappedToMain; }
+    bool isSnapped() const { return isSnappedToMain && snapMode != 0; }
     void followMain();
     void checkSnap();
+    void setSnapMode(int mode) {
+        snapMode = mode;
+        isSnappedToMain = (mode != 0);
+    }
+    int currentSnapMode() const { return snapMode; }
+    // Place flush to the right of main and mark docked (Winamp 2.x default).
+    void dockRightOfMain();
     void saveSettings(QSettings &s);
     void loadSettings(QSettings &s);
 

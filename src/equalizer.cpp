@@ -20,27 +20,78 @@ EqualizerWindow::EqualizerWindow(WinampWindow *parent) : QWidget(nullptr), mainW
     preampValue = 32;
 }
 
+void EqualizerWindow::dockBelowMain() {
+    if (!mainWindow) return;
+    move(mainWindow->pos().x(), mainWindow->pos().y() + mainWindow->height());
+    isSnappedToMain = true;
+    snapEdge = 1;
+}
+
 void EqualizerWindow::checkSnap() {
     if (!mainWindow) return;
-    
-    const int snapDist = 15;
-    QPoint mainPos = mainWindow->pos();
-    QSize mainSize = mainWindow->size();
-    QPoint myPos = pos();
-    
-    // Snap below main, aligned to left edge
-    if (qAbs(myPos.x() - mainPos.x()) < snapDist &&
-        qAbs(myPos.y() - (mainPos.y() + mainSize.height())) < snapDist) {
+
+    // Classic Winamp snap distance (~10-20px); slightly generous for HiDPI / tool windows.
+    const int snapDist = 25;
+    const QPoint mainPos = mainWindow->pos();
+    const QSize mainSize = mainWindow->size();
+    const QPoint myPos = pos();
+    const QSize mySize = size();
+
+    // Below main, left-aligned (default stack)
+    if (qAbs(myPos.x() - mainPos.x()) <= snapDist &&
+        qAbs(myPos.y() - (mainPos.y() + mainSize.height())) <= snapDist) {
         move(mainPos.x(), mainPos.y() + mainSize.height());
         isSnappedToMain = true;
-    } else {
-        isSnappedToMain = false;
+        snapEdge = 1;
+        return;
     }
+    // Below main, any horizontal overlap within threshold of left edge
+    if (qAbs(myPos.y() - (mainPos.y() + mainSize.height())) <= snapDist &&
+        myPos.x() + mySize.width() > mainPos.x() - snapDist &&
+        myPos.x() < mainPos.x() + mainSize.width() + snapDist) {
+        move(mainPos.x(), mainPos.y() + mainSize.height());
+        isSnappedToMain = true;
+        snapEdge = 1;
+        return;
+    }
+    // Right of main, top-aligned
+    if (qAbs(myPos.x() - (mainPos.x() + mainSize.width())) <= snapDist &&
+        qAbs(myPos.y() - mainPos.y()) <= snapDist) {
+        move(mainPos.x() + mainSize.width(), mainPos.y());
+        isSnappedToMain = true;
+        snapEdge = 2;
+        return;
+    }
+    // Above main (rare but classic snap allows)
+    if (qAbs(myPos.x() - mainPos.x()) <= snapDist &&
+        qAbs(myPos.y() + mySize.height() - mainPos.y()) <= snapDist) {
+        move(mainPos.x(), mainPos.y() - mySize.height());
+        isSnappedToMain = true;
+        snapEdge = 3;
+        return;
+    }
+
+    isSnappedToMain = false;
+    snapEdge = 0;
 }
 
 void EqualizerWindow::followMain() {
-    if (isSnappedToMain && mainWindow && isVisible()) {
-        move(mainWindow->pos().x(), mainWindow->pos().y() + mainWindow->height());
+    if (!isSnappedToMain || !mainWindow || !isVisible())
+        return;
+    const QPoint mainPos = mainWindow->pos();
+    const QSize mainSize = mainWindow->size();
+
+    switch (snapEdge) {
+        case 2:  // right of main
+            move(mainPos.x() + mainSize.width(), mainPos.y());
+            break;
+        case 3:  // above main
+            move(mainPos.x(), mainPos.y() - height());
+            break;
+        case 1:  // below main
+        default:
+            move(mainPos.x(), mainPos.y() + mainSize.height());
+            break;
     }
 }
 
@@ -164,6 +215,7 @@ void EqualizerWindow::showPresetsMenu(QPoint globalPos) {
             s.setValue(QString("band%1").arg(i), eqValues[i]);
         }
         s.setValue("snapped", isSnappedToMain);
+        s.setValue("snapEdge", snapEdge);
         s.endGroup();
     }
     
@@ -179,6 +231,7 @@ void EqualizerWindow::showPresetsMenu(QPoint globalPos) {
             eqValues[i] = s.value(QString("band%1").arg(i), 32).toInt();
         }
         isSnappedToMain = s.value("snapped", false).toBool();
+        snapEdge = s.value("snapEdge", isSnappedToMain ? 1 : 0).toInt();
         s.endGroup();
         update();
     }

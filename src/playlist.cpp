@@ -1490,60 +1490,95 @@ void PlaylistWindow::showListMenu(QPoint globalPos) {
 }
 
 
+void PlaylistWindow::dockRightOfMain() {
+    if (!mainWindow) return;
+    move(mainWindow->pos().x() + mainWindow->width(), mainWindow->pos().y());
+    snapMode = 1;
+    isSnappedToMain = true;
+}
+
 void PlaylistWindow::checkSnap() {
     if (!mainWindow) return;
-    
-    const int snapDist = 15;
-    QPoint mainPos = mainWindow->pos();
-    QSize mainSize = mainWindow->size();
-    QPoint myPos = pos();
-    
-    // Snap to right of main window
-    if (qAbs(myPos.x() - (mainPos.x() + mainSize.width())) < snapDist &&
-        qAbs(myPos.y() - mainPos.y()) < snapDist) {
+
+    const int snapDist = 25;
+    const QPoint mainPos = mainWindow->pos();
+    const QSize mainSize = mainWindow->size();
+    const QPoint myPos = pos();
+    const QSize mySize = size();
+
+    // Right of main, top-aligned (default stack)
+    if (qAbs(myPos.x() - (mainPos.x() + mainSize.width())) <= snapDist &&
+        qAbs(myPos.y() - mainPos.y()) <= snapDist) {
         move(mainPos.x() + mainSize.width(), mainPos.y());
-        snapMode = 1;  // right of main
+        snapMode = 1;
+        isSnappedToMain = true;
         return;
     }
-    
-    // Snap below EQ (if EQ is visible and snapped below main)
-    // EQ is at main.y + main.height, so playlist goes at main.y + main.height + eq.height
-    int eqH = g_isModernSkin ? 113 : 116;
-    int eqBottom = mainPos.y() + mainSize.height() + eqH;
-    if (qAbs(myPos.x() - mainPos.x()) < snapDist &&
-        qAbs(myPos.y() - eqBottom) < snapDist) {
+    // Right of main with looser vertical alignment (any overlap)
+    if (qAbs(myPos.x() - (mainPos.x() + mainSize.width())) <= snapDist &&
+        myPos.y() + mySize.height() > mainPos.y() - snapDist &&
+        myPos.y() < mainPos.y() + mainSize.height() + snapDist) {
+        move(mainPos.x() + mainSize.width(), mainPos.y());
+        snapMode = 1;
+        isSnappedToMain = true;
+        return;
+    }
+
+    // Below EQ (main + classic EQ height)
+    const int eqH = g_isModernSkin ? 113 : 116;
+    const int eqBottom = mainPos.y() + mainSize.height() + eqH;
+    if (qAbs(myPos.x() - mainPos.x()) <= snapDist &&
+        qAbs(myPos.y() - eqBottom) <= snapDist) {
         move(mainPos.x(), eqBottom);
-        snapMode = 2;  // below EQ
+        snapMode = 2;
+        isSnappedToMain = true;
         return;
     }
-    
-    // Snap below main window directly
-    if (qAbs(myPos.x() - mainPos.x()) < snapDist &&
-        qAbs(myPos.y() - (mainPos.y() + mainSize.height())) < snapDist) {
+
+    // Below main directly
+    if (qAbs(myPos.x() - mainPos.x()) <= snapDist &&
+        qAbs(myPos.y() - (mainPos.y() + mainSize.height())) <= snapDist) {
         move(mainPos.x(), mainPos.y() + mainSize.height());
-        snapMode = 3;  // below main
+        snapMode = 3;
+        isSnappedToMain = true;
         return;
     }
-    
+
+    // Left of main
+    if (qAbs(myPos.x() + mySize.width() - mainPos.x()) <= snapDist &&
+        qAbs(myPos.y() - mainPos.y()) <= snapDist) {
+        move(mainPos.x() - mySize.width(), mainPos.y());
+        snapMode = 4;
+        isSnappedToMain = true;
+        return;
+    }
+
     snapMode = 0;
+    isSnappedToMain = false;
 }
 
 void PlaylistWindow::followMain() {
-    if (!mainWindow || !isVisible()) return;
-    QPoint mainPos = mainWindow->pos();
-    
+    if (!mainWindow || !isVisible() || snapMode == 0)
+        return;
+    const QPoint mainPos = mainWindow->pos();
+
     switch (snapMode) {
         case 1:  // right of main
             move(mainPos.x() + mainWindow->width(), mainPos.y());
             break;
         case 2:  // below EQ
         {
-            int eqH = g_isModernSkin ? 113 : 116;
+            const int eqH = g_isModernSkin ? 113 : 116;
             move(mainPos.x(), mainPos.y() + mainWindow->height() + eqH);
             break;
         }
         case 3:  // below main
             move(mainPos.x(), mainPos.y() + mainWindow->height());
+            break;
+        case 4:  // left of main
+            move(mainPos.x() - width(), mainPos.y());
+            break;
+        default:
             break;
     }
 }
