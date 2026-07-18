@@ -10,6 +10,7 @@
 #include <QProcess>
 #include <QFileInfo>
 #include <QUrl>
+#include <QDebug>
 
 // Shared Winamp-style QMenu stylesheet (used by all context menus)
 inline constexpr const char *kWinampMenuStyle =

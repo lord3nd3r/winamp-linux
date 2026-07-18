@@ -25,6 +25,7 @@ private slots:
     void testSortingAndReversal();
     void testSelectionAndRemoval();
     void testRemoveDeadFiles();
+    void testAddFolderAsync();
 };
 
 void TestPlaylist::initTestCase() {
@@ -172,6 +173,54 @@ void TestPlaylist::testRemoveDeadFiles() {
     playlist.removeDeadFiles();
     QCOMPARE(playlist.trackCount(), 1);
     QCOMPARE(playlist.trackAt(0), existingFile);
+}
+
+void TestPlaylist::testAddFolderAsync() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    
+    // Create nested directory structure
+    QString subDirPath = dir.filePath("subdir");
+    QDir().mkpath(subDirPath);
+    
+    // Create a few files in root and subdir
+    QString file1 = dir.filePath("track1.mp3");
+    QFile f1(file1);
+    QVERIFY(f1.open(QIODevice::WriteOnly));
+    f1.write("dummy");
+    f1.close();
+    
+    QString file2 = subDirPath + "/track2.flac";
+    QFile f2(file2);
+    QVERIFY(f2.open(QIODevice::WriteOnly));
+    f2.write("dummy");
+    f2.close();
+    
+    // Create a non-audio file (should be ignored)
+    QString file3 = dir.filePath("readme.txt");
+    QFile f3(file3);
+    QVERIFY(f3.open(QIODevice::WriteOnly));
+    f3.write("dummy");
+    f3.close();
+    
+    PlaylistWindow playlist;
+    QCOMPARE(playlist.trackCount(), 0);
+    
+    // Run async directory load
+    playlist.addFolderAsync(dir.path(), false);
+    
+    // Wait for the background thread to finish and trigger the posted callback
+    QTest::qWait(1000);
+    
+    // Check that files are added and readme.txt is ignored
+    QCOMPARE(playlist.trackCount(), 2);
+    
+    QStringList expected;
+    expected << QFileInfo(file1).absoluteFilePath() << QFileInfo(file2).absoluteFilePath();
+    expected.sort();
+    
+    QCOMPARE(playlist.trackAt(0), expected[0]);
+    QCOMPARE(playlist.trackAt(1), expected[1]);
 }
 
 QTEST_MAIN(TestPlaylist)

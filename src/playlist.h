@@ -59,6 +59,7 @@ class PlaylistWindow : public QWidget {
 public:
     PlaylistWindow(WinampWindow *parent = nullptr);
     void addTrack(const QString &filePath);
+    void addFolderAsync(const QString &dirPath, bool autoPlay = false);
     void clearPlaylist();
     bool isSnapped() const { return isSnappedToMain; }
     void followMain();

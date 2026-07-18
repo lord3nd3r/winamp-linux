@@ -2,6 +2,7 @@
 #include <QWidget>
 #include <QMediaPlayer>
 #include <QAudioOutput>
+#include <QVideoWidget>
 #include <QTimer>
 #include <QSystemTrayIcon>
 #include <QSettings>
