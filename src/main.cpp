@@ -5,7 +5,9 @@
 #include <QMediaMetaData>
 #include <QAudioOutput>
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
 #include <QAudioBufferOutput>
+#endif
 #include <QAudioBuffer>
 #include <QAudioSink>
 #include <QAudioDevice>
@@ -126,6 +128,7 @@ static SkinPlaylistColors g_plColors;
 // File Info Dialog — Display/edit ID3 tags (Alt+3, matches FileInfo.cpp)
 // ====================================================================
 
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
 // ============================================================
 // Simple FFT for spectrum analyzer (radix-2 DIT, 512-point)
 // ============================================================
@@ -167,6 +170,7 @@ static void fft512(const float *input, float *magnitudes) {
         magnitudes[i] = sqrtf(re[i] * re[i] + im[i] * im[i]);
     }
 }
+#endif
 
 // Winamp visualization colors (24 entries from draw.cpp ppal2[])
 // Can be overridden by viscolor.txt in skin directory
@@ -1949,7 +1953,7 @@ public:
         eqDspActive = false;
         
         // Setup audio buffer output for visualization + EQ DSP
-    #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    #if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
         audioBufferOutput = new QAudioBufferOutput(this);
         player->setAudioBufferOutput(audioBufferOutput);
         connect(audioBufferOutput, &QAudioBufferOutput::audioBufferReceived,
@@ -2899,7 +2903,7 @@ public:
         if (!resizer.isNull()) p.drawPixmap(W - 17, py + 108, resizer);
     }
 
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
     void processAudioBuffer(const QAudioBuffer &buffer) {
         const QAudioFormat fmt = buffer.format();
         int sampleCount = buffer.frameCount();
@@ -4712,7 +4716,7 @@ public:
 private:
     QMediaPlayer *player;
     WAudioOutput *audioOutput;
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
     QAudioBufferOutput *audioBufferOutput;
 #endif
     QMediaPlayer *nextPlayer;  // Preload next track for gapless playback
@@ -4721,7 +4725,7 @@ private:
     
     // Real EQ DSP processing (ported from Windows eq10dsp.cpp / In.cpp)
     // Audio flow: QMediaPlayer → QAudioBufferOutput → EQ10 DSP → QAudioSink
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
     QAudioSink *audioSink = nullptr;
     QIODevice *audioSinkDevice = nullptr;
 #endif
