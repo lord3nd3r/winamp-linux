@@ -5,7 +5,7 @@
 Built in **C++17** with **Qt 6** (Qt 5 fallback), faithful classic skins, a real 10-band EQ, gapless dual-player audio, out-of-process Python plugins, and desktop integration via MPRIS2.
 
 <p align="center">
-  <img src="docs/images/winamp-classic-stack.png" alt="Classic Winamp 2.x style main window, equalizer, and playlist stack" width="320">
+  <img src="winamp.png" alt="Classic Winamp 2.x main window and equalizer" width="552">
 </p>
 
 <p align="center">
@@ -30,12 +30,6 @@ Built in **C++17** with **Qt 6** (Qt 5 fallback), faithful classic skins, a real
 ## Why this project?
 
 Classic Winamp defined how a generation listened to music on the desktop: skinnable chrome, a green spectrum, an always-there playlist editor, and an EQ that actually changed the sound. **Winamp for Linux** brings that workflow to native Linux without a Windows compatibility layer—same interaction model, modern backends (GStreamer / FFmpeg via Qt Multimedia), and safe extensibility through sandboxed Python plugins.
-
-<p align="center">
-  <img src="docs/images/winamp-main.png" alt="Classic Winamp main window chrome (default skin)" width="480">
-</p>
-
-<p align="center"><sub>Default classic skin main window (project assets, 3× nearest-neighbor). The full stack image above shows main + equalizer + playlist as used in a typical session.</sub></p>
 
 ---
 
