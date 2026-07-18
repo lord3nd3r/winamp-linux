@@ -2038,7 +2038,7 @@ public:
                     std::swap(audioOutput, nextAudioOutput);
                     
                     // Update visualization to use the now-active player
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
                     player->setAudioBufferOutput(audioBufferOutput);
                     nextPlayer->setAudioBufferOutput(nullptr);
 #endif
