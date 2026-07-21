@@ -234,6 +234,8 @@ class MediaLibraryWindow;
 
 bool g_isModernSkin = false;
 ModernSkinEngine *g_modernSkin = nullptr;
+bool g_snapWindowsEnabled = true;
+int g_snapDistance = 25;
 
 // Custom list widget for dragging tracks to file manager
 
@@ -419,7 +421,8 @@ int main(int argc, char *argv[]) {
             break;
         }
     }
-    if (!splashPix.isNull()) {
+    bool showSplashScreen = settings.value("showSplashScreen", true).toBool();
+    if (showSplashScreen && !splashPix.isNull()) {
         splash = new QSplashScreen(splashPix);
         splash->show();
         app.processEvents();

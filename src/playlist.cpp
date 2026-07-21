@@ -11,7 +11,9 @@
 
 QString PlaylistWindow::trackDisplayName(int index, const QString &filePath) {
     // Winamp 2.x default: show "Artist - Title" from ID3 when present.
-    return QString("%1. %2").arg(index + 1).arg(TagMetadata::displayTitle(filePath));
+    QString title = TagMetadata::displayTitle(filePath);
+    if (!showTrackNumbersInPlaylist) return title;
+    return QString("%1. %2").arg(index + 1).arg(title);
 }
 
 PlaylistWindow::PlaylistWindow(WinampWindow *parent) : QWidget(nullptr), mainWindow(parent) {
@@ -77,22 +79,28 @@ void PlaylistWindow::applyPlaylistColors() {
             "}")
         );
     } else {
+        // Default to the classic Courier New look unless the user opted into a custom font
+        // (Preferences > Playlist); playlistFontFamily/playlistFontSize already default to
+        // those same values, so this only changes anything once useCustomPlaylistFont is set.
+        QString fontFamily = useCustomPlaylistFont ? playlistFontFamily : QStringLiteral("Courier New");
+        int fontSize = useCustomPlaylistFont ? playlistFontSize : 8;
         listWidget->setStyleSheet(
             QString("QListWidget {"
             "  background-color: %1;"
             "  color: %2;"
             "  border: none;"
-            "  font-family: 'Courier New', 'Courier';"
-            "  font-size: %3pt;"
-            "  selection-background-color: %4;"
-            "  selection-color: %5;"
+            "  font-family: '%3';"
+            "  font-size: %4pt;"
+            "  selection-background-color: %5;"
+            "  selection-color: %6;"
             "}"
             "QListWidget::item {"
             "  padding: 0px;"
             "}")
             .arg(g_plColors.normBg.name())
             .arg(g_plColors.normal.name())
-            .arg(playlistFontSize)
+            .arg(fontFamily)
+            .arg(fontSize)
             .arg(g_plColors.selectBg.name())
             .arg(g_plColors.current.name())
         );
@@ -256,11 +264,26 @@ void PlaylistWindow::removeSelected() {
     std::sort(rows.begin(), rows.end(), std::greater<int>());
     for (int row : rows) {
         if (row >= 0 && row < tracks.size()) {
+            if (playlistRecycleBinEnabled) {
+                removedTracksStack.append(qMakePair(row, tracks[row]));
+                while (removedTracksStack.size() > 20)
+                    removedTracksStack.removeFirst();
+            }
             tracks.removeAt(row);
             if (row < trackDurations.size())
                 trackDurations.removeAt(row);
         }
     }
+    rebuildListDisplay();
+    updateTotalTimeDisplay();
+}
+
+void PlaylistWindow::restoreLastRemoved() {
+    if (removedTracksStack.isEmpty()) return;
+    auto entry = removedTracksStack.takeLast();
+    int idx = qBound(0, entry.first, tracks.size());
+    tracks.insert(idx, entry.second);
+    trackDurations.insert(qMin(idx, trackDurations.size()), 0);
     rebuildListDisplay();
     updateTotalTimeDisplay();
 }
@@ -1020,12 +1043,16 @@ void PlaylistWindow::saveSettings(QSettings &s) {
     s.beginGroup("Playlist");
     s.setValue("x", x());
     s.setValue("y", y());
-    s.setValue("visible", isVisible());
     s.setValue("snapMode", snapMode);
     s.setValue("width", width());
     s.setValue("height", height());
     // Save track list as a proper string list
     s.setValue("trackList", QVariant(tracks));
+    s.setValue("useCustomFont", useCustomPlaylistFont);
+    s.setValue("fontFamily", playlistFontFamily);
+    s.setValue("fontSize", playlistFontSize);
+    s.setValue("recycleBin", playlistRecycleBinEnabled);
+    s.setValue("showTrackNumbers", showTrackNumbersInPlaylist);
     s.endGroup();
 }
 
@@ -1034,8 +1061,19 @@ void PlaylistWindow::loadSettings(QSettings &s) {
     if (s.contains("x")) {
         move(s.value("x").toInt(), s.value("y").toInt());
     }
+    if (s.contains("width") && s.contains("height")) {
+        int w = qMax(minimumWidth(), s.value("width").toInt());
+        int h = qMax(minimumHeight(), s.value("height").toInt());
+        resize(w, h);
+    }
     snapMode = s.value("snapMode", 0).toInt();
     isSnappedToMain = (snapMode != 0);
+    useCustomPlaylistFont = s.value("useCustomFont", false).toBool();
+    playlistFontFamily = s.value("fontFamily", playlistFontFamily).toString();
+    playlistFontSize = s.value("fontSize", playlistFontSize).toInt();
+    playlistRecycleBinEnabled = s.value("recycleBin", false).toBool();
+    showTrackNumbersInPlaylist = s.value("showTrackNumbers", true).toBool();
+    applyPlaylistColors();
 
     // Restore tracks — try new format first, then legacy comma-separated
     QStringList savedTracks;
@@ -1083,6 +1121,11 @@ void PlaylistWindow::showContextMenu(QPoint globalPos) {
     QAction *cropAct = menu.addAction("Crop files");
     cropAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Delete));
     cropAct->setEnabled(hasSelection);
+    QAction *restoreAct = nullptr;
+    if (playlistRecycleBinEnabled) {
+        restoreAct = menu.addAction("Restore Last Removed Item");
+        restoreAct->setEnabled(!removedTracksStack.isEmpty());
+    }
     menu.addSeparator();
 
     QAction *fileInfoAct = menu.addAction("View file info...");
@@ -1139,6 +1182,7 @@ void PlaylistWindow::showContextMenu(QPoint globalPos) {
     }
     else if (sel == removeAct) removeSelected();
     else if (sel == cropAct) cropSelected();
+    else if (restoreAct && sel == restoreAct) restoreLastRemoved();
     else if (sel == fileInfoAct) {
         int row = listWidget->currentRow();
         if (row >= 0 && row < tracks.size()) {
@@ -1499,8 +1543,13 @@ void PlaylistWindow::dockRightOfMain() {
 
 void PlaylistWindow::checkSnap() {
     if (!mainWindow) return;
+    if (!g_snapWindowsEnabled) {
+        isSnappedToMain = false;
+        snapMode = 0;
+        return;
+    }
 
-    const int snapDist = 25;
+    const int snapDist = g_snapDistance;
     const QPoint mainPos = mainWindow->pos();
     const QSize mainSize = mainWindow->size();
     const QPoint myPos = pos();

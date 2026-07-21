@@ -14,7 +14,12 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QHostAddress>
+#include <QHostInfo>
 #include <QToolTip>
+#include <functional>
+#include <memory>
+#include <sys/resource.h>
 
 #include "compat.h"
 #include "constants.h"   // loadVisColors used by WinampBitmaps
@@ -71,6 +76,7 @@ public:
         
         // Initialize visualization state
         memset(saBarHeight, 0, sizeof(saBarHeight));
+        memset(saBarFalloffAccum, 0, sizeof(saBarFalloffAccum));
         memset(saPeakHeight, 0, sizeof(saPeakHeight));
         memset(saPeakVel, 0, sizeof(saPeakVel));
         memset(spectrumData, 0, sizeof(spectrumData));
@@ -425,15 +431,24 @@ public:
             streamDirectFallbackTried = false;
             pendingStreamUrl = QUrl();
             cleanupNetworkStream();
-            currentFile = url;
-            waSetSource(player, parsed);
-            player->play();
-            updateTrayTooltip();
 
-            if (showSongNotifications && trayIcon) {
-                QString title = metaTitle.isEmpty() ? url : metaTitle;
-                trayIcon->showMessage("Winamp", title, QSystemTrayIcon::Information, 3000);
-            }
+            // icy/ftp (and any other non-http(s) remote scheme) still reach a network backend,
+            // so apply the same SSRF host guard used for http(s) streams (WA-001).
+            validateStreamHostAsync(parsed, [this, url, parsed](bool allowed) {
+                if (!allowed) {
+                    qWarning() << "Refusing to play stream: disallowed host" << parsed.host();
+                    return;
+                }
+                currentFile = url;
+                waSetSource(player, parsed);
+                player->play();
+                updateTrayTooltip();
+
+                if (showSongNotifications && trayIcon) {
+                    QString title = metaTitle.isEmpty() ? url : metaTitle;
+                    trayIcon->showMessage("Winamp", title, QSystemTrayIcon::Information, 3000);
+                }
+            });
         }
     }
 
@@ -1297,17 +1312,82 @@ public:
         }
     }
 
+    // Blocks SSRF: rejects loopback / RFC1918 / link-local (incl. 169.254.169.254) / multicast /
+    // unspecified targets so a malicious playlist or redirecting stream can't reach internal
+    // services. Deliberately does NOT use QHostAddress::isGlobal()/isSiteLocal() - on Qt6 those
+    // do not treat 10/8, 172.16/12, or 192.168/16 as non-global, which would leave the RFC1918
+    // case (the report's own `http://192.168.1.1/reboot` example) unguarded. toIPv4Address()
+    // also normalizes IPv4-mapped IPv6 literals (::ffff:10.0.0.1) onto the same range checks.
+    static bool isDisallowedStreamAddress(const QHostAddress &addr) {
+        if (addr.isNull() || addr.isLoopback() || addr.isLinkLocal() ||
+            addr.isMulticast() || addr.isBroadcast() || addr.isUniqueLocalUnicast()) {
+            return true;
+        }
+        bool isV4 = false;
+        quint32 v4 = addr.toIPv4Address(&isV4);
+        if (isV4) {
+            if (v4 == 0) return true;                            // 0.0.0.0 (unspecified)
+            if ((v4 & 0xFF000000u) == 0x0A000000u) return true;   // 10.0.0.0/8
+            if ((v4 & 0xFFF00000u) == 0xAC100000u) return true;   // 172.16.0.0/12
+            if ((v4 & 0xFFFF0000u) == 0xC0A80000u) return true;   // 192.168.0.0/16
+        }
+        return false;
+    }
+
+    // Resolves url's host (or parses it directly if it's already an IP literal) and reports via
+    // onResult(true) only if every candidate address is publicly routable. Runs async so a slow
+    // or malicious DNS server can't block the UI thread.
+    void validateStreamHostAsync(const QUrl &url, std::function<void(bool)> onResult) {
+        QHostAddress literal(url.host());
+        if (!literal.isNull()) {
+            onResult(!isDisallowedStreamAddress(literal));
+            return;
+        }
+        QHostInfo::lookupHost(url.host(), this, [onResult](const QHostInfo &info) {
+            if (info.error() != QHostInfo::NoError || info.addresses().isEmpty()) {
+                onResult(false);
+                return;
+            }
+            for (const QHostAddress &addr : info.addresses()) {
+                if (isDisallowedStreamAddress(addr)) {
+                    onResult(false);
+                    return;
+                }
+            }
+            onResult(true);
+        });
+    }
+
     void playHttpStream(const QUrl &url) {
         pendingStreamUrl = url;
         streamViaReplyActive = true;
         streamDirectFallbackTried = false;
         cleanupNetworkStream();
+
+        validateStreamHostAsync(url, [this, url](bool allowed) {
+            if (!allowed) {
+                qWarning() << "Refusing to stream: disallowed host" << url.host();
+                streamViaReplyActive = false;
+                return;
+            }
+            startHttpStreamRequest(url);
+        });
+    }
+
+    void startHttpStreamRequest(const QUrl &url) {
         if (!networkManager) {
             networkManager = new QNetworkAccessManager(this);
         }
 
         QNetworkRequest request(url);
+#if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
+        // UserVerifiedRedirectPolicy holds each redirect until validateStreamHostAsync()
+        // clears it (see the redirected() handler below), so cross-origin hops can't bypass
+        // the SSRF guard the way NoLessSafeRedirectPolicy would allow.
+        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::UserVerifiedRedirectPolicy);
+#else
         request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+#endif
 #if QT_VERSION >= QT_VERSION_CHECK(5, 9, 0)
         request.setMaximumRedirectsAllowed(5);
 #endif
@@ -1330,6 +1410,21 @@ public:
                 fallbackToDirectStream();
             }
         });
+#if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
+        connect(streamReply, &QNetworkReply::redirected, this, [this](const QUrl &redirectUrl) {
+            QNetworkReply *reply = streamReply;
+            if (!reply) return;
+            validateStreamHostAsync(redirectUrl, [this, reply, redirectUrl](bool allowed) {
+                if (streamReply != reply) return; // stream already replaced/aborted
+                if (allowed) {
+                    reply->redirectAllowed();
+                } else {
+                    qWarning() << "Refusing to follow redirect: disallowed host" << redirectUrl.host();
+                    reply->abort();
+                }
+            });
+        });
+#endif
         waSetNetworkStream(player, streamReply, url);
         currentFile = url.toString();
         player->play();
@@ -1356,6 +1451,11 @@ protected:
                 if (videoWindow) videoWindow->hide();
                 if (milkdropWindow) milkdropWindow->hide();
                 if (mediaLibraryWindow) mediaLibraryWindow->hide();
+                if (minimizeToTray && trayIcon) {
+                    // Fully hide (removing the taskbar entry) instead of leaving a native
+                    // minimized window; the tray icon's click handler restores it.
+                    QTimer::singleShot(0, this, [this]() { hide(); });
+                }
             } else if (!(windowState() & Qt::WindowMinimized)) {
                 // Restoring: show only the windows that were visible before
                 if (wasPlaylistVisible && playlistWindow) playlistWindow->show();
@@ -1655,14 +1755,28 @@ protected:
         const int visX = 24, visY = 43, visH = 16;
         // Fill background
         p.fillRect(visX, visY, 75, visH, visColors[0]);
+        // Falloff-speed combo maps to a decay-rate multiplier; 1.0x (index 1, "Medium") matches
+        // the original fixed rate exactly, so the default preference changes nothing.
+        static const float kFalloffMul[4] = {0.5f, 1.0f, 1.75f, 2.5f};
+        float barMul = kFalloffMul[qBound(0, saFalloffSpeed, 3)];
+        float peakMul = kFalloffMul[qBound(0, saPeakFalloffSpeed, 3)];
         // 19 bars, each 3px wide, 1px gap
         for (int i = 0; i < 19; i++) {
             float val = spectrumData[i]; // 0.0 - 1.0 (log-scaled)
             int target = (int)(val * 16.0f);
             if (target > 15) target = 15;
             // Smooth falloff
-            if (target > saBarHeight[i]) saBarHeight[i] = target;
-            else if (saBarHeight[i] > 0) saBarHeight[i]--;
+            if (target > saBarHeight[i]) {
+                saBarHeight[i] = target;
+                saBarFalloffAccum[i] = 0.0f;
+            } else if (saBarHeight[i] > 0) {
+                saBarFalloffAccum[i] += barMul;
+                int dec = (int)saBarFalloffAccum[i];
+                if (dec > 0) {
+                    saBarHeight[i] = qMax(0, saBarHeight[i] - dec);
+                    saBarFalloffAccum[i] -= dec;
+                }
+            }
             int h = saBarHeight[i];
             // Draw bar with color gradient
             for (int j = 0; j < h; j++) {
@@ -1673,17 +1787,21 @@ protected:
                 p.fillRect(visX + i * 4, py, 3, 1, visColors[colorIdx]);
             }
             // Peak dot
-            if (h > saPeakHeight[i]) {
-                saPeakHeight[i] = h;
-                saPeakVel[i] = 0;
+            if (showPeakDots) {
+                if (h > saPeakHeight[i]) {
+                    saPeakHeight[i] = h;
+                    saPeakVel[i] = 0;
+                } else {
+                    saPeakVel[i] += 0.1f * peakMul;
+                    saPeakHeight[i] -= (int)saPeakVel[i];
+                    if (saPeakHeight[i] < 0) saPeakHeight[i] = 0;
+                }
+                if (saPeakHeight[i] > 0) {
+                    int peakY = visY + visH - 1 - saPeakHeight[i];
+                    p.fillRect(visX + i * 4, peakY, 3, 1, visColors[23]);
+                }
             } else {
-                saPeakVel[i] += 0.1f;
-                saPeakHeight[i] -= (int)saPeakVel[i];
-                if (saPeakHeight[i] < 0) saPeakHeight[i] = 0;
-            }
-            if (saPeakHeight[i] > 0) {
-                int peakY = visY + visH - 1 - saPeakHeight[i];
-                p.fillRect(visX + i * 4, peakY, 3, 1, visColors[23]);
+                saPeakHeight[i] = 0;
             }
         }
     }
@@ -1851,23 +1969,9 @@ protected:
             case Qt::Key_P:
                 if (event->modifiers() & Qt::ControlModifier) {
                     // Ctrl+P = Preferences
-                    PreferencesDialog *prefs = new PreferencesDialog(this);
+                    PreferencesDialog *prefs = new PreferencesDialog(this, buildPreferencesState());
                     connect(prefs, &PreferencesDialog::skinChanged, this, &WinampWindow::onSkinChanged);
-                    connect(prefs, &PreferencesDialog::settingChanged, this, [this](const QString &key, const QVariant &value) {
-                        if (key == "showNotifications") {
-                            showSongNotifications = value.toBool();
-                        } else if (key == "aot") {
-                            onToggleAlwaysOnTop(value.toBool());
-                        } else if (key == "doubleSize") {
-                            if (value.toBool() != doubleSize) {
-                                doubleSize = value.toBool();
-                                setFixedSize(doubleSize ? 550 : 275, doubleSize ? 232 : 116);
-                                update();
-                            }
-                        } else if (key == "stopAfterCurrent") {
-                            stopAfterCurrent = value.toBool();
-                        }
-                    });
+                    connect(prefs, &PreferencesDialog::settingChanged, this, &WinampWindow::applyPreferenceChange);
                     prefs->setAttribute(Qt::WA_DeleteOnClose);
                     prefs->exec();
                 }
@@ -2075,23 +2179,9 @@ protected:
         else if (sel == shadeAct) onToggleShadeMode();
         else if (sel == stopAfterAct) stopAfterCurrent = sel->isChecked();
         else if (sel == prefsAct) {
-            PreferencesDialog *prefs = new PreferencesDialog(this);
+            PreferencesDialog *prefs = new PreferencesDialog(this, buildPreferencesState());
             connect(prefs, &PreferencesDialog::skinChanged, this, &WinampWindow::onSkinChanged);
-            connect(prefs, &PreferencesDialog::settingChanged, this, [this](const QString &key, const QVariant &value) {
-                if (key == "showNotifications") {
-                    showSongNotifications = value.toBool();
-                } else if (key == "aot") {
-                    onToggleAlwaysOnTop(value.toBool());
-                } else if (key == "doubleSize") {
-                    if (value.toBool() != doubleSize) {
-                        doubleSize = value.toBool();
-                        setFixedSize(doubleSize ? 550 : 275, doubleSize ? 232 : 116);
-                        update();
-                    }
-                } else if (key == "stopAfterCurrent") {
-                    stopAfterCurrent = value.toBool();
-                }
-            });
+            connect(prefs, &PreferencesDialog::settingChanged, this, &WinampWindow::applyPreferenceChange);
             prefs->setAttribute(Qt::WA_DeleteOnClose);
             prefs->exec();
         }
@@ -2475,7 +2565,7 @@ protected:
             tooltip = "Toggle Clutterbar";
         }
         
-        if (!tooltip.isEmpty()) {
+        if (showTooltips && !tooltip.isEmpty()) {
             QToolTip::showText(waMouseGlobalPos(event), tooltip, this);
         } else {
             QToolTip::hideText();
@@ -2624,8 +2714,8 @@ protected:
                         if (!currentFile.isEmpty()) player->play();
                         else openFile();
                         break;
-                    case 2: player->pause(); break;                  // Pause
-                    case 3: player->stop(); break;                   // Stop
+                    case 2: fadeThenExecute([this]() { player->pause(); }); break;  // Pause
+                    case 3: fadeThenExecute([this]() { player->stop(); }); break;   // Stop
                     case 4: {                                        // Next
                         int curIdx = playlistWindow->currentTrackIndex();
                         int count = playlistWindow->trackCount();
@@ -2815,6 +2905,44 @@ public:
         // nextAudioOutput always gets volume (it plays before DSP takes over)
         waSetOutputVolume(nextPlayer, nextAudioOutput, volume / 255.0f);
     }
+
+    // Preferences > Playback > "Fade on stop/pause". Ramps the active output volume down before
+    // running the real pause/stop action, then restores the normal volume level via applyVolume()
+    // (safe: by then the player is already paused/stopped, so nothing audible happens).
+    // Scoped to the primary mouse-click transport buttons only (see mouseReleaseEvent) - not
+    // wired into tray/MPRIS/remote-control paths, to keep the change to playback logic minimal.
+    void fadeThenExecute(std::function<void()> action) {
+        if (!fadeOnStopPause || !audioOutput || waOutputVolume(player, audioOutput) <= 0.001f) {
+            action();
+            return;
+        }
+        const int steps = 8;
+        const float startVol = waOutputVolume(player, audioOutput);
+        auto step = std::make_shared<int>(0);
+        QTimer *fadeTimer = new QTimer(this);
+        connect(fadeTimer, &QTimer::timeout, this, [this, fadeTimer, action, startVol, steps, step]() {
+            (*step)++;
+            float v = startVol * (1.0f - float(*step) / steps);
+            waSetOutputVolume(player, audioOutput, qMax(0.0f, v));
+            if (*step >= steps) {
+                fadeTimer->stop();
+                fadeTimer->deleteLater();
+                action();
+                applyVolume();
+            }
+        });
+        fadeTimer->start(20);
+    }
+
+    // Preferences > Playback > "Playback thread priority". Linux has no equivalent to the
+    // Windows thread-priority knob the original setting mapped to; the closest honest analogue
+    // is process niceness. Best-effort: raising priority below 0 requires CAP_SYS_NICE and will
+    // silently no-op without it, same as `renice` for an unprivileged user.
+    void applyPlaybackPriority() {
+        static const int niceValues[6] = {19, 10, 5, 0, -5, -10}; // Idle..Highest
+        int idx = qBound(0, playbackPriorityIndex, 5);
+        setpriority(PRIO_PROCESS, 0, niceValues[idx]);
+    }
     
     void updateDisplay() {
         update();
@@ -2868,10 +2996,24 @@ public:
         s.setValue("stopAfterCurrent", stopAfterCurrent);
         s.setValue("showSongNotifications", showSongNotifications);
         s.endGroup();
-        
+
+        s.beginGroup("Preferences");
+        s.setValue("showInTray", showInTray);
+        s.setValue("minimizeToTray", minimizeToTray);
+        s.setValue("showTooltips", showTooltips);
+        s.setValue("snapWindows", g_snapWindowsEnabled);
+        s.setValue("snapDistance", g_snapDistance);
+        s.setValue("playbackPriority", playbackPriorityIndex);
+        s.setValue("continuePlaybackOnStartup", continuePlaybackOnStartup);
+        s.setValue("fadeOnStopPause", fadeOnStopPause);
+        s.setValue("saFalloffSpeed", saFalloffSpeed);
+        s.setValue("saPeakFalloffSpeed", saPeakFalloffSpeed);
+        s.setValue("showPeakDots", showPeakDots);
+        s.endGroup();
+
         eqWindow->saveSettings(s);
         playlistWindow->saveSettings(s);
-        
+
         s.sync();
     }
     
@@ -2915,9 +3057,28 @@ public:
             show();
         }
         s.endGroup();
-        
+
+        s.beginGroup("Preferences");
+        setShowInTray(s.value("showInTray", true).toBool());
+        minimizeToTray = s.value("minimizeToTray", false).toBool();
+        showTooltips = s.value("showTooltips", true).toBool();
+        g_snapWindowsEnabled = s.value("snapWindows", true).toBool();
+        g_snapDistance = s.value("snapDistance", 25).toInt();
+        playbackPriorityIndex = s.value("playbackPriority", 3).toInt();
+        applyPlaybackPriority();
+        continuePlaybackOnStartup = s.value("continuePlaybackOnStartup", false).toBool();
+        fadeOnStopPause = s.value("fadeOnStopPause", false).toBool();
+        saFalloffSpeed = s.value("saFalloffSpeed", 1).toInt();
+        saPeakFalloffSpeed = s.value("saPeakFalloffSpeed", 1).toInt();
+        showPeakDots = s.value("showPeakDots", true).toBool();
+        s.endGroup();
+
         eqWindow->loadSettings(s);
         playlistWindow->loadSettings(s);
+
+        if (continuePlaybackOnStartup && !currentFile.isEmpty() && QFile::exists(currentFile)) {
+            playFile(currentFile);
+        }
         
         // Classic layout: force-dock EQ under main, playlist to the right, and
         // mark them snapped so followMain works when the main window is dragged.
@@ -2978,10 +3139,22 @@ private:
     bool alwaysOnTop;  // always on top (like Windows config_aot)
     bool clutterbarOpen; // clutterbar expanded (left side O/A/I/D/V buttons)
     bool showSongNotifications = true; // show desktop notification on song change
-    
+
+    // Preferences (Preferences dialog) - see applyPreferenceChange()
+    bool showInTray = true;
+    bool minimizeToTray = false;
+    bool showTooltips = true;
+    int playbackPriorityIndex = 3;   // combo index: 0=Idle .. 5=Highest, 3=Normal
+    bool continuePlaybackOnStartup = false;
+    bool fadeOnStopPause = false;
+    int saFalloffSpeed = 1;          // 0=Slow, 1=Medium, 2=Fast, 3=Fastest
+    int saPeakFalloffSpeed = 1;
+    bool showPeakDots = true;
+
     // Visualization state
     int visMode;  // 0=off, 1=spectrum analyzer, 2=oscilloscope (matches Windows config_sa)
     int saBarHeight[19];       // Current bar heights (0-15) for smooth fall-off
+    float saBarFalloffAccum[19]; // Fractional carry for saFalloffSpeed-scaled bar decay
     int saPeakHeight[19];      // Peak dot positions
     float saPeakVel[19];       // Peak dot fall velocity
     float spectrumData[75];    // FFT spectrum bands (0.0-1.0)
@@ -3062,7 +3235,8 @@ private:
     
     void setupSystemTray() {
         if (!QSystemTrayIcon::isSystemTrayAvailable()) return;
-        
+        if (trayIcon) return; // already set up
+
         trayIcon = new QSystemTrayIcon(this);
         QIcon icon = windowIcon();
         if (icon.isNull()) icon = QIcon::fromTheme("audio-headphones");
@@ -3119,7 +3293,105 @@ private:
         
         trayIcon->show();
     }
-    
+
+    // Preferences > Setup > "Show in system tray" toggle. Tears the icon fully down when
+    // disabled rather than just hiding it, so re-enabling gets a clean rebuild.
+    void setShowInTray(bool enabled) {
+        showInTray = enabled;
+        if (enabled) {
+            setupSystemTray();
+        } else if (trayIcon) {
+            trayIcon->hide();
+            delete trayIcon;
+            trayIcon = nullptr;
+            delete trayMenu;
+            trayMenu = nullptr;
+        }
+    }
+
+    // Snapshot of current settings, used to seed the Preferences dialog so its controls reflect
+    // reality instead of hardcoded defaults every time it's opened.
+    PreferencesInitialState buildPreferencesState() const {
+        PreferencesInitialState st;
+        st.alwaysOnTop = alwaysOnTop;
+        st.showInTray = showInTray;
+        st.minimizeToTray = minimizeToTray;
+        st.showNotifications = showSongNotifications;
+        st.showTooltips = showTooltips;
+        st.snapWindows = g_snapWindowsEnabled;
+        st.snapDistance = g_snapDistance;
+        st.doubleSize = doubleSize;
+        st.playbackPriority = playbackPriorityIndex;
+        st.stopAfterCurrent = stopAfterCurrent;
+        st.continuePlaybackOnStartup = continuePlaybackOnStartup;
+        st.fadeOnStopPause = fadeOnStopPause;
+        if (playlistWindow) {
+            st.useCustomPlaylistFont = playlistWindow->customFontEnabled();
+            st.playlistFontFamily = playlistWindow->fontFamily();
+            st.playlistFontSize = playlistWindow->fontSize();
+            st.playlistRecycleBin = playlistWindow->recycleBinEnabled();
+            st.showTrackNumbers = playlistWindow->trackNumbersShown();
+        }
+        st.saFalloffSpeed = saFalloffSpeed;
+        st.saPeakFalloffSpeed = saPeakFalloffSpeed;
+        st.showPeakDots = showPeakDots;
+        return st;
+    }
+
+    // Single handler for PreferencesDialog::settingChanged, connected at both places the dialog
+    // is opened (Ctrl+P and the context-menu "Preferences..." item). Previously this was two
+    // copy-pasted lambdas; several keys (showTray, minToTray, saFalloff, saPeakFalloff, saPeaks)
+    // were emitted by the dialog but handled by neither, so toggling them silently did nothing.
+    void applyPreferenceChange(const QString &key, const QVariant &value) {
+        if (key == "showNotifications") {
+            showSongNotifications = value.toBool();
+        } else if (key == "aot") {
+            onToggleAlwaysOnTop(value.toBool());
+        } else if (key == "doubleSize") {
+            if (value.toBool() != doubleSize) {
+                doubleSize = value.toBool();
+                setFixedSize(doubleSize ? 550 : 275, doubleSize ? 232 : 116);
+                update();
+            }
+        } else if (key == "stopAfterCurrent") {
+            stopAfterCurrent = value.toBool();
+        } else if (key == "showTray") {
+            setShowInTray(value.toBool());
+        } else if (key == "minToTray") {
+            minimizeToTray = value.toBool();
+        } else if (key == "showTooltips") {
+            showTooltips = value.toBool();
+            if (!showTooltips) QToolTip::hideText();
+        } else if (key == "snapWindows") {
+            g_snapWindowsEnabled = value.toBool();
+        } else if (key == "snapDistance") {
+            g_snapDistance = value.toInt();
+        } else if (key == "playbackPriority") {
+            playbackPriorityIndex = value.toInt();
+            applyPlaybackPriority();
+        } else if (key == "continuePlaybackOnStartup") {
+            continuePlaybackOnStartup = value.toBool();
+        } else if (key == "fadeOnStopPause") {
+            fadeOnStopPause = value.toBool();
+        } else if (key == "saFalloff") {
+            saFalloffSpeed = value.toInt();
+        } else if (key == "saPeakFalloff") {
+            saPeakFalloffSpeed = value.toInt();
+        } else if (key == "saPeaks") {
+            showPeakDots = value.toBool();
+        } else if (key == "useCustomPlaylistFont") {
+            if (playlistWindow) playlistWindow->setUseCustomFont(value.toBool());
+        } else if (key == "playlistFontFamily") {
+            if (playlistWindow) playlistWindow->setPlaylistFontFamily(value.toString());
+        } else if (key == "playlistFontSize") {
+            if (playlistWindow) playlistWindow->setPlaylistFontSizeOnly(value.toInt());
+        } else if (key == "playlistRecycleBin") {
+            if (playlistWindow) playlistWindow->setRecycleBinEnabled(value.toBool());
+        } else if (key == "showTrackNumbers") {
+            if (playlistWindow) playlistWindow->setShowTrackNumbers(value.toBool());
+        }
+    }
+
     void updateTrayTooltip() {
         if (!trayIcon) return;
         QString tip = "Winamp";

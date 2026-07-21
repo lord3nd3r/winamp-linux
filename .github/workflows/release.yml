@@ -28,30 +28,32 @@ jobs:
       matrix:
         include:
           # --- Debian family ---
+          # Base images are pinned by digest (WA-003): a mutable `:tag` lets the registry
+          # silently swap the toolchain a release build compiles with. Bump deliberately.
           - distro: ubuntu-22.04
-            image: ubuntu:22.04
+            image: ubuntu:22.04@sha256:0e0a0fc6d18feda9db1590da249ac93e8d5abfea8f4c3c0c849ce512b5ef8982
             family: deb
           - distro: ubuntu-24.04
-            image: ubuntu:24.04
+            image: ubuntu:24.04@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90
             family: deb
           - distro: ubuntu-resolute
-            image: ubuntu:resolute
+            image: ubuntu:resolute@sha256:3131b4cc82a783df6c9df078f86e01819a13594b865c2cad47bd1bca2b7063bb
             family: deb
           - distro: debian-bookworm
-            image: debian:bookworm
+            image: debian:bookworm@sha256:9344f8b8992482f80cba753f323adeaf17690076c095ccff6cc9536be98185dc
             family: deb
           - distro: debian-trixie
-            image: debian:trixie
+            image: debian:trixie@sha256:fac46bff2e02f51425b6e33b0e1169f55dfb053d83511ca28aa50c09fd5ed7a4
             family: deb
           # --- RPM family ---
           - distro: fedora-41
-            image: fedora:41
+            image: fedora:41@sha256:f1a3fab47bcb3c3ddf3135d5ee7ba8b7b25f2e809a47440936212a3a50957f3d
             family: rpm
           - distro: fedora-42
-            image: fedora:42
+            image: fedora:42@sha256:99e203b80b1c3d8f7e161ec10a68fd02b081ef83a3963553e513c82846b97814
             family: rpm
           - distro: opensuse-tumbleweed
-            image: opensuse/tumbleweed:latest
+            image: opensuse/tumbleweed@sha256:18a8c2a41252a0100ae4a7dae0a0e925fb522971645b97b05c57f9b6e73c3b4f
             family: suse
 
     steps:
@@ -76,7 +78,7 @@ jobs:
           zypper --non-interactive install -y git tar file rpm-build which gzip
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install build dependencies (deb)
         if: matrix.family == 'deb'
@@ -182,7 +184,7 @@ jobs:
           find build -maxdepth 1 -type f \( -name 'winamp-*.deb' -o -name 'winamp-*.rpm' -o -name 'winamp-*.tar.gz' \) -print
 
       - name: Upload packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: packages-${{ matrix.distro }}
           path: |
@@ -200,7 +202,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download all packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
           pattern: packages-*
@@ -217,7 +219,7 @@ jobs:
           du -sh "${files[@]}"
 
       - name: Create / update GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           name: Winamp for Linux ${{ github.ref_name }}
           files: |

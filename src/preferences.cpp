@@ -28,7 +28,7 @@
 #include <QStandardPaths>
 #include <QUrl>
 
-PreferencesDialog::PreferencesDialog(QWidget *parent) : QDialog(parent) {
+PreferencesDialog::PreferencesDialog(QWidget *parent, const PreferencesInitialState &state) : QDialog(parent), initState(state) {
         setWindowTitle("Winamp Preferences");
         setMinimumSize(600, 450);
         setStyleSheet(
@@ -135,26 +135,32 @@ QWidget *PreferencesDialog::createGeneralPage() {
         layout->addSpacing(10);
 
         QCheckBox *aotCheck = new QCheckBox("Always on top", page);
+        aotCheck->setChecked(initState.alwaysOnTop);
         QCheckBox *trayCheck = new QCheckBox("Show in system tray", page);
+        trayCheck->setChecked(initState.showInTray);
         QCheckBox *minToTrayCheck = new QCheckBox("Minimize to system tray", page);
+        minToTrayCheck->setChecked(initState.minimizeToTray);
         QCheckBox *notifyCheck = new QCheckBox("Show song change notifications", page);
-        notifyCheck->setChecked(true); // Default enabled
+        notifyCheck->setChecked(initState.showNotifications);
         QCheckBox *tooltipCheck = new QCheckBox("Show tooltips", page);
+        tooltipCheck->setChecked(initState.showTooltips);
         QCheckBox *snapCheck = new QCheckBox("Snap windows together", page);
-        snapCheck->setChecked(true);
+        snapCheck->setChecked(initState.snapWindows);
 
         QHBoxLayout *snapDistLayout = new QHBoxLayout();
         snapDistLayout->addWidget(new QLabel("Snap distance:"));
         QSpinBox *snapDistSpin = new QSpinBox(page);
         snapDistSpin->setRange(1, 50);
-        snapDistSpin->setValue(15);
+        snapDistSpin->setValue(initState.snapDistance);
         snapDistSpin->setSuffix(" px");
         snapDistLayout->addWidget(snapDistSpin);
         snapDistLayout->addStretch();
 
         QCheckBox *dsizeCheck = new QCheckBox("Double size mode", page);
+        dsizeCheck->setChecked(initState.doubleSize);
         QCheckBox *splashCheck = new QCheckBox("Show splash screen on startup", page);
-        splashCheck->setChecked(true);
+        splashCheck->setChecked(QSettings(QDir::homePath() + "/.config/winamp/winamp.conf", QSettings::IniFormat)
+                                     .value("showSplashScreen", true).toBool());
 
         layout->addWidget(aotCheck);
         layout->addWidget(trayCheck);
@@ -171,7 +177,17 @@ QWidget *PreferencesDialog::createGeneralPage() {
         connect(trayCheck, &QCheckBox::toggled, this, [this](bool v) { emit settingChanged("showTray", v); });
         connect(minToTrayCheck, &QCheckBox::toggled, this, [this](bool v) { emit settingChanged("minToTray", v); });
         connect(notifyCheck, &QCheckBox::toggled, this, [this](bool v) { emit settingChanged("showNotifications", v); });
+        connect(tooltipCheck, &QCheckBox::toggled, this, [this](bool v) { emit settingChanged("showTooltips", v); });
+        connect(snapCheck, &QCheckBox::toggled, this, [this](bool v) { emit settingChanged("snapWindows", v); });
+        connect(snapDistSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
+            [this](int v) { emit settingChanged("snapDistance", v); });
         connect(dsizeCheck, &QCheckBox::toggled, this, [this](bool v) { emit settingChanged("doubleSize", v); });
+        // Splash-screen preference only matters at next startup, so it's persisted immediately
+        // (like the language picker) rather than routed through the live settingChanged pipeline.
+        connect(splashCheck, &QCheckBox::toggled, this, [](bool v) {
+            QSettings settings(QDir::homePath() + "/.config/winamp/winamp.conf", QSettings::IniFormat);
+            settings.setValue("showSplashScreen", v);
+        });
 
         return page;
     }
@@ -349,7 +365,7 @@ QWidget *PreferencesDialog::createPlaybackPage() {
         QVBoxLayout *priLayout = new QVBoxLayout(priorityGroup);
         QComboBox *priorityCombo = new QComboBox(page);
         priorityCombo->addItems({"Idle", "Lowest", "Below Normal", "Normal", "Above Normal", "Highest"});
-        priorityCombo->setCurrentIndex(3);
+        priorityCombo->setCurrentIndex(initState.playbackPriority);
         priLayout->addWidget(new QLabel("Playback thread priority:"));
         priLayout->addWidget(priorityCombo);
         layout->addWidget(priorityGroup);
@@ -357,14 +373,23 @@ QWidget *PreferencesDialog::createPlaybackPage() {
         QGroupBox *advGroup = new QGroupBox("Advanced", page);
         QVBoxLayout *advLayout = new QVBoxLayout(advGroup);
         QCheckBox *stopAfterCheck = new QCheckBox("Stop after current track", page);
+        stopAfterCheck->setChecked(initState.stopAfterCurrent);
         QCheckBox *alwaysContinue = new QCheckBox("Continue playback on startup", page);
+        alwaysContinue->setChecked(initState.continuePlaybackOnStartup);
         QCheckBox *fadeOnStop = new QCheckBox("Fade on stop/pause", page);
+        fadeOnStop->setChecked(initState.fadeOnStopPause);
         advLayout->addWidget(stopAfterCheck);
         advLayout->addWidget(alwaysContinue);
         advLayout->addWidget(fadeOnStop);
         layout->addWidget(advGroup);
 
         connect(stopAfterCheck, &QCheckBox::toggled, this, [this](bool v) { emit settingChanged("stopAfterCurrent", v); });
+        connect(priorityCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int idx) { emit settingChanged("playbackPriority", idx); });
+        connect(alwaysContinue, &QCheckBox::toggled, this,
+            [this](bool v) { emit settingChanged("continuePlaybackOnStartup", v); });
+        connect(fadeOnStop, &QCheckBox::toggled, this,
+            [this](bool v) { emit settingChanged("fadeOnStopPause", v); });
 
         layout->addStretch();
         return page;
@@ -379,11 +404,14 @@ QWidget *PreferencesDialog::createPlaylistPrefsPage() {
         QGroupBox *fontGroup = new QGroupBox("Font", page);
         QVBoxLayout *fontLayout = new QVBoxLayout(fontGroup);
         QCheckBox *customFont = new QCheckBox("Use custom playlist font", page);
+        customFont->setChecked(initState.useCustomPlaylistFont);
         QComboBox *fontCombo = new QComboBox(page);
         fontCombo->addItems({"Courier New", "Tahoma", "Arial", "Verdana", "Segoe UI", "DejaVu Sans Mono"});
+        int fontIdx = fontCombo->findText(initState.playlistFontFamily);
+        fontCombo->setCurrentIndex(fontIdx >= 0 ? fontIdx : 0);
         QSpinBox *fontSizeSpin = new QSpinBox(page);
         fontSizeSpin->setRange(6, 24);
-        fontSizeSpin->setValue(8);
+        fontSizeSpin->setValue(initState.playlistFontSize);
         fontSizeSpin->setSuffix(" pt");
         fontLayout->addWidget(customFont);
         QHBoxLayout *fontRow = new QHBoxLayout();
@@ -393,11 +421,24 @@ QWidget *PreferencesDialog::createPlaylistPrefsPage() {
         layout->addWidget(fontGroup);
 
         QCheckBox *recycleBin = new QCheckBox("Send removed files to playlist recycle bin", page);
+        recycleBin->setChecked(initState.playlistRecycleBin);
         QCheckBox *showNumbers = new QCheckBox("Show track numbers in playlist", page);
-        showNumbers->setChecked(true);
+        showNumbers->setChecked(initState.showTrackNumbers);
         layout->addWidget(recycleBin);
         layout->addWidget(showNumbers);
         layout->addStretch();
+
+        connect(customFont, &QCheckBox::toggled, this,
+            [this](bool v) { emit settingChanged("useCustomPlaylistFont", v); });
+        connect(fontCombo, &QComboBox::currentTextChanged, this,
+            [this](const QString &family) { emit settingChanged("playlistFontFamily", family); });
+        connect(fontSizeSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
+            [this](int size) { emit settingChanged("playlistFontSize", size); });
+        connect(recycleBin, &QCheckBox::toggled, this,
+            [this](bool v) { emit settingChanged("playlistRecycleBin", v); });
+        connect(showNumbers, &QCheckBox::toggled, this,
+            [this](bool v) { emit settingChanged("showTrackNumbers", v); });
+
         return page;
     }
 
@@ -453,7 +494,7 @@ QWidget *PreferencesDialog::createVisualizationPage() {
         falloffRow->addWidget(new QLabel("Analyzer falloff speed:"));
         QComboBox *falloffCombo = new QComboBox(page);
         falloffCombo->addItems({"Slow", "Medium", "Fast", "Fastest"});
-        falloffCombo->setCurrentIndex(1);
+        falloffCombo->setCurrentIndex(initState.saFalloffSpeed);
         falloffRow->addWidget(falloffCombo);
         saLayout->addLayout(falloffRow);
 
@@ -461,12 +502,12 @@ QWidget *PreferencesDialog::createVisualizationPage() {
         peakRow->addWidget(new QLabel("Peak falloff speed:"));
         QComboBox *peakCombo = new QComboBox(page);
         peakCombo->addItems({"Slow", "Medium", "Fast", "Fastest"});
-        peakCombo->setCurrentIndex(1);
+        peakCombo->setCurrentIndex(initState.saPeakFalloffSpeed);
         peakRow->addWidget(peakCombo);
         saLayout->addLayout(peakRow);
 
         QCheckBox *peaksCheck = new QCheckBox("Show peak dots", page);
-        peaksCheck->setChecked(true);
+        peaksCheck->setChecked(initState.showPeakDots);
         saLayout->addWidget(peaksCheck);
 
         layout->addWidget(saGroup);

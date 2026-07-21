@@ -26,20 +26,22 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Base images are pinned by digest (WA-003): a mutable `:tag` lets the registry
+          # silently swap the toolchain CI compiles with. Bump deliberately.
           - distro: ubuntu-24.04
-            image: ubuntu:24.04
+            image: ubuntu:24.04@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90
             family: deb
           - distro: ubuntu-22.04
-            image: ubuntu:22.04
+            image: ubuntu:22.04@sha256:0e0a0fc6d18feda9db1590da249ac93e8d5abfea8f4c3c0c849ce512b5ef8982
             family: deb
           - distro: debian-bookworm
-            image: debian:bookworm
+            image: debian:bookworm@sha256:9344f8b8992482f80cba753f323adeaf17690076c095ccff6cc9536be98185dc
             family: deb
           - distro: fedora-41
-            image: fedora:41
+            image: fedora:41@sha256:f1a3fab47bcb3c3ddf3135d5ee7ba8b7b25f2e809a47440936212a3a50957f3d
             family: rpm
           - distro: opensuse-tumbleweed
-            image: opensuse/tumbleweed:latest
+            image: opensuse/tumbleweed@sha256:18a8c2a41252a0100ae4a7dae0a0e925fb522971645b97b05c57f9b6e73c3b4f
             family: suse
 
     steps:
@@ -62,7 +64,7 @@ jobs:
           zypper --non-interactive install -y git which
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install build dependencies (deb)
         if: matrix.family == 'deb'

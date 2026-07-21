@@ -29,9 +29,14 @@ void EqualizerWindow::dockBelowMain() {
 
 void EqualizerWindow::checkSnap() {
     if (!mainWindow) return;
+    if (!g_snapWindowsEnabled) {
+        isSnappedToMain = false;
+        snapEdge = 0;
+        return;
+    }
 
     // Classic Winamp snap distance (~10-20px); slightly generous for HiDPI / tool windows.
-    const int snapDist = 25;
+    const int snapDist = g_snapDistance;
     const QPoint mainPos = mainWindow->pos();
     const QSize mainSize = mainWindow->size();
     const QPoint myPos = pos();
@@ -207,7 +212,6 @@ void EqualizerWindow::showPresetsMenu(QPoint globalPos) {
         s.beginGroup("Equalizer");
         s.setValue("x", x());
         s.setValue("y", y());
-        s.setValue("visible", isVisible());
         s.setValue("enabled", eqEnabled);
         s.setValue("auto", autoEnabled);
         s.setValue("preamp", preampValue);
