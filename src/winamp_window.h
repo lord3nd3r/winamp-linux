@@ -403,6 +403,10 @@ public:
 
     void playFile(const QString &file) {
         if (!file.isEmpty() && QFile::exists(file)) {
+            if (isPlaylistPath(file)) {
+                resolveLocalPlaylistFile(file, 0);
+                return;
+            }
             streamViaReplyActive = false;
             streamDirectFallbackTried = false;
             pendingStreamUrl = QUrl();
@@ -418,6 +422,11 @@ public:
             QUrl parsed = QUrl::fromUserInput(url.trimmed());
             if (parsed.isLocalFile()) {
                 playFile(parsed.toLocalFile());
+                return;
+            }
+
+            if (isPlaylistPath(parsed.path())) {
+                resolvePlaylistUrl(parsed, 0);
                 return;
             }
 
@@ -1166,13 +1175,17 @@ public:
         
         if (eqEnabled) {
             int sampleRate = fmt.sampleRate();
-            
-            // Mute the direct QAudioOutput path — we'll output processed audio via QAudioSink
-            if (!eqDspActive) {
-                waSetOutputVolume(player, audioOutput, 0.0f);
-                eqDspActive = true;
+
+            // Network streams can deliver buffers before the container format is
+            // resolved (sampleRate/channels == 0). Skip those without muting the
+            // direct output or touching the sink state, otherwise the direct path
+            // gets muted here while the QAudioSink below never gets created (its
+            // reconfigure check never sees a real format change), leaving playback
+            // silent for the rest of the stream.
+            if (sampleRate <= 0 || channels <= 0) {
+                return;
             }
-            
+
             // Setup/reconfigure QAudioSink if format changed
             if (sampleRate != eqSampleRate || channels != eqChannels) {
                 eqSampleRate = sampleRate;
@@ -1204,7 +1217,14 @@ public:
             }
             
             if (!audioSinkDevice) return;
-            
+
+            // Mute the direct QAudioOutput path now that the DSP sink is confirmed
+            // live — output switches to the processed audio via QAudioSink below.
+            if (!eqDspActive) {
+                waSetOutputVolume(player, audioOutput, 0.0f);
+                eqDspActive = true;
+            }
+
             // Update EQ gains every buffer (cheap, ensures sliders are responsive)
             for (int b = 0; b < 10; b++) {
                 int sliderVal = eqWindow->getBandValue(b);
@@ -1356,6 +1376,91 @@ public:
             }
             onResult(true);
         });
+    }
+
+    // Playlist references (.pls/.m3u/.m3u8) can themselves redirect to another playlist
+    // (e.g. an SSL variant), so cap the hop count rather than following indefinitely.
+    static constexpr int kMaxPlaylistResolveDepth = 3;
+
+    // Fetches a remote M3U/PLS playlist, extracts the first real media entry, and plays
+    // it. Without this, the playlist's raw text gets handed straight to FFmpeg, which can
+    // misdetect it as some other container and "play" it with no audio stream at all.
+    void resolvePlaylistUrl(const QUrl &url, int depth) {
+        if (depth >= kMaxPlaylistResolveDepth) {
+            qWarning() << "Playlist resolution exceeded max depth, giving up:" << url;
+            return;
+        }
+        validateStreamHostAsync(url, [this, url, depth](bool allowed) {
+            if (!allowed) {
+                qWarning() << "Refusing to fetch playlist: disallowed host" << url.host();
+                return;
+            }
+            if (!networkManager) {
+                networkManager = new QNetworkAccessManager(this);
+            }
+            QNetworkRequest request(url);
+#if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
+            request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::UserVerifiedRedirectPolicy);
+            request.setMaximumRedirectsAllowed(5);
+            request.setTransferTimeout(15000);
+#else
+            request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+#endif
+            request.setRawHeader("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:126.0) Gecko/20100101 Firefox/126.0");
+
+            QNetworkReply *reply = networkManager->get(request);
+#if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
+            connect(reply, &QNetworkReply::redirected, this, [this, reply](const QUrl &redirectUrl) {
+                validateStreamHostAsync(redirectUrl, [reply, redirectUrl](bool allowed) {
+                    if (allowed) reply->redirectAllowed();
+                    else {
+                        qWarning() << "Refusing to follow playlist redirect: disallowed host" << redirectUrl.host();
+                        reply->abort();
+                    }
+                });
+            });
+#endif
+            connect(reply, &QNetworkReply::finished, this, [this, reply, depth]() {
+                reply->deleteLater();
+                if (reply->error() != QNetworkReply::NoError) {
+                    qWarning() << "Failed to fetch playlist:" << reply->errorString();
+                    return;
+                }
+                QString entry = firstPlaylistEntry(reply->readAll());
+                if (entry.isEmpty()) {
+                    qWarning() << "No playable entries found in playlist";
+                    return;
+                }
+                if (isPlaylistPath(entry)) {
+                    resolvePlaylistUrl(QUrl::fromUserInput(entry), depth + 1);
+                } else {
+                    playUrl(entry);
+                }
+            });
+        });
+    }
+
+    // Local-file counterpart of resolvePlaylistUrl() — same reasoning, no network fetch needed.
+    void resolveLocalPlaylistFile(const QString &path, int depth) {
+        if (depth >= kMaxPlaylistResolveDepth) {
+            qWarning() << "Playlist resolution exceeded max depth, giving up:" << path;
+            return;
+        }
+        QFile f(path);
+        if (!f.open(QIODevice::ReadOnly)) return;
+        QString entry = firstPlaylistEntry(f.readAll());
+        f.close();
+        if (entry.isEmpty()) {
+            qWarning() << "No playable entries found in playlist" << path;
+            return;
+        }
+        if (isPlaylistPath(entry)) {
+            QUrl entryUrl = QUrl::fromUserInput(entry);
+            if (entryUrl.isLocalFile()) resolveLocalPlaylistFile(entryUrl.toLocalFile(), depth + 1);
+            else resolvePlaylistUrl(entryUrl, depth + 1);
+        } else {
+            playUrl(entry);
+        }
     }
 
     void playHttpStream(const QUrl &url) {
