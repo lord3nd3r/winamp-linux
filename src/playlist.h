@@ -17,6 +17,8 @@
 #include <QTimer>
 #include <QMediaMetaData>
 #include <QMediaPlayer>
+#include <QVector>
+#include <QPair>
 #include "constants.h"
 #include "translator.h"
 #include "bookmark_manager.h"
@@ -109,6 +111,18 @@ public:
         playlistFontSize = size;
         applyPlaylistColors();
     }
+    void setUseCustomFont(bool enabled) { useCustomPlaylistFont = enabled; applyPlaylistColors(); }
+    void setPlaylistFontFamily(const QString &family) { playlistFontFamily = family; applyPlaylistColors(); }
+    void setPlaylistFontSizeOnly(int size) { playlistFontSize = size; applyPlaylistColors(); }
+    void setRecycleBinEnabled(bool enabled) { playlistRecycleBinEnabled = enabled; }
+    void setShowTrackNumbers(bool show) { showTrackNumbersInPlaylist = show; rebuildListDisplay(); }
+    void restoreLastRemoved();
+    // Read-only accessors so Preferences can seed its dialog from real state.
+    bool customFontEnabled() const { return useCustomPlaylistFont; }
+    QString fontFamily() const { return playlistFontFamily; }
+    int fontSize() const { return playlistFontSize; }
+    bool recycleBinEnabled() const { return playlistRecycleBinEnabled; }
+    bool trackNumbersShown() const { return showTrackNumbersInPlaylist; }
     
     // Window shade mode (compact single-line view)
     void toggleShadeMode() {
@@ -217,7 +231,13 @@ private:
     // Font settings
     QString playlistFontFamily = "Courier New";
     int playlistFontSize = 8;
-    
+    bool useCustomPlaylistFont = false;
+
+    // Preferences-driven playlist behavior
+    bool playlistRecycleBinEnabled = false;
+    bool showTrackNumbersInPlaylist = true;
+    QVector<QPair<int, QString>> removedTracksStack; // capped in removeSelected()
+
     // Async duration probe queue (replaces blocking QEventLoop per-track)
     QMediaPlayer *durationProbePlayer = nullptr;
     QStringList durationProbeQueue;

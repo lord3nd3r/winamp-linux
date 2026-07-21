@@ -11,12 +11,13 @@
 #include <QFileInfo>
 #include <QUrl>
 #include <QDebug>
+#include <QRegularExpression>
 
-// Product version — keep aligned with GitHub release tags (currently v1.1.1).
+// Product version — keep aligned with GitHub release tags (currently v1.2.0).
 // CMake project(VERSION) and WINAMP_VERSION_FULL must match this label.
-inline constexpr const char *kWinampVersion = "1.1.1";
-inline constexpr const char *kWinampWindowTitle = "Winamp 1.1.1 for Linux";
-inline constexpr const char *kWinampAboutLine = "Winamp v1.1.1 for Linux";
+inline constexpr const char *kWinampVersion = "1.2.0";
+inline constexpr const char *kWinampWindowTitle = "Winamp 1.2.0 for Linux";
+inline constexpr const char *kWinampAboutLine = "Winamp v1.2.0 for Linux";
 
 // Shared Winamp-style QMenu stylesheet (used by all context menus)
 inline constexpr const char *kWinampMenuStyle =
@@ -149,36 +150,93 @@ static inline SkinPlaylistColors parsePleditTxt(const QString &skinPath) {
     return colors;
 }
 
+// Reject skin archives whose declared uncompressed footprint or entry count could fill the
+// disk on extraction (decompression-bomb guard). Reads the central directory via `unzip -l`
+// rather than extracting first, so a bomb never gets the chance to write anything.
+static inline bool skinArchivePassesSizeGuard(const QString &archivePath) {
+    static const qint64 kMaxUncompressedBytes = 128LL * 1024 * 1024; // 128 MB
+    static const int kMaxEntries = 512;
+
+    QProcess list;
+    list.start("unzip", QStringList() << "-l" << archivePath);
+    if (!list.waitForFinished(10000) || list.exitStatus() != QProcess::NormalExit || list.exitCode() != 0) {
+        qWarning() << "Failed to list skin archive contents, refusing to extract:" << archivePath;
+        return false;
+    }
+
+    // Footer line looks like: "   123456                     7 files"
+    static const QRegularExpression footerRe(QStringLiteral("^(\\d+)\\s+(?:\\S+\\s+)*?(\\d+)\\s+files?$"));
+    qint64 totalBytes = -1;
+    int entryCount = -1;
+    const QList<QByteArray> lines = list.readAllStandardOutput().split('\n');
+    for (int i = lines.size() - 1; i >= 0; --i) {
+        const QString line = QString::fromLatin1(lines[i]).trimmed();
+        if (line.isEmpty()) continue;
+        auto m = footerRe.match(line);
+        if (m.hasMatch()) {
+            totalBytes = m.captured(1).toLongLong();
+            entryCount = m.captured(2).toInt();
+            break;
+        }
+    }
+
+    if (totalBytes < 0 || entryCount < 0) {
+        qWarning() << "Could not determine skin archive footprint, refusing to extract:" << archivePath;
+        return false;
+    }
+    if (totalBytes > kMaxUncompressedBytes || entryCount > kMaxEntries) {
+        qWarning() << "Skin archive exceeds size/entry ceiling (" << totalBytes << "bytes,"
+                    << entryCount << "entries):" << archivePath;
+        return false;
+    }
+    return true;
+}
+
 // Extract a .wsz or .zip skin archive to a cache directory.
 // Returns the path to the extracted folder, or empty string on failure.
 static inline QString extractSkinArchive(const QString &archivePath) {
     QFileInfo fi(archivePath);
     if (!fi.exists()) return {};
-    
+
     // Cache dir: ~/.cache/winamp/skins/<basename_without_ext>
     QString cacheDirBase = QDir::homePath() + "/.cache/winamp/skins";
     QString skinName = fi.completeBaseName();
     QString extractDir = cacheDirBase + "/" + skinName;
     QDir().mkpath(extractDir);
-    
+
     // Check if already extracted (any .bmp file exists)
     QDir ed(extractDir);
     QStringList bmps = ed.entryList(QStringList() << "*.bmp" << "*.BMP", QDir::Files);
     if (!bmps.isEmpty()) {
         return extractDir;
     }
-    
+
+    if (!skinArchivePassesSizeGuard(archivePath)) {
+        return {};
+    }
+
     // Extract using unzip
     QProcess proc;
     proc.setWorkingDirectory(extractDir);
     proc.start("unzip", QStringList() << "-o" << "-j" << archivePath << "-d" << extractDir);
-    proc.waitForFinished(10000);
-    
-    if (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0) {
-        qWarning() << "Failed to extract skin archive:" << archivePath << proc.readAllStandardError();
+    bool finished = proc.waitForFinished(10000);
+
+    if (!finished) {
+        // Timed out (or never started): kill it and treat as failure rather than returning a
+        // partially-extracted directory as if it were a complete skin (previously fail-open).
+        proc.kill();
+        proc.waitForFinished(3000);
+        qWarning() << "Skin extraction timed out or failed to start, aborting:" << archivePath;
+        QDir(extractDir).removeRecursively();
         return {};
     }
-    
+
+    if (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0) {
+        qWarning() << "Failed to extract skin archive:" << archivePath << proc.readAllStandardError();
+        QDir(extractDir).removeRecursively();
+        return {};
+    }
+
     return extractDir;
 }
 
@@ -259,6 +317,11 @@ extern bool g_isModernSkin;
 class ModernSkinEngine;
 extern ModernSkinEngine *g_modernSkin;
 extern SkinPlaylistColors g_plColors;
+
+// Window-snapping preferences (Preferences > Setup > Snap windows together / distance).
+// Shared across equalizer.cpp and playlist.cpp, which each implement their own checkSnap().
+extern bool g_snapWindowsEnabled;
+extern int g_snapDistance;
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
 void fft512(const float *input, float *magnitudes);
