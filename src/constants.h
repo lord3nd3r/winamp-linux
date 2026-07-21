@@ -13,11 +13,11 @@
 #include <QDebug>
 #include <QRegularExpression>
 
-// Product version — keep aligned with GitHub release tags (currently v1.2.0).
+// Product version — keep aligned with GitHub release tags (currently v1.2.1).
 // CMake project(VERSION) and WINAMP_VERSION_FULL must match this label.
-inline constexpr const char *kWinampVersion = "1.2.0";
-inline constexpr const char *kWinampWindowTitle = "Winamp 1.2.0 for Linux";
-inline constexpr const char *kWinampAboutLine = "Winamp v1.2.0 for Linux";
+inline constexpr const char *kWinampVersion = "1.2.1";
+inline constexpr const char *kWinampWindowTitle = "Winamp 1.2.1 for Linux";
+inline constexpr const char *kWinampAboutLine = "Winamp v1.2.1 for Linux";
 
 // Shared Winamp-style QMenu stylesheet (used by all context menus)
 inline constexpr const char *kWinampMenuStyle =
@@ -73,6 +73,36 @@ static inline bool isRemoteMediaLocation(const QString &value) {
     if (!url.isValid() || url.isLocalFile() || url.scheme().isEmpty()) return false;
     const QString scheme = url.scheme().toLower();
     return scheme == "http" || scheme == "https" || scheme == "icy" || scheme == "ftp";
+}
+
+// Check if a path/URL points to a playlist reference (.pls/.m3u/.m3u8) rather than a
+// directly playable stream. Feeding a playlist's raw text straight to the decoder
+// (instead of parsing it for the real media URL) produces no audio: FFmpeg will
+// happily misdetect the text as some other container (e.g. subtitle/lyrics) and
+// "play" it with no audio stream at all.
+static inline bool isPlaylistPath(const QString &pathOrUrl) {
+    const QString lower = pathOrUrl.toLower();
+    return lower.endsWith(".pls") || lower.endsWith(".m3u") || lower.endsWith(".m3u8");
+}
+
+// Extracts the first playable remote/local entry from M3U/M3U8 or PLS playlist text.
+// M3U(8) lists bare paths/URLs per line (blank lines and '#' comments skipped).
+// PLS uses INI-style "FileN=<url>" entries; other keys (Title/Length/...) are ignored.
+static inline QString firstPlaylistEntry(const QByteArray &data) {
+    const QStringList lines = QString::fromUtf8(data).split('\n');
+    for (const QString &rawLine : lines) {
+        const QString line = rawLine.trimmed();
+        if (line.isEmpty() || line.startsWith('#')) continue;
+
+        QString candidate = line;
+        int eq = line.indexOf('=');
+        if (eq > 0 && line.left(eq).trimmed().startsWith("file", Qt::CaseInsensitive)) {
+            candidate = line.mid(eq + 1).trimmed(); // PLS "FileN=<url>"
+        }
+        if (isRemoteMediaLocation(candidate) || QFile::exists(candidate))
+            return candidate;
+    }
+    return QString();
 }
 
 // Display label for a playlist entry (filename for local, host/path for remote)
