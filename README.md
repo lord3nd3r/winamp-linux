@@ -192,6 +192,7 @@ Default install layout (CMake `install` rules):
 |------|---------|
 | `bin/winamp` | Executable |
 | `share/applications/winamp.desktop` | Desktop entry |
+| `share/icons/hicolor/*/apps/winamp.png` | Themed app icon (16-256px) |
 | `share/winamp/skins/` | Skins |
 | `share/winamp/resource/` | Classic resource bitmaps |
 | `share/winamp/lang/` | Language packs |
@@ -318,6 +319,7 @@ winamp-linux/
 ├── plugins/examples/         # Example Python plugins
 ├── skins/default/            # Default classic skin files
 ├── assets/                   # Classic resource bitmaps / icons
+├── icons/hicolor/            # Themed app icon (installed to share/icons)
 ├── lang/                     # Translation packs
 ├── docs/images/              # Extra documentation illustrations
 ├── winamp.png                # README hero (classic main + equalizer)
