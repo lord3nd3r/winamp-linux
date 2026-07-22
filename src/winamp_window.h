@@ -480,6 +480,19 @@ public slots:
     int getPluginVolume() const { return volume; }
     QString getPluginCurrentFile() const { return currentFile; }
 
+    // Read-only accessors for the headless TUI front-end (src/tui.*). These
+    // expose live data produced by processAudioBuffer() (the audio callback,
+    // which runs regardless of window visibility) plus the current display
+    // title, so the terminal UI can render without the GUI being shown.
+    const float *tuiSpectrum() const { return spectrumData; }   // 75 FFT bands, 0.0-1.0
+    const float *tuiVuMeters() const { return vuData; }         // L/R RMS, 0.0-1.0
+    QString tuiDisplayTitle() const {
+        return metaTitle.isEmpty() ? QFileInfo(currentFile).completeBaseName() : metaTitle;
+    }
+    int tuiBitrateKbps() const { return mediaBitrate; }         // kbps
+    int tuiSampleRateKHz() const { return mediaSampleRate; }    // kHz (e.g. 44)
+    int tuiChannels() const { return mediaChannels; }           // 1=mono, 2=stereo
+
     void onPlayLocation() {
         PlayLocationDialog dialog(this);
         if (dialog.exec() == QDialog::Accepted) {

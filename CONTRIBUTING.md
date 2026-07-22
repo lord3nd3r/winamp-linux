@@ -214,7 +214,7 @@ CI uses a smaller matrix (Ubuntu 22.04/24.04, Debian Bookworm, Fedora 41, openSU
 
 ### Version
 
-`project(Winamp VERSION 1.2.1 ...)` in `CMakeLists.txt` plus `WINAMP_VERSION_FULL` (`1.2.1`) and `kWinampVersion` in `src/constants.h` must stay aligned with **GitHub release tags**. Bump all three when cutting a release.
+`project(Winamp VERSION 1.2.2 ...)` in `CMakeLists.txt` plus `WINAMP_VERSION_FULL` (`1.2.2`) and `kWinampVersion` in `src/constants.h` must stay aligned with **GitHub release tags**. Bump all three when cutting a release.
 
 ---
 
