@@ -119,6 +119,10 @@ install(FILES winamp.desktop DESTINATION share/applications)
 install(DIRECTORY skins/ DESTINATION share/winamp/skins)
 install(DIRECTORY assets/ DESTINATION share/winamp/resource)
 install(DIRECTORY lang/ DESTINATION share/winamp/lang)
+# Themed hicolor icon (PNGs extracted from assets/WinampIcon.ico) so menu/panel
+# implementations that only resolve icon *names* (not arbitrary absolute
+# paths embedded in a .desktop's Icon= key) can still find the app icon.
+install(DIRECTORY icons/ DESTINATION share/icons)
 
 # Testing
 enable_testing()
