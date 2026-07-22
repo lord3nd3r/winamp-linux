@@ -2,7 +2,7 @@
 
 **A native classic Winamp 2.x–style media player for modern Linux desktops.**
 
-**Current release: [v1.2.1](https://github.com/lord3nd3r/winamp-linux/releases/tag/v1.2.1)**
+**Current release: [v1.2.2](https://github.com/lord3nd3r/winamp-linux/releases/tag/v1.2.2)**
 
 Built in **C++17** with **Qt 6** (Qt 5 fallback), faithful classic skins, a real 10-band EQ, gapless dual-player audio, out-of-process Python plugins, and desktop integration via MPRIS2.
 
@@ -15,7 +15,7 @@ Built in **C++17** with **Qt 6** (Qt 5 fallback), faithful classic skins, a real
   <img src="https://img.shields.io/badge/C%2B%2B-17-00599C?style=flat-square&logo=cplusplus&logoColor=white" alt="C++17">
   <img src="https://img.shields.io/badge/Qt-6%20%2F%205-41CD52?style=flat-square&logo=qt&logoColor=white" alt="Qt 6/5">
   <img src="https://img.shields.io/badge/platform-Linux-FCC624?style=flat-square&logo=linux&logoColor=black" alt="Linux">
-  <img src="https://img.shields.io/badge/version-1.2.1-00FF00?style=flat-square" alt="Version 1.2.1">
+  <img src="https://img.shields.io/badge/version-1.2.2-00FF00?style=flat-square" alt="Version 1.2.2">
 </p>
 
 <p align="center">
@@ -206,8 +206,8 @@ Default install layout (CMake `install` rules):
 
 Release assets are named per distro, for example:
 
-- `winamp-1.2.1-ubuntu-24.04.deb`
-- `winamp-1.2.1-fedora-41.rpm`
+- `winamp-1.2.2-ubuntu-24.04.deb`
+- `winamp-1.2.2-fedora-41.rpm`
 - matching `.tar.gz` for each matrix entry
 
 **Not packaged in CI:** Arch Linux (repo only ships **projectM 4.x**; this tree still uses the classic 3.x `libprojectM` C++ API). Build from source on Arch once a compatible `libprojectM` is available, or vendor the 3.x library.
@@ -244,6 +244,7 @@ winamp [options] [files-or-directories...]
 | `-play` / `--play` | Prefer play after enqueue (default for files) |
 | `-pause` / `--pause` | Pause if currently playing |
 | `-stop` / `--stop` | Stop playback |
+| `--tui` / `--cli` | Run in the terminal instead of the GUI (see below) |
 
 Examples:
 
@@ -252,6 +253,42 @@ Examples:
 ./build-qt6/winamp -enqueue ~/Music/incoming/
 ./build-qt6/winamp "https://example.com/stream.mp3"
 ```
+
+---
+
+## Terminal mode (`--tui`)
+
+A dependency-free terminal front-end that renders a classic-Winamp-styled UI
+in the console — the seven-segment LCD time readout, a color spectrum analyzer,
+kbps/kHz/stereo readout, and transport/volume/seek bars. It drives the same
+playback engine as the GUI (gapless, streaming, EQ), so anything that plays in
+the window plays here. No X/Wayland display is required, so it works over SSH.
+
+```bash
+winamp --tui ~/Music/album/*.flac      # play a set of files in the terminal
+winamp --cli ~/Music/                   # load a folder
+winamp --tui "https://example.com/stream.mp3"
+```
+
+**Keyboard**
+
+| Key | Action | Key | Action |
+|-----|--------|-----|--------|
+| `z` | previous track | `space` | play / pause toggle |
+| `x` | play / resume | `c` | pause toggle |
+| `v` | stop | `b` | next track |
+| `←` / `→` | seek −5s / +5s | `+` / `−` | volume down / up |
+| `↑` / `↓` | volume up / down | `q` (or `Ctrl-C`) | quit |
+
+**Mouse** (any terminal with xterm mouse support)
+
+- Click the transport glyphs — `|◄` prev · `▶` play · `ǁ` pause · `■` stop · `►|` next
+- Click or **drag the POS bar** to seek through the track
+- Click or drag the VOL bar to set volume; the scroll wheel adjusts volume anywhere
+
+Backend/plugin diagnostics are redirected to `~/.cache/winamp/winamp-tui.log`
+so they don't disturb the rendered frame. The GUI is unaffected — run `winamp`
+with no `--tui`/`--cli` flag for the classic window.
 
 ---
 

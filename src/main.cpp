@@ -1,6 +1,7 @@
 #include <QApplication>
 #include <QWidget>
 #include <QPainter>
+#include <cstdio>  // freopen/stderr for --tui log redirection
 #include <QMediaPlayer>
 #include <QMediaMetaData>
 #include <QAudioOutput>
@@ -314,8 +315,33 @@ void Mpris2PlayerAdaptor::OpenUri(const QString &uri) {
 #endif
 
 #include "python_plugin.h"
+#include "tui.h"
 
 int main(int argc, char *argv[]) {
+    // Terminal (CLI/TUI) mode: the QPA platform must be selected before the
+    // QApplication is constructed, so scan argv in a tiny pre-pass here. Under
+    // the offscreen platform the whole engine runs headless (no display server
+    // needed); the WinampTui front-end becomes the entire user interface.
+    bool tuiMode = false;
+    for (int i = 1; i < argc; i++) {
+        QString a = QString::fromLocal8Bit(argv[i]);
+        if (a == "--tui" || a == "--cli") { tuiMode = true; break; }
+    }
+    if (tuiMode && qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
+        qputenv("QT_QPA_PLATFORM", "offscreen");
+    }
+    if (tuiMode) {
+        // The terminal is the UI in --tui mode, so keep it clean: send the
+        // multimedia backend / Qt / plugin diagnostics (all stderr) to a log
+        // file instead of letting them scribble over the rendered frame.
+        QString logDir = QDir::homePath() + "/.cache/winamp";
+        QDir().mkpath(logDir);
+        if (!freopen((logDir + "/winamp-tui.log").toLocal8Bit().constData(), "w", stderr)) {
+            // Non-fatal: fall back to a quiet Qt logging filter at least.
+            qputenv("QT_LOGGING_RULES", "*=false");
+        }
+    }
+
     QApplication app(argc, argv);
     app.setApplicationName("Winamp");
     app.setApplicationVersion(QString::fromUtf8(kWinampVersion));
@@ -422,7 +448,7 @@ int main(int argc, char *argv[]) {
         }
     }
     bool showSplashScreen = settings.value("showSplashScreen", true).toBool();
-    if (showSplashScreen && !splashPix.isNull()) {
+    if (showSplashScreen && !splashPix.isNull() && !tuiMode) {
         splash = new QSplashScreen(splashPix);
         splash->show();
         app.processEvents();
@@ -501,6 +527,16 @@ int main(int argc, char *argv[]) {
             splash->deleteLater();
         });
     }
+
+    // Terminal mode: drive the hidden engine from the terminal instead of
+    // showing the GUI window. WinampTui owns the raw-terminal lifetime and
+    // restores it on destruction (normal exit) or on quit ('q'/Ctrl-C).
+    if (tuiMode) {
+        WinampTui tui(&w);
+        tui.start();
+        return app.exec();
+    }
+
     w.show();
     return app.exec();
 }
