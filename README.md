@@ -107,8 +107,9 @@ sudo apt-get install -y \
   gstreamer1.0-libav
   
 ```
-other runtime dependecies 
-it can also wirk with ffmpeg without gstreamer plugins with following dependecies from tar.gz
+other runtime dependecies
+
+it can also work with ffmpeg backend without gstreamer plugins with following dependecies from tar.gz
 ```bash
 sudo apt install -y libprojectm3 libqt6multimediawidgets6 libqt6openglwidgets6 libtag2
 ```
