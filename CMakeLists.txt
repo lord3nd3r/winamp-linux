@@ -109,6 +109,14 @@ if(QT_PACKAGE STREQUAL "Qt6")
     )
 endif()
 
+# Optional: libavutil lets us quiet FFmpeg's own stderr chatter (Qt's FFmpeg backend
+# uses the same system library). Without it that output just stays.
+pkg_check_modules(AVUTIL IMPORTED_TARGET libavutil)
+if(AVUTIL_FOUND)
+    target_link_libraries(winamp PkgConfig::AVUTIL)
+    target_compile_definitions(winamp PRIVATE HAVE_AVUTIL)
+endif()
+
 if(QT_PACKAGE STREQUAL "Qt6" AND ${QT_DBUS_FOUND_VAR})
     target_link_libraries(winamp
         ${QT_PACKAGE}::DBus

@@ -138,8 +138,7 @@ void PythonPluginManager::handleRequest(const QJsonObject &req)
         if (QMediaPlayer *p = winamp->getPlayer())
             p->stop();
     } else if (method == QLatin1String("next_track")) {
-        if (PlaylistWindow *pl = winamp->getPlaylistWindow())
-            pl->nextTrack();
+        winamp->playNext();
     } else if (method == QLatin1String("prev_track")) {
         if (PlaylistWindow *pl = winamp->getPlaylistWindow())
             pl->prevTrack();
