@@ -37,7 +37,8 @@ protected:
 #else
     QMimeData* mimeData(const QList<QListWidgetItem*> items) const {
 #endif
-        QMimeData *data = new QMimeData();
+        // Keep QListWidget's own format so internal reordering works; add file URLs for drag-out.
+        QMimeData *data = QListWidget::mimeData(items);
         QList<QUrl> urls;
         
         for (const QListWidgetItem *item : items) {
