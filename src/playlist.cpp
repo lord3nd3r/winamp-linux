@@ -30,7 +30,9 @@ PlaylistWindow::PlaylistWindow(WinampWindow *parent) : QWidget(nullptr), mainWin
     listWidget->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     listWidget->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     
-    // Enable drag and drop for files
+    // Enable drag and drop for files. External file drops over the list are rejected by
+    // QListWidget (not its item format) and propagate up to this window's dropEvent.
+    setAcceptDrops(true);
     listWidget->setAcceptDrops(true);
     listWidget->setDragEnabled(true);
     listWidget->setDropIndicatorShown(true);
@@ -599,6 +601,29 @@ void PlaylistWindow::paintEvent(QPaintEvent *event) {
         return;
     }
     
+    // ---- Shade mode: 14px bar from pledit.bmp — left cap (72,42) 25x14, filler (72,57),
+    // right cap with grip/unshade/close (99,42) active or (99,57) inactive, 50x14.
+    // Shows the current track and its length in text.bmp glyphs.
+    if (shadeMode) {
+        painter.drawPixmap(0, 0, bmp.pledit, 72, 42, 25, 14);
+        for (int fx = 25; fx < w - 50; fx += 25)
+            painter.drawPixmap(fx, 0, bmp.pledit, 72, 57, qMin(25, w - 50 - fx), 14);
+        painter.drawPixmap(w - 50, 0, bmp.pledit, 99, isActiveWindow() ? 42 : 57, 50, 14);
+        int idx = currentTrackIndex();
+        if (idx >= 0 && idx < tracks.size()) {
+            qint64 ms = idx < trackDurations.size() ? trackDurations[idx] : 0;
+            QString time = ms > 0 ? QString("%1:%2").arg(ms / 60000).arg(ms / 1000 % 60, 2, 10, QChar('0'))
+                                  : QString();
+            int timeX = w - 30 - time.length() * 5;   // right cap's first 20px are plain
+            painter.save();
+            painter.setClipRect(5, 0, timeX - 10, 14);
+            drawText(painter, listWidget->item(idx)->text().toUpper(), 5, 4);
+            painter.restore();
+            drawText(painter, time, timeX, 4);
+        }
+        return;
+    }
+
     // === Compose playlist skin from Pledit.bmp sprite pieces ===
     
     // --- Titlebar (20px tall) ---
@@ -854,6 +879,22 @@ void PlaylistWindow::mousePressEvent(QMouseEvent *event) {
     int y = event->pos().y();
     int h = height();
 
+    // Shade bar: unshade (w-20) and close (w-11) buttons, drag anywhere else
+    if (shadeMode) {
+        if (event->button() == Qt::RightButton) {
+            showContextMenu(waMouseGlobalPos(event));
+        } else if (x >= width() - 20 && x < width() - 11) {
+            toggleShadeMode();
+        } else if (x >= width() - 11 && x < width() - 2) {
+            hide();
+        } else {
+            isDragging = !waSystemMove(this);
+            dragPosition = waMouseGlobalPos(event) - frameGeometry().topLeft();
+        }
+        event->accept();
+        return;
+    }
+
     // Right-click on playlist items shows context menu
     if (event->button() == Qt::RightButton) {
         // Bottom buttons still respond to right click (matching drawn button positions)
@@ -905,6 +946,12 @@ void PlaylistWindow::mousePressEvent(QMouseEvent *event) {
             event->accept();
             return;
         }
+        // Windowshade button: (w-20, 3) 9x9
+        if (x >= width() - 20 && x < width() - 11 && y >= 3 && y < 12) {
+            toggleShadeMode();
+            event->accept();
+            return;
+        }
         
         // Scrollbar drag: x=[width-15, width-7], y=[20, height-38]
         int scrollX = width() - 15;
@@ -941,7 +988,7 @@ void PlaylistWindow::mousePressEvent(QMouseEvent *event) {
                 return;
             }
         }
-        isDragging = true;
+        isDragging = !waSystemMove(this);
         dragPosition = waMouseGlobalPos(event) - frameGeometry().topLeft();
         event->accept();
     }
@@ -1026,8 +1073,8 @@ void PlaylistWindow::mouseReleaseEvent(QMouseEvent *event) {
 }
 
 void PlaylistWindow::mouseDoubleClickEvent(QMouseEvent *event) {
-    // Double-click on titlebar toggles shade mode
-    if (event->pos().y() < 20) {
+    // Double-click on titlebar (not its shade/close buttons) toggles shade mode
+    if (event->pos().y() < 20 && event->pos().x() < width() - 20) {
         toggleShadeMode();
         return;
     }
@@ -1035,7 +1082,8 @@ void PlaylistWindow::mouseDoubleClickEvent(QMouseEvent *event) {
 }
 
 void PlaylistWindow::dragEnterEvent(QDragEnterEvent *event) {
-    if (event->mimeData()->hasUrls())
+    // Ignore drags out of our own list (those carry file URLs too) so reordering can't duplicate.
+    if (event->mimeData()->hasUrls() && event->source() != listWidget)
         event->acceptProposedAction();
 }
 
@@ -1059,7 +1107,8 @@ void PlaylistWindow::saveSettings(QSettings &s) {
 void PlaylistWindow::loadSettings(QSettings &s) {
     s.beginGroup("Playlist");
     if (s.contains("x")) {
-        move(s.value("x").toInt(), s.value("y").toInt());
+        QPoint p(s.value("x").toInt(), s.value("y").toInt());
+            if (QGuiApplication::screenAt(p)) move(p);  // skip off-screen (e.g. saved under Wayland)
     }
     if (s.contains("width") && s.contains("height")) {
         int w = qMax(minimumWidth(), s.value("width").toInt());

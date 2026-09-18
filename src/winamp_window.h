@@ -63,7 +63,7 @@ public:
                  repeatTrack(false), stopAfterCurrent(false),
                  isDraggingVolume(false), isDraggingPos(false), isDraggingBalance(false), 
                  scrollOffset(0), balance(0),
-                 doubleSize(false), shadeMode(false), alwaysOnTop(false), clutterbarOpen(false),
+                 doubleSize(false), shadeMode(false), alwaysOnTop(false),
                  visMode(1) {
         setFixedSize(275, 116);
         setWindowTitle(QString::fromUtf8(kWinampWindowTitle));
@@ -230,24 +230,7 @@ public:
                 }
                 
                 // Fallback to normal track advancing (for shuffle or when preload failed)
-                int curIdx = playlistWindow->currentTrackIndex();
-                int count = playlistWindow->trackCount();
-                if (count > 0) {
-                    int nextIdx;
-                    if (shuffleOn) {
-                        nextIdx = QRandomGenerator::global()->bounded(count);
-                    } else {
-                        nextIdx = curIdx + 1;
-                    }
-                    if (nextIdx < count) {
-                        playlistWindow->setCurrentTrackIndex(nextIdx);
-                        playTrack(playlistWindow->trackAt(nextIdx));
-                    } else if (repeatOn) {
-                        // Repeat all: wrap to beginning
-                        playlistWindow->setCurrentTrackIndex(0);
-                        playTrack(playlistWindow->trackAt(0));
-                    }
-                }
+                playNext();
             }
         });
         
@@ -475,6 +458,62 @@ public slots:
     QMediaPlayer *getPlayer() { return player; }
     PlaylistWindow *getPlaylistWindow() { return playlistWindow; }
 
+    // Seek bar thumb position: follows the mouse while dragging, else the player.
+    qint64 shownPosition() const { return seekDragPos >= 0 ? seekDragPos : player->position(); }
+    void commitSeekDrag() {
+        if (seekDragPos >= 0) player->setPosition(seekDragPos);
+        seekDragPos = -1;
+    }
+    // Classic posbar: 248px track, 29px thumb (219px travel); shade bar: 17px track at
+    // x=226, 3px thumb (14px travel). Either way, grab the thumb by its centre.
+    qint64 classicSeekPos(int x) const {
+        if (shadeMode) return (qint64)qBound(0, x - 227, 14) * player->duration() / 14;
+        return (qint64)qBound(0, x - 16 - 14, 219) * player->duration() / 219;
+    }
+
+    // Balance slider: 38px track at x=177, 14px thumb (24px travel), grabbed by its centre.
+    // Snaps to centre near the middle so it's easy to get back to 0, like Winamp.
+    static int balanceFromX(int x) {
+        int b = qBound(0, x - 177 - 7, 24) * 254 / 24 - 127;
+        return qAbs(b) < 16 ? 0 : b;
+    }
+    // Text shown in the song-title area while dragging volume/balance (Winamp style).
+    QString sliderReadout() const {
+        if (isDraggingVolume) return QString("VOLUME: %1%").arg(volume * 100 / 255);
+        if (isDraggingBalance) {
+            if (balance == 0) return "BALANCE: CENTER";
+            return QString("BALANCE: %1% %2").arg(qAbs(balance) * 100 / 127).arg(balance < 0 ? "LEFT" : "RIGHT");
+        }
+        return QString();
+    }
+
+    // Play button: resume/continue the current song, loading it first if nothing
+    // is queued yet (e.g. the last-played song restored from settings).
+    void playOrResume() {
+        if (currentFile.isEmpty()) openFile();
+        else if (waSource(player).isEmpty()) playTrack(currentFile);
+        else player->play();
+    }
+
+    // Advance to the next track, honouring shuffle and repeat-all. Shared by the
+    // Next button, B key, tray, MPRIS, plugins, TUI and end-of-track.
+    void playNext() {
+        int count = playlistWindow->trackCount();
+        if (count == 0) return;
+        int cur = playlistWindow->currentTrackIndex();
+        int next = cur + 1;
+        if (shuffleOn && count > 1) {
+            next = QRandomGenerator::global()->bounded(count - 1);  // any track but the current one
+            if (next >= cur) next++;
+        }
+        if (next >= count) {
+            if (!repeatOn) return;
+            next = 0;
+        }
+        playlistWindow->setCurrentTrackIndex(next);
+        playTrack(playlistWindow->trackAt(next));
+    }
+
     // Public accessors for Python plugin API
     void setPluginVolume(int v) { volume = qBound(0, v, 255); applyVolume(); update(); }
     int getPluginVolume() const { return volume; }
@@ -514,27 +553,22 @@ public slots:
         show(); // Re-show to apply the flag change
     }
     
+    // Classic window size: 275x116 (275x14 shaded), scaled 2x in double-size mode.
+    void applyWindowSize() {
+        int k = doubleSize ? 2 : 1;
+        setFixedSize(275 * k, (shadeMode ? 14 : 116) * k);
+    }
+
     void onToggleDoubleSize() {
         doubleSize = !doubleSize;
-        if (doubleSize) {
-            setFixedSize(550, 232);
-        } else {
-            setFixedSize(275, 116);
-        }
+        applyWindowSize();
         reflowDockedWindows();
         update();
     }
     
     void onToggleShadeMode() {
         shadeMode = !shadeMode;
-        if (shadeMode) {
-            setFixedSize(275, 14);
-        } else {
-            if (doubleSize)
-                setFixedSize(550, 232);
-            else
-                setFixedSize(275, 116);
-        }
+        applyWindowSize();
         reflowDockedWindows();
         update();
     }
@@ -581,12 +615,7 @@ public slots:
             }
 
             // Restore classic fixed size so the UI stays in a known-good layout.
-            if (doubleSize)
-                setFixedSize(550, 232);
-            else if (shadeMode)
-                setFixedSize(275, 14);
-            else
-                setFixedSize(275, 116);
+            applyWindowSize();
         } else {
             // Classic skin
             isModernSkin = false;
@@ -604,12 +633,7 @@ public slots:
             }
             
             // Restore classic fixed size
-            if (doubleSize)
-                setFixedSize(550, 232);
-            else if (shadeMode)
-                setFixedSize(275, 14);
-            else
-                setFixedSize(275, 116);
+            applyWindowSize();
         }
         
         // Force all windows to repaint
@@ -854,9 +878,9 @@ public:
         // ---- Timer (x=20, y=16 within display) ----
         qint64 displayMs;
         if (showRemainingTime && player->duration() > 0)
-            displayMs = player->duration() - player->position();
+            displayMs = player->duration() - shownPosition();
         else
-            displayMs = player->position();
+            displayMs = shownPosition();
         
         int totalSec = displayMs / 1000;
         int mins = totalSec / 60;
@@ -977,7 +1001,7 @@ public:
         
         // Seek thumb position
         if (player->duration() > 0) {
-            double seekFrac = (double)player->position() / player->duration();
+            double seekFrac = (double)shownPosition() / player->duration();
             QPixmap seekThumb = modernSkin.getBitmap(modernDraggingSeek ? "player.button.seek.pressed" :
                 (modernSeekRect().contains(mapFromGlobal(QCursor::pos())) ? "player.button.seek.hover" : "player.button.seek"));
             if (!seekThumb.isNull()) {
@@ -1597,7 +1621,12 @@ protected:
         }
 
         auto &bmp = WinampBitmaps::instance();
-        
+
+        // ---- Double-size: scale everything 2x ----
+        if (doubleSize) {
+            p.scale(2.0, 2.0);
+        }
+
         // ---- Shade mode: compact 275x14 titlebar-only view ----
         if (shadeMode) {
             // Draw shade background from titlebar.bmp (shade bar)
@@ -1608,21 +1637,8 @@ protected:
             } else {
                 p.fillRect(0, 0, 275, 14, QColor(66, 66, 99));
             }
-            // Draw scrolling title text in shade mode
-            QString title = metaTitle.isEmpty() ? QFileInfo(currentFile).completeBaseName() : metaTitle;
-            if (!title.isEmpty()) {
-                p.setPen(QColor(0, 255, 0));
-                p.setFont(QFont("Small Fonts", 7));
-                p.setClipRect(30, 2, 200, 11);
-                p.drawText(30 - (scrollOffset % (title.length() * 6 + 200)), 10, title + "  ***  " + title);
-                p.setClipping(false);
-            }
+            drawShadeInfo(p);
             return;
-        }
-        
-        // ---- Double-size: scale everything 2x ----
-        if (doubleSize) {
-            p.scale(2.0, 2.0);
         }
 
         // Main background
@@ -1646,35 +1662,42 @@ protected:
         // Matching Windows draw.cpp draw_clutterbar() function
         drawClutterbar(p);
 
-        // Play/pause status indicator at (26,28), each 9x9
+        // Play/pause status indicator. playpaus.bmp: play 0, pause 9, stop 18 (9x9 each),
+        // then 3px status lights: 36 = green (playing), 39 = red (buffering).
+        // Playing draws the light at (24,28) and the arrow (minus its first column) at 27.
         if (!bmp.playpaus.isNull()) {
-            int srcX = 27; // stopped/not playing
-            if (player->playbackState() == QMediaPlayer::PlayingState) srcX = 0;
-            else if (player->playbackState() == QMediaPlayer::PausedState) srcX = 9;
-            p.drawPixmap(26, 28, bmp.playpaus, srcX, 0, 9, 9);
+            auto state = player->playbackState();
+            if (state == QMediaPlayer::PlayingState) {
+                auto ms = player->mediaStatus();
+                bool buffering = ms == QMediaPlayer::LoadingMedia || ms == QMediaPlayer::BufferingMedia
+                              || ms == QMediaPlayer::StalledMedia;
+                p.drawPixmap(24, 28, bmp.playpaus, buffering ? 39 : 36, 0, 3, 9);
+                p.drawPixmap(27, 28, bmp.playpaus, 1, 0, 8, 9);
+            } else {
+                p.drawPixmap(26, 28, bmp.playpaus, state == QMediaPlayer::PausedState ? 9 : 18, 0, 9, 9);
+            }
         }
 
         // Time display — digits are 9x13 in numbers.bmp
-        // Positions: mins_tens(36,26), mins_ones(48,26), secs_tens(78,26), secs_ones(90,26)
-        // The colon is baked into MAIN.BMP background — no colon glyph in numbers.bmp
-        // BUT if nums_ex.bmp is present, use it and draw animated colon (matches Windows draw.cpp)
+        // Positions: mins_tens(48,26), mins_ones(60,26), secs_tens(78,26), secs_ones(90,26),
+        // minus sign at 36. The colon is baked into MAIN.BMP (x=72); neither numbers.bmp
+        // nor nums_ex.bmp (digits, blank, minus) has a colon glyph.
         // Click the time area to toggle elapsed / remaining
         
         // Prefer nums_ex.bmp if available (extended numbers with animated colon)
         const QPixmap &numberBitmap = !bmp.numbers_ex.isNull() ? bmp.numbers_ex : bmp.numbers;
-        bool hasExtended = !bmp.numbers_ex.isNull();
         
         if (!numberBitmap.isNull()) {
             qint64 displayMs;
             if (showRemainingTime && player->duration() > 0) {
-                displayMs = player->duration() - player->position();
-                // Draw minus indicator from numbers.bmp 12th glyph, or fallback dash
+                displayMs = player->duration() - shownPosition();
+                // Minus: nums_ex.bmp's 12th glyph, else the middle bar of numbers.bmp's "2"
                 if (numberBitmap.width() >= 108)
-                    p.drawPixmap(27, 26, numberBitmap, 99, 0, 9, 13);
+                    p.drawPixmap(36, 26, numberBitmap, 99, 0, 9, 13);
                 else
-                    p.fillRect(29, 32, 5, 1, QColor(0, 198, 0));
+                    p.drawPixmap(38, 32, numberBitmap, 20, 6, 5, 1);
             } else {
-                displayMs = player->position();
+                displayMs = shownPosition();
             }
             int sec = displayMs / 1000;
             int mins = sec / 60;
@@ -1683,23 +1706,25 @@ protected:
                 int srcX = (d >= 0 && d <= 9) ? d * 9 : 90; // 90 = blank
                 p.drawPixmap(dx, 26, numberBitmap, srcX, 0, 9, 13);
             };
-            
-            // Draw animated colon if nums_ex.bmp is present (matches Windows ex==1 path)
-            if (hasExtended) {
-                // nums_ex.bmp has colon at x=90 (Windows draw_main.cpp line 240)
-                p.drawPixmap(38, 26, numberBitmap, 90, 0, 9, 13);
-            }
-            // else: colon is baked into MAIN.BMP at position ~68, so don't draw it
-            
-            drawDigit(36, (mins / 10) % 10);
-            drawDigit(48, mins % 10);
+
+            drawDigit(48, (mins / 10) % 10);
+            drawDigit(60, mins % 10);
             drawDigit(78, sec / 10);
             drawDigit(90, sec % 10);
         }
 
         // Scrolling song title in text area (111,27) ~154x6
         // Uses metadata (Artist - Title) when available, falls back to filename
-        if (!bmp.text.isNull() && !currentFile.isEmpty()) {
+        QString readout = sliderReadout();
+        if (!bmp.text.isNull() && !readout.isEmpty()) {
+            int textX = 111;
+            for (QChar ch : readout) {
+                QPoint cp = ::getTextCharPos(ch);
+                if (cp.x() >= 0)
+                    p.drawPixmap(textX, 27, bmp.text, cp.x(), cp.y(), 5, 6);
+                textX += 5;
+            }
+        } else if (!bmp.text.isNull() && !currentFile.isEmpty()) {
             QString title;
             if (!metaTitle.isEmpty())
                 title = metaTitle.toUpper();
@@ -1744,14 +1769,14 @@ protected:
             }
         }
 
-        // Mono/Stereo indicator at (212,41) — each state 29x12
+        // Mono at (212,41) 27x12, stereo at (239,41) 29x12
         if (!bmp.monoster.isNull()) {
-            // stereo on: (0,0), stereo off: (0,12), mono on: (29,0), mono off: (29,12)
+            // monoster.bmp: stereo on (0,0) / off (0,12), mono on (29,0) / off (29,12)
             bool isStereo = (mediaChannels >= 2);
             bool isMono = (mediaChannels == 1);
             bool playing = (player->playbackState() != QMediaPlayer::StoppedState);
-            p.drawPixmap(212, 41, bmp.monoster, 0, (playing && isStereo) ? 0 : 12, 29, 12);
-            p.drawPixmap(239, 41, bmp.monoster, 29, (playing && isMono) ? 0 : 12, 27, 12);
+            p.drawPixmap(212, 41, bmp.monoster, 29, (playing && isMono) ? 0 : 12, 27, 12);
+            p.drawPixmap(239, 41, bmp.monoster, 0, (playing && isStereo) ? 0 : 12, 29, 12);
         }
 
         // Transport buttons from CBUTTONS.BMP — each 23x18, pressed row at y+18
@@ -1801,7 +1826,7 @@ protected:
         if (!bmp.posbar.isNull()) {
             p.drawPixmap(16, 72, bmp.posbar, 0, 0, 248, 10);
             if (player->duration() > 0) {
-                int thumbX = 16 + (int)((player->position() * 219LL) / player->duration());
+                int thumbX = 16 + qBound(0, (int)(shownPosition() * 219 / player->duration()), 219);
                 int thumbSrcX = isDraggingPos ? 278 : 248;
                 p.drawPixmap(thumbX, 72, bmp.posbar, thumbSrcX, 0, 29, 10);
             }
@@ -1809,8 +1834,8 @@ protected:
 
         // Shuffle/Repeat/EQ/PL from SHUFREP.BMP
         if (!bmp.shufrep.isNull()) {
-            p.drawPixmap(164, 89, bmp.shufrep, 28, shuffleOn ? 15 : 0, 47, 15);
-            p.drawPixmap(210, 89, bmp.shufrep, 0, repeatOn ? 15 : 0, 28, 15);
+            p.drawPixmap(164, 89, bmp.shufrep, 28, shuffleOn ? 30 : 0, 47, 15);  // rows: off, off-pressed, on, on-pressed
+            p.drawPixmap(210, 89, bmp.shufrep, 0, repeatOn ? 30 : 0, 28, 15);
             p.drawPixmap(219, 58, bmp.shufrep, 0, eqBtnOn ? 73 : 61, 23, 12);
             p.drawPixmap(242, 58, bmp.shufrep, 23, plBtnOn ? 73 : 61, 23, 12);
         }
@@ -1826,53 +1851,63 @@ protected:
         }
     }
 
-    // Clutterbar — Options bar on left side (O/A/I/D/V buttons)
-    // Matches Windows draw.cpp draw_clutterbar() at line 550
+    // Clutterbar — O/A/I/D/V strip at (10,22), 8x43, from titlebar.bmp (304,0).
+    // Lit letters live below it; A and D stay lit while always-on-top / double size are on.
     void drawClutterbar(QPainter &p) {
         auto &bmp = WinampBitmaps::instance();
         if (bmp.titlebar.isNull()) return;
-        
-        // Clutterbar region: x=10, y=22, width=8, height=43
-        // Source sprite at titlebar.bmp x=304
-        int enable = clutterbarOpen ? 1 : 0;
-        int x, y;
-        
-        if (!enable) {
-            x = 8;  // Closed state
-            y = 0;
-        } else {
-            x = 0;  // Open state
-            y = 0;
-        }
-        
-        // Draw main clutterbar strip (8x43 pixels)
-        p.drawPixmap(10, 22, bmp.titlebar, 304 + x, y, 8, 43);
-        
-        // Draw Always On Top button state (at button position y=22+11=33)
-        if (enable) {
-            if (alwaysOnTop) {
-                // AOT enabled: draw pressed sprite
-                p.drawPixmap(11, 22 + 11, bmp.titlebar, 312 + 1, 44 + 11, 7, 8);
-            } else {
-                // AOT disabled: draw normal sprite
-                p.drawPixmap(11, 22 + 11, bmp.titlebar, 304 + 1, 11, 7, 8);
-            }
-            
-            // Draw Double Size button state (at button position y=22+27=49)
-            if (doubleSize) {
-                // Double size enabled: draw pressed sprite
-                p.drawPixmap(11, 22 + 27, bmp.titlebar, 328 + 1, 44 + 27, 7, 6);
-            } else {
-                // Double size disabled: draw normal sprite
-                p.drawPixmap(11, 22 + 27, bmp.titlebar, 304 + 1, 27, 7, 6);
+        p.drawPixmap(10, 22, bmp.titlebar, 304, 0, 8, 43);
+        if (alwaysOnTop) p.drawPixmap(10, 33, bmp.titlebar, 312, 55, 8, 7);
+        if (doubleSize)  p.drawPixmap(10, 47, bmp.titlebar, 328, 69, 8, 8);
+    }
+
+    // Shade bar contents (layout as in Winamp 2 / webamp): mini spectrum (79,5 38x5),
+    // time in text.bmp glyphs (127..156,4) and position slider (226,4 17x7).
+    void drawShadeInfo(QPainter &p) {
+        auto &bmp = WinampBitmaps::instance();
+        if (player->playbackState() == QMediaPlayer::StoppedState) return;
+
+        if (visMode != 0) {
+            for (int i = 0; i < 19; i++) {                   // 19 bars, 1px wide + 1px gap
+                int h = qBound(0, (int)(spectrumData[i] * 5.0f), 5);
+                if (h > 0) p.fillRect(79 + i * 2, 10 - h, 1, h, visColors[17 - h * 3]);
             }
         }
+
+        if (!bmp.text.isNull()) {
+            qint64 ms = showRemainingTime ? player->duration() - shownPosition() : shownPosition();
+            int secs = (int)(qMax<qint64>(0, ms) / 1000);
+            QString t = QString("%1%2%3")
+                .arg(showRemainingTime ? '-' : ' ')
+                .arg((secs / 60) % 100, 2, 10, QChar('0'))
+                .arg(secs % 60, 2, 10, QChar('0'));
+            static const int xs[5] = {127, 133, 138, 147, 152};  // 2px either side of the baked-in colon at x=144
+            for (int i = 0; i < 5; i++) {
+                QPoint cp = ::getTextCharPos(t[i]);
+                if (cp.x() >= 0) p.drawPixmap(xs[i], 4, bmp.text, cp.x(), cp.y(), 5, 6);
+            }
+        }
+
+        if (!bmp.titlebar.isNull() && player->duration() > 0) {
+            p.drawPixmap(226, 4, bmp.titlebar, 0, 36, 17, 7);
+            int frac = qBound(0, (int)(shownPosition() * 14 / player->duration()), 14);   // 17px track, 3px thumb
+            p.drawPixmap(226 + frac, 4, bmp.titlebar, 20, 36, 3, 7);
+        }
+    }
+
+    // Vis background as in Winamp: colour 0 with a grid of colour-1 dots, on the
+    // same even-x/even-y grid main.bmp uses so it blends into the display.
+    void drawVisBackground(QPainter &p, int x0, int y0, int w, int h) {
+        p.fillRect(x0, y0, w, h, visColors[0]);
+        for (int y = y0 + (y0 & 1); y < y0 + h; y += 2)
+            for (int x = x0 + (x0 & 1); x < x0 + w; x += 2)
+                p.fillRect(x, y, 1, 1, visColors[1]);
     }
 
     void drawSpectrumAnalyzer(QPainter &p) {
         const int visX = 24, visY = 43, visH = 16;
         // Fill background
-        p.fillRect(visX, visY, 75, visH, visColors[0]);
+        drawVisBackground(p, visX, visY, 75, visH);
         // Falloff-speed combo maps to a decay-rate multiplier; 1.0x (index 1, "Medium") matches
         // the original fixed rate exactly, so the default preference changes nothing.
         static const float kFalloffMul[4] = {0.5f, 1.0f, 1.75f, 2.5f};
@@ -1926,7 +1961,7 @@ protected:
 
     void drawOscilloscope(QPainter &p) {
         const int visX = 24, visY = 43, visH = 16;
-        p.fillRect(visX, visY, 75, visH, visColors[0]);
+        drawVisBackground(p, visX, visY, 75, visH);
         p.setPen(visColors[18]);
         int prevY = visY + visH / 2;
         for (int i = 0; i < 75; i++) {
@@ -1941,7 +1976,7 @@ protected:
     // VU Meter — dual-channel level meter (matches Windows vu.cpp)
     void drawVUMeter(QPainter &p) {
         const int visX = 24, visY = 43, visH = 16;
-        p.fillRect(visX, visY, 75, visH, visColors[0]);
+        drawVisBackground(p, visX, visY, 75, visH);
         
         // Left channel
         int leftLevel = qBound(0, (int)(vuData[0] * 35), 35);
@@ -2024,18 +2059,12 @@ protected:
                 break;
             }
             case Qt::Key_B: {
-                int curIdx = playlistWindow->currentTrackIndex();
-                int count = playlistWindow->trackCount();
-                if (curIdx + 1 < count) {
-                    playlistWindow->setCurrentTrackIndex(curIdx + 1);
-                    playTrack(playlistWindow->trackAt(curIdx + 1));
-                }
+                playNext();
                 break;
             }
             case Qt::Key_X:
                 // X = Play (like Windows Winamp)
-                if (!currentFile.isEmpty()) player->play();
-                else openFile();
+                playOrResume();
                 break;
             case Qt::Key_L:
                 if (event->modifiers() & Qt::ControlModifier)
@@ -2380,11 +2409,17 @@ protected:
         }
     }
 
+    // Mouse pos in skin coordinates: classic paint (incl. shade) is scaled 2x in double-size mode.
+    QPoint skinPos(const QMouseEvent *event) const {
+        QPoint p = waMousePos(event).toPoint();
+        return (doubleSize && !isModernSkin) ? QPoint(p.x() / 2, p.y() / 2) : p;
+    }
+
     void mousePressEvent(QMouseEvent *event) override {
         // ---- Modern skin mouse press handling ----
         if (isModernSkin) {
-            int x = event->pos().x();
-            int y = event->pos().y();
+            int x = skinPos(event).x();
+            int y = skinPos(event).y();
             
             if (event->button() == Qt::RightButton) {
                 showContextMenu(waMouseGlobalPos(event));
@@ -2396,7 +2431,7 @@ protected:
             if (seekR.contains(x, y) && player->duration() > 0) {
                 modernDraggingSeek = true;
                 double frac = qBound(0.0, (double)(x - seekR.x()) / seekR.width(), 1.0);
-                player->setPosition((qint64)(frac * player->duration()));
+                seekDragPos = (qint64)(frac * player->duration());
                 update();
                 return;
             }
@@ -2421,15 +2456,15 @@ protected:
             }
             
             // Drag window (titlebar or empty area)
-            isDragging = true;
+            isDragging = !waSystemMove(this);
             dragPosition = waMouseGlobalPos(event) - frameGeometry().topLeft();
             return;
         }
         
         // ---- Classic skin mouse press ----
         if (event->button() == Qt::RightButton) {
-            int x = event->pos().x();
-            int y = event->pos().y();
+            int x = skinPos(event).x();
+            int y = skinPos(event).y();
             // Right-click on repeat button: show repeat mode menu
             if (x >= 210 && x < 238 && y >= 89 && y < 104) {
                 QMenu menu;
@@ -2453,8 +2488,8 @@ protected:
             showContextMenu(waMouseGlobalPos(event));
             return;
         }
-        int x = event->pos().x();
-        int y = event->pos().y();
+        int x = skinPos(event).x();
+        int y = skinPos(event).y();
         
         // Time display area click: toggle elapsed/remaining
         if (x >= 36 && x < 99 && y >= 26 && y < 40) {
@@ -2477,53 +2512,52 @@ protected:
             return;
         }
         
-        // Clutterbar toggle/buttons (matches Windows Ui.cpp do_clutterbar)
-        // Toggle bar: x=10-18, y=22-30
-        if (x >= 10 && x < 18 && y >= 22 && y < 30) {
-            clutterbarOpen = !clutterbarOpen;
-            update();
-            return;
-        }
-        // Clutterbar buttons (only when open)
-        if (clutterbarOpen && x >= 11 && x < 18) {
-            // AOT (Always On Top) button: y=33-41
-            if (y >= 33 && y < 41) {
+        // Clutterbar buttons at x=10-18: O 25-33, A 33-40, I 40-47, D 47-55, V 55-62
+        if (x >= 10 && x < 18 && y >= 22 && y < 65) {
+            // O: options menu
+            if (y < 33) {
+                showContextMenu(waMouseGlobalPos(event));
+                return;
+            }
+            // AOT (Always On Top) button
+            if (y < 40) {
                 alwaysOnTop = !alwaysOnTop;
                 setWindowFlag(Qt::WindowStaysOnTopHint, alwaysOnTop);
                 show(); // Re-show to apply flag change
                 update();
                 return;
             }
-            // File Info button: y=42-49
-            if (y >= 42 && y < 49) {
+            // File Info button
+            if (y < 47) {
                 // Show file info dialog (same as Alt+3)
                 openFileInfoDialog(currentFile);
                 return;
             }
-            // Double Size button: y=49-55
-            if (y >= 49 && y < 55) {
-                doubleSize = !doubleSize;
-                if (doubleSize) {
-                    setFixedSize(275 * 2, 116 * 2);
-                } else {
-                    setFixedSize(275, 116);
-                }
-                update();
+            // Double Size button
+            if (y < 55) {
+                onToggleDoubleSize();
                 return;
             }
-            // Visualization menu button: y=58-65 (TODO: implement vis menu)
-            if (y >= 58 && y < 65) {
-                // Could show visualization options menu
-                update();
-                return;
-            }
+            // V: visualization menu (not implemented; swallow the click)
+            return;
         }
         
         // Title bar
         if (y < 14) {
             if (x >= 264 && x < 273) { close(); return; }           // Close
             if (x >= 244 && x < 253) { showMinimized(); return; }   // Minimize
-            isDragging = true;
+            if (x >= 254 && x < 263) { onToggleShadeMode(); return; } // Windowshade
+            if (shadeMode) {
+                int btnId = getButtonAt(x, y);
+                if (btnId >= 0) { pressedButton = btnId; return; }
+                if (x >= 226 && x < 243 && player->duration() > 0) { // Mini position bar
+                    isDraggingPos = true;
+                    seekDragPos = classicSeekPos(x);
+                    update();
+                    return;
+                }
+            }
+            isDragging = !waSystemMove(this);
             dragPosition = waMouseGlobalPos(event) - frameGeometry().topLeft();
             return;
         }
@@ -2592,8 +2626,7 @@ protected:
         // Balance slider: (177,57) to (215,70) 
         if (x >= 177 && x <= 215 && y >= 57 && y <= 70) {
             isDraggingBalance = true;
-            balance = ((x - 177) * 254) / 38 - 127;
-            balance = qBound(-127, balance, 127);
+            balance = balanceFromX(x);
             // Apply stereo balance via QAudioOutput
             // Qt6 doesn't have direct balance, but we can approximate with stereo channel volumes
             update();
@@ -2603,8 +2636,7 @@ protected:
         // Position bar: (16,72) to (264,82)
         if (x >= 16 && x <= 264 && y >= 72 && y <= 82 && player->duration() > 0) {
             isDraggingPos = true;
-            qint64 newPos = ((qint64)(x - 16) * player->duration()) / 248;
-            player->setPosition(newPos);
+            seekDragPos = classicSeekPos(x);
             update();
             return;
         }
@@ -2613,8 +2645,8 @@ protected:
     }
     
     void mouseMoveEvent(QMouseEvent *event) override {
-        int x = waMousePos(event).x();
-        int y = waMousePos(event).y();
+        int x = skinPos(event).x();
+        int y = skinPos(event).y();
         
         // ---- Modern skin mouse move ----
         if (isModernSkin) {
@@ -2622,7 +2654,7 @@ protected:
             if (modernDraggingSeek && player->duration() > 0) {
                 QRect seekR = modernSeekRect();
                 double frac = qBound(0.0, (double)(x - seekR.x()) / seekR.width(), 1.0);
-                player->setPosition((qint64)(frac * player->duration()));
+                seekDragPos = (qint64)(frac * player->duration());
                 update();
                 return;
             }
@@ -2679,8 +2711,9 @@ protected:
             tooltip = "Time Display (click to toggle)";
         } else if (y >= 40 && y < 61 && x >= 27 && x < 99) {
             tooltip = "Visualization (click to cycle modes, double-click for Milkdrop)";
-        } else if (y >= 22 && y < 30 && x >= 10 && x < 18) {
-            tooltip = "Toggle Clutterbar";
+        } else if (y >= 22 && y < 62 && x >= 10 && x < 18) {
+            tooltip = y < 33 ? "Options menu" : y < 40 ? "Toggle Always On Top"
+                    : y < 47 ? "File Info" : y < 55 ? "Toggle Double Size" : "Visualization menu";
         }
         
         if (showTooltips && !tooltip.isEmpty()) {
@@ -2700,16 +2733,13 @@ protected:
         
         // Balance drag
         if (isDraggingBalance) {
-            balance = ((x - 177) * 254) / 38 - 127;
-            balance = qBound(-127, balance, 127);
+            balance = balanceFromX(x);
             update();
         }
         
         // Position drag
         if (isDraggingPos && player->duration() > 0) {
-            int clampX = qBound(16, (int)x, 264);
-            qint64 newPos = ((qint64)(clampX - 16) * player->duration()) / 248;
-            player->setPosition(newPos);
+            seekDragPos = classicSeekPos(x);
             update();
         }
         
@@ -2730,14 +2760,15 @@ protected:
                 reflowDockedWindows();
             }
             if (modernDraggingSeek || modernDraggingVolume) {
+                commitSeekDrag();
                 modernDraggingSeek = false;
                 modernDraggingVolume = false;
                 update();
                 return;
             }
             if (modernPressed >= 0) {
-                int x = event->pos().x();
-                int y = event->pos().y();
+                int x = skinPos(event).x();
+                int y = skinPos(event).y();
                 int btn = modernGetButtonAt(x, y);
                 if (btn == modernPressed) {
                     // Execute action based on button index
@@ -2753,18 +2784,12 @@ protected:
                             break;
                         }
                         case MB_PLAY:
-                            if (!currentFile.isEmpty()) player->play();
-                            else openFile();
+                            playOrResume();
                             break;
                         case MB_PAUSE: player->pause(); break;
                         case MB_STOP: player->stop(); break;
                         case MB_NEXT: {
-                            int curIdx = playlistWindow->currentTrackIndex();
-                            int count = playlistWindow->trackCount();
-                            if (curIdx + 1 < count) {
-                                playlistWindow->setCurrentTrackIndex(curIdx + 1);
-                                playTrack(playlistWindow->trackAt(curIdx + 1));
-                            }
+                            playNext();
                             break;
                         }
                         case MB_EJECT: openFile(); break;
@@ -2812,8 +2837,8 @@ protected:
         
         // ---- Classic skin mouse release ----
         if (pressedButton >= 0) {
-            int x = event->pos().x();
-            int y = event->pos().y();
+            int x = skinPos(event).x();
+            int y = skinPos(event).y();
             int btnId = getButtonAt(x, y);
             
             if (btnId == pressedButton) {
@@ -2829,18 +2854,12 @@ protected:
                         break;
                     }
                     case 1:                                          // Play
-                        if (!currentFile.isEmpty()) player->play();
-                        else openFile();
+                        playOrResume();
                         break;
                     case 2: fadeThenExecute([this]() { player->pause(); }); break;  // Pause
                     case 3: fadeThenExecute([this]() { player->stop(); }); break;   // Stop
                     case 4: {                                        // Next
-                        int curIdx = playlistWindow->currentTrackIndex();
-                        int count = playlistWindow->trackCount();
-                        if (curIdx + 1 < count) {
-                            playlistWindow->setCurrentTrackIndex(curIdx + 1);
-                            playTrack(playlistWindow->trackAt(curIdx + 1));
-                        }
+                        playNext();
                         break;
                     }
                     case 5: openFile(); break;                       // Eject
@@ -2854,7 +2873,9 @@ protected:
         isDraggingVolume = false;
         isDraggingBalance = false;
         isDraggingPos = false;
+        commitSeekDrag();
         isDragging = false;
+        update();   // clear pressed thumbs and the volume/balance readout
         if (wasDragging) {
             // After moving main, re-attach any child that is still near a snap edge
             // and reflow already-docked ones so the stack stays flush.
@@ -2921,7 +2942,9 @@ protected:
         
         int nextIdx;
         if (shuffleOn) {
-            // For shuffle, we can't really preload since it's random
+            // For shuffle, we can't really preload since it's random; drop any
+            // stale source left by a gapless swap so it can't be replayed later.
+            waSetSource(nextPlayer, QUrl());
             return;
         } else {
             nextIdx = curIdx + 1;
@@ -3067,6 +3090,16 @@ public:
     }
 
     int getButtonAt(int x, int y) {
+        if (shadeMode) {                            // mini transport in the shade bar
+            if (y < 2 || y >= 12) return -1;
+            if (x >= 169 && x < 177) return 0;
+            if (x >= 177 && x < 187) return 1;
+            if (x >= 187 && x < 197) return 2;
+            if (x >= 197 && x < 206) return 3;
+            if (x >= 206 && x < 215) return 4;
+            if (x >= 216 && x < 225) return 5;
+            return -1;
+        }
         if (y >= 88 && y <= 106) {
             if (x >= 16 && x < 39)  return 0;  // Previous
             if (x >= 39 && x < 62)  return 1;  // Play
@@ -3143,7 +3176,8 @@ public:
         
         s.beginGroup("MainWindow");
         if (s.contains("x")) {
-            move(s.value("x").toInt(), s.value("y").toInt());
+            QPoint p(s.value("x").toInt(), s.value("y").toInt());
+            if (QGuiApplication::screenAt(p)) move(p);  // skip off-screen (e.g. saved under Wayland)
         }
         s.endGroup();
         
@@ -3168,6 +3202,7 @@ public:
         alwaysOnTop = s.value("alwaysOnTop", false).toBool();
         doubleSize = s.value("doubleSize", false).toBool();
         shadeMode = s.value("shadeMode", false).toBool();
+        applyWindowSize();
         stopAfterCurrent = s.value("stopAfterCurrent", false).toBool();
         showSongNotifications = s.value("showSongNotifications", true).toBool();
         if (alwaysOnTop) {
@@ -3193,6 +3228,8 @@ public:
 
         eqWindow->loadSettings(s);
         playlistWindow->loadSettings(s);
+        // Select the last-played song so Play/Next continue from it.
+        playlistWindow->setCurrentTrackIndex(playlistWindow->allTracks().indexOf(currentFile));
 
         if (continuePlaybackOnStartup && !currentFile.isEmpty() && QFile::exists(currentFile)) {
             playFile(currentFile);
@@ -3255,7 +3292,6 @@ private:
     bool doubleSize;   // 2x scaling mode (like Windows config_dsize)
     bool shadeMode;    // compact shade mode (like Windows config_windowshade)
     bool alwaysOnTop;  // always on top (like Windows config_aot)
-    bool clutterbarOpen; // clutterbar expanded (left side O/A/I/D/V buttons)
     bool showSongNotifications = true; // show desktop notification on song change
 
     // Preferences (Preferences dialog) - see applyPreferenceChange()
@@ -3315,6 +3351,7 @@ private:
     int modernHovered = -1;  // hovered button index for modern skin
     int modernPressed = -1;  // pressed button index
     bool modernDraggingSeek = false;
+    qint64 seekDragPos = -1;   // target while dragging a seek bar; seek happens on release
     bool modernDraggingVolume = false;
     
     void openMilkdrop() {
@@ -3384,7 +3421,7 @@ private:
         Q_UNUSED(playPauseAction);
         trayMenu->addAction("Stop", this, [this]() { player->stop(); update(); });
         trayMenu->addAction("Next Track", this, [this]() {
-            if (playlistWindow) playlistWindow->nextTrack();
+            if (playlistWindow) playNext();
         });
         trayMenu->addSeparator();
         trayMenu->addAction("Open File...", this, [this]() { openFile(); });
@@ -3467,9 +3504,7 @@ private:
             onToggleAlwaysOnTop(value.toBool());
         } else if (key == "doubleSize") {
             if (value.toBool() != doubleSize) {
-                doubleSize = value.toBool();
-                setFixedSize(doubleSize ? 550 : 275, doubleSize ? 232 : 116);
-                update();
+                onToggleDoubleSize();
             }
         } else if (key == "stopAfterCurrent") {
             stopAfterCurrent = value.toBool();
@@ -3524,11 +3559,18 @@ private:
     }
     
     void mouseDoubleClickEvent(QMouseEvent *event) override {
-        int x = event->pos().x();
-        int y = event->pos().y();
+        int x = skinPos(event).x();
+        int y = skinPos(event).y();
         // Double-click on visualization area opens Milkdrop
         if (x >= 27 && x < 99 && y >= 40 && y < 61) {
             openMilkdrop();
+            return;
+        }
+        // Double-click on the title bar (not its buttons, or the shade bar's
+        // transport/seek controls) toggles windowshade, like Winamp.
+        if (!isModernSkin && y < 14 && x < 244 && getButtonAt(x, y) < 0
+            && !(shadeMode && x >= 226)) {
+            onToggleShadeMode();
             return;
         }
         QWidget::mouseDoubleClickEvent(event);
