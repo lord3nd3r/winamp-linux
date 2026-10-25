@@ -1065,39 +1065,27 @@ public:
                 milkdropWindow->feedPCMFloat(buffer.constData<float>(), sampleCount, channels);
         }
 
-        // ---- EQ DSP PROCESSING (matches Windows eq10dsp.cpp + In.cpp) ----
-        // When EQ is enabled: mute QAudioOutput, process through EQ10, output via QAudioSink
-        bool eqEnabled = eqWindow && eqWindow->isEnabled();
-        
-        if (eqEnabled) {
-            int sampleRate = fmt.sampleRate();
+        // ---- Output processing (EQ and/or balance) ----
+        // QAudioOutput has no pan control. Whenever the equalizer is on, or
+        // balance is off-center, mute the direct device and write the shaped
+        // samples through QAudioSink. Centered balance with EQ off stays on
+        // the direct device.
+        const bool eqOn = eqWindow && eqWindow->isEnabled();
+        if (playbackDspNeeded(eqOn, balance)) {
+            const int sampleRate = fmt.sampleRate();
 
             // Network streams can deliver buffers before the container format is
             // resolved (sampleRate/channels == 0). Skip those without muting the
             // direct output or touching the sink state, otherwise the direct path
-            // gets muted here while the QAudioSink below never gets created (its
-            // reconfigure check never sees a real format change), leaving playback
-            // silent for the rest of the stream.
-            if (sampleRate <= 0 || channels <= 0) {
+            // gets muted here while the QAudioSink below never gets created.
+            if (sampleRate <= 0 || channels <= 0)
                 return;
-            }
 
-            // Setup/reconfigure QAudioSink if format changed
             if (sampleRate != eqSampleRate || channels != eqChannels) {
                 eqSampleRate = sampleRate;
-                eqChannels = qMin(channels, 2); // stereo max for EQ
-                
-                // Re-initialize EQ filter state for new sample rate
-                eq10_setup(eqState, eqChannels, (double)sampleRate);
-                
-                // Update EQ gains from current slider positions
-                for (int b = 0; b < 10; b++) {
-                    int sliderVal = eqWindow->getBandValue(b);
-                    double dB = eq10_valtodb(sliderVal);
-                    eq10_setgain(eqState, eqChannels, b, dB);
-                }
-                
-                // Create QAudioSink with matching format
+                eqChannels = qMin(channels, 2);
+                eqFiltersReady = false;
+
                 if (audioSink) {
                     audioSink->stop();
                     delete audioSink;
@@ -1106,99 +1094,91 @@ public:
                 outFmt.setChannelCount(eqChannels);
                 outFmt.setSampleRate(sampleRate);
                 outFmt.setSampleFormat(QAudioFormat::Float);
-                
                 audioSink = new QAudioSink(QMediaDevices::defaultAudioOutput(), outFmt, this);
-                audioSink->setBufferSize(sampleRate * eqChannels * sizeof(float) / 5); // ~200ms buffer
+                audioSink->setBufferSize(sampleRate * eqChannels * sizeof(float) / 5);
                 audioSinkDevice = audioSink->start();
             }
-            
-            if (!audioSinkDevice) return;
 
-            // Mute the direct QAudioOutput path now that the DSP sink is confirmed
-            // live — output switches to the processed audio via QAudioSink below.
+            if (!audioSinkDevice)
+                return;
+
             if (!eqDspActive) {
                 waSetOutputVolume(player, audioOutput, 0.0f);
                 eqDspActive = true;
             }
 
-            // Update EQ gains every buffer (cheap, ensures sliders are responsive)
-            for (int b = 0; b < 10; b++) {
-                int sliderVal = eqWindow->getBandValue(b);
-                double dB = eq10_valtodb(sliderVal);
-                eq10_setgain(eqState, eqChannels, b, dB);
+            if (eqOn && !eqFiltersReady) {
+                eq10_setup(eqState, eqChannels, static_cast<double>(sampleRate));
+                eqFiltersReady = true;
             }
-            
-            int preampSlider = eqWindow->getPreampValue();
-            float preampGain = eq_preamp_table[qBound(0, 63 - preampSlider, 63)];
-            
-            // Volume and balance (applied post-EQ, matching Windows output chain)
-            float vol = volume / 255.0f;
-            float balL = 1.0f, balR = 1.0f;
-            if (balance < 0) balR = (127.0f + balance) / 127.0f; // left-biased
-            if (balance > 0) balL = (127.0f - balance) / 127.0f; // right-biased
-            
-            // Resize pre-allocated DSP buffers if needed (avoids per-callback heap alloc)
-            int totalSamples = sampleCount * eqChannels;
+            if (!eqOn)
+                eqFiltersReady = false;
+
+            const int totalSamples = sampleCount * eqChannels;
             if (eqDspFloatBuf.size() < totalSamples) {
                 eqDspFloatBuf.resize(totalSamples);
                 eqDspOutBuf.resize(totalSamples);
             }
-            
-            // Convert input to float with preamp applied (matches In.cpp FillFloat)
+
+            const float preampGain = eqOn
+                ? eq_preamp_table[qBound(0, 63 - eqWindow->getPreampValue(), 63)]
+                : 1.0f;
+
             if (fmt.sampleFormat() == QAudioFormat::Int16) {
                 const qint16 *src = buffer.constData<qint16>();
                 for (int i = 0; i < sampleCount; i++) {
-                    for (int ch = 0; ch < eqChannels; ch++) {
+                    for (int ch = 0; ch < eqChannels; ch++)
                         eqDspFloatBuf[i * eqChannels + ch] = (src[i * channels + ch] / 32768.0f) * preampGain;
-                    }
                 }
             } else if (fmt.sampleFormat() == QAudioFormat::Float) {
                 const float *src = buffer.constData<float>();
                 for (int i = 0; i < sampleCount; i++) {
-                    for (int ch = 0; ch < eqChannels; ch++) {
+                    for (int ch = 0; ch < eqChannels; ch++)
                         eqDspFloatBuf[i * eqChannels + ch] = src[i * channels + ch] * preampGain;
-                    }
                 }
             } else {
-                return; // unsupported format
+                return;
             }
-            
-            // Process through EQ10 for each channel (matches Windows inner loop)
-            for (int ch = 0; ch < eqChannels; ch++) {
-                eq10_processf(&eqState[ch], eqDspFloatBuf.data(), eqDspOutBuf.data(),
-                              sampleCount, ch, eqChannels);
+
+            if (eqOn) {
+                for (int b = 0; b < 10; b++)
+                    eq10_setgain(eqState, eqChannels, b, eq10_valtodb(eqWindow->getBandValue(b)));
+                for (int ch = 0; ch < eqChannels; ch++) {
+                    eq10_processf(&eqState[ch], eqDspFloatBuf.data(), eqDspOutBuf.data(),
+                                  sampleCount, ch, eqChannels);
+                }
+            } else {
+                memcpy(eqDspOutBuf.data(), eqDspFloatBuf.constData(),
+                       static_cast<size_t>(totalSamples) * sizeof(float));
             }
-            
-            // Apply volume and balance post-EQ
+
+            const PlaybackOutputGain gain = playbackOutputGain(volume, balance);
+            const float mono = static_cast<float>(volume) / 255.0f;
             for (int i = 0; i < sampleCount; i++) {
                 if (eqChannels >= 2) {
-                    eqDspOutBuf[i * eqChannels + 0] *= vol * balL;
-                    eqDspOutBuf[i * eqChannels + 1] *= vol * balR;
+                    eqDspOutBuf[i * eqChannels + 0] *= gain.left;
+                    eqDspOutBuf[i * eqChannels + 1] *= gain.right;
                 } else {
-                    eqDspOutBuf[i * eqChannels + 0] *= vol;
+                    eqDspOutBuf[i * eqChannels + 0] *= mono;
                 }
             }
-            
-            // Write to QAudioSink
+
             if (audioSinkDevice) {
-                qint64 bytes = totalSamples * sizeof(float);
-                audioSinkDevice->write(reinterpret_cast<const char*>(eqDspOutBuf.data()), bytes);
+                const qint64 bytes = static_cast<qint64>(totalSamples) * static_cast<qint64>(sizeof(float));
+                audioSinkDevice->write(reinterpret_cast<const char *>(eqDspOutBuf.data()), bytes);
             }
-        } else {
-            // EQ is off — restore direct QAudioOutput path
-            if (eqDspActive) {
-                waSetOutputVolume(player, audioOutput, volume / 255.0f);
-                eqDspActive = false;
-                // Stop the DSP sink
-                if (audioSink) {
-                    audioSink->stop();
-                    delete audioSink;
-                    audioSink = nullptr;
-                    audioSinkDevice = nullptr;
-                }
-                eqSampleRate = 0;
-                eqChannels = 0;
+        } else if (eqDspActive) {
+            waSetOutputVolume(player, audioOutput, volume / 255.0f);
+            eqDspActive = false;
+            eqFiltersReady = false;
+            if (audioSink) {
+                audioSink->stop();
+                delete audioSink;
+                audioSink = nullptr;
+                audioSinkDevice = nullptr;
             }
+            eqSampleRate = 0;
+            eqChannels = 0;
         }
     }
 #endif
@@ -2498,8 +2478,8 @@ protected:
         if (x >= 177 && x <= 215 && y >= 57 && y <= 70) {
             isDraggingBalance = true;
             balance = balanceFromX(x);
-            // Apply stereo balance via QAudioOutput
-            // Qt6 doesn't have direct balance, but we can approximate with stereo channel volumes
+            // QAudioOutput cannot pan. processAudioBuffer applies this on the
+            // PCM tap when that tap exists (Qt 6.8+).
             update();
             return;
         }
@@ -3350,7 +3330,8 @@ private:
     eq10_t eqState[2];     // EQ filter state per channel (stereo max)
     int eqSampleRate = 0;  // Current configured sample rate
     int eqChannels = 0;    // Current configured channel count
-    bool eqDspActive = false; // Whether DSP path is active
+    bool eqDspActive = false; // Direct output is muted; samples go through QAudioSink
+    bool eqFiltersReady = false; // eq10_setup has run for the current rate
     QVector<float> eqDspFloatBuf;  // Pre-allocated input buffer (resized on format change)
     QVector<float> eqDspOutBuf;    // Pre-allocated output buffer (resized on format change)
     QTimer *timer;

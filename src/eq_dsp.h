@@ -32,6 +32,28 @@ static const double eq10_freq[EQ10_NOFBANDS] = {
     70, 180, 320, 600, 1000, 3000, 6000, 12000, 14000, 16000
 };
 
+// QAudioOutput has no pan control. Any non-zero balance has to be applied on
+// the PCM tap (Qt 6.8+), including when the equalizer itself is off.
+struct PlaybackOutputGain {
+    float left;
+    float right;
+};
+
+inline bool playbackDspNeeded(bool equalizerOn, int balance) {
+    return equalizerOn || balance != 0;
+}
+
+inline PlaybackOutputGain playbackOutputGain(int volume, int balance) {
+    const float vol = static_cast<float>(volume) / 255.0f;
+    float balL = 1.0f;
+    float balR = 1.0f;
+    if (balance < 0)
+        balR = (127.0f + static_cast<float>(balance)) / 127.0f;
+    if (balance > 0)
+        balL = (127.0f - static_cast<float>(balance)) / 127.0f;
+    return {vol * balL, vol * balR};
+}
+
 // Preamp lookup table — 64 entries mapping slider 0-63 to linear gain
 // (matches In.cpp eq_lookup1[64]: index 0 = +12dB = 4.0x, 31 = 0dB = 1.0x, 63 = -12dB = 0.25x)
 static const float eq_preamp_table[64] = {
