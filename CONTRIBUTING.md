@@ -60,6 +60,7 @@ sudo apt-get install -y \
   libprojectm-dev \
   projectm-data \
   libtag1-dev \
+  libavutil-dev \
   pkg-config \
   python3 \
   gstreamer1.0-plugins-good \
@@ -95,7 +96,9 @@ cmake -S . -B build-qt6 -G Ninja -DCMAKE_BUILD_TYPE=Debug
 ninja -C build-qt6
 ```
 
-Enables the full feature set when DBus is present: MPRIS2, modern multimedia APIs, EQ audio buffer path (version-gated).
+Enables MPRIS2 when Qt DBus is present. The PCM tap (`QAudioBufferOutput`) is compiled only when Qt is 6.8 or newer. That tap is what feeds the spectrum FFT, the EQ10 process, Milkdrop’s samples, and stereo balance. On Qt 6.2 and 6.4 the same source builds, the controls stay on screen, and dragging balance appends ` (NO TAP)`. Audio still plays through `QAudioOutput`.
+
+`libavutil` is optional. When `pkg-config` finds it, configure prints `libavutil found - HAVE_AVUTIL` and `main` calls `av_log_set_level(AV_LOG_ERROR)`. Package names: `libavutil-dev` (Debian/Ubuntu), `libavutil-free-devel` (Fedora), `libavutil-devel` (openSUSE).
 
 ### Qt 5 (fallback)
 
@@ -109,7 +112,10 @@ ninja -C build-qt5
 Expect:
 
 - MPRIS2 disabled
+- No PCM tap (Qt 5 has no `QAudioBufferOutput`), so spectrum, EQ processing, Milkdrop samples, and balance stay on the older-Qt path
 - Some Qt 6–only multimedia APIs compiled out via `compat.h` / version checks
+
+CI’s `ubuntu-22.04-qt5` job is this configuration: `qtbase5-dev`, `qtmultimedia5-dev`, `libqt5opengl5-dev`, `libqt5multimedia5-plugins`, plus `libavutil-dev`, into `build-qt5`.
 
 ### Compiler flags (always on for `winamp` target)
 
@@ -144,6 +150,8 @@ ctest --test-dir build-qt6 --output-on-failure
 # Individual binaries
 ./build-qt6/winamp_tests
 ./build-qt6/playlist_tests
+./build-qt6/playback_tests
+./build-qt6/tag_metadata_tests
 
 # Offscreen (CI / headless SSH)
 QT_QPA_PLATFORM=offscreen ctest --test-dir build-qt6 --output-on-failure
@@ -151,8 +159,10 @@ QT_QPA_PLATFORM=offscreen ctest --test-dir build-qt6 --output-on-failure
 
 | Target | Sources | What it asserts |
 |--------|---------|-----------------|
-| `winamp_tests` / `eq_dsp_test` | `tests/test_eq_dsp.cpp` | dB conversion, setup, gains, process path |
-| `playlist_tests` / `playlist_test` | `tests/test_playlist.cpp` + playlist/eq/prefs/video objs | Add/clear, navigation, sort, selection, dead file removal, async folder add |
+| `winamp_tests` / `eq_dsp_test` | `tests/test_eq_dsp.cpp` | dB conversion, setup, gains, process path, balance gain, plugin-host restart limit, Milkdrop channel counts, short sink writes |
+| `playlist_tests` / `playlist_test` | `tests/test_playlist.cpp` + playlist/eq/prefs/video objs | Add/clear, navigation, sort, selection, dead file removal, async folder add, M3U/PLS text, duration probes, nested skin archives |
+| `playback_tests` / `playback_test` | `tests/test_playback.cpp` | Gapless player swap, settings write, stale playback callbacks, local playlist enqueue, previous-track wrap, repeat cycle (off → all → one), MPRIS volume and OpenUri |
+| `tag_metadata_tests` / `tag_metadata_test` | `tests/test_tag_metadata.cpp` | Tag round trip, ID3v2.3 on write, ID3v1 Latin-1 truncation |
 
 ### Adding tests
 
@@ -208,13 +218,19 @@ CPack metadata lives in `CMakeLists.txt` (DEB shlibdeps, RPM autoreq, license, c
 | `fedora-42` | `fedora:42` | `.rpm` + `.tar.gz` |
 | `opensuse-tumbleweed` | `opensuse/tumbleweed` | `.rpm` + `.tar.gz` |
 
-CI uses a smaller matrix (Ubuntu 22.04/24.04, Debian Bookworm, Fedora 41, openSUSE Tumbleweed) for faster PR feedback.
+CI uses a smaller matrix (Ubuntu 22.04/24.04, Debian Bookworm, Fedora 41, openSUSE Tumbleweed) plus a dedicated **`ubuntu-22.04-qt5`** job (`CMAKE_DISABLE_FIND_PACKAGE_Qt6=ON`, build directory `build-qt5`). Each job installs libavutil and fails the configure step unless the log contains `libavutil found - HAVE_AVUTIL`. The Qt 5 job also requires `Using Qt5`.
 
 **Arch Linux** is intentionally not in the matrix: distro packages only ship **projectM 4.x**, while Milkdrop support uses the classic 3.x API (`libprojectM/projectM.hpp`).
 
+### AppImage
+
+`packaging/appimage/build-appimage.sh` produces `Winamp-<version>-x86_64.AppImage`. The release workflow runs it on Ubuntu 22.04 (glibc 2.35, Qt 6.2.4) with `APPIMAGE_SMOKE=1`. A tag named `v1.3.0` sets `VERSION=1.3.0`, so the artifact is `Winamp-1.3.0-x86_64.AppImage` plus a `.zsync` file (`gh-releases-zsync`). linuxdeploy plus the Qt and GStreamer plugins bundle platforms (xcb, Wayland, offscreen), image formats, OpenSSL, GStreamer, TagLib, projectM presets, HarfBuzz, and FriBidi. OpenGL and `python3` stay on the host. Because that Qt is 6.2, the AppImage is a no-tap build: spectrum, EQ processing, Milkdrop samples, and balance are compiled out.
+
+Smoke coverage in the script: `--help`, `--version`, an offscreen launch, and `--cli` against a generated WAV. A `v*` tag attaches the AppImage to the GitHub release; `workflow_dispatch` uploads it as an artifact only.
+
 ### Version
 
-`project(Winamp VERSION 1.2.2 ...)` in `CMakeLists.txt` plus `WINAMP_VERSION_FULL` (`1.2.2`) and `kWinampVersion` in `src/constants.h` must stay aligned with **GitHub release tags**. Bump all three when cutting a release.
+`project(Winamp VERSION 1.3.0 ...)` in `CMakeLists.txt` plus `WINAMP_VERSION_FULL` (`1.3.0`) and `kWinampVersion` in `src/constants.h` must stay aligned with **GitHub release tags**. Bump all three when cutting a release. The AppImage filename uses that same version (`Winamp-1.3.0-x86_64.AppImage`).
 
 ---
 
@@ -264,7 +280,8 @@ flowchart TB
 | Playlist | `src/playlist.{h,cpp}` | Track list, sort, drop, async folder + duration probe |
 | Equalizer UI | `src/equalizer.{h,cpp}` | 10 bands + preamp UI, snap-to-main |
 | EQ DSP | `src/eq_dsp.h` | EQ10 processing |
-| Plugins | `src/python_plugin.{h,cpp}` | Spawn host, dispatch RPC methods |
+| Plugins | `src/python_plugin.{h,cpp}` | Spawn host, dispatch RPC methods, restart backoff |
+| Tags | `src/tag_metadata.cpp` | TagLib read/write; MP3 saves ID3v2.3 |
 | Preferences | `src/preferences.{h,cpp}` | Settings UI + plugin manager |
 | Video | `src/video.{h,cpp}` | `QVideoWidget` host |
 | Visualization | `src/milkdrop.h` | projectM GL window |
@@ -277,9 +294,11 @@ flowchart TB
 ### Audio path (conceptual)
 
 1. `QMediaPlayer` decodes via the platform multimedia backend.
-2. Optional Qt 6 audio buffer path feeds spectrum FFT and EQ processing.
+2. On Qt 6.8+, `QAudioBufferOutput` feeds the spectrum FFT, EQ10, Milkdrop PCM, and balance. Older Qt skips `processAudioBuffer` entirely.
 3. EQ uses fixed buffers inside `eq_dsp.h` — **do not allocate on the hot path**.
 4. Gapless: secondary player preloads the next playlist item; swap on near-end / end.
+5. MP3 File Info writes ID3v2.3 and a truncated ID3v1 tag (`src/tag_metadata.cpp`).
+6. `.m3u` / `.pls` parsing lives in `playlistEntries()` (`src/constants.h`). Remote playlists are fetched and every entry is enqueued.
 
 ### Plugin path
 
@@ -288,6 +307,7 @@ flowchart TB
 3. Sends `{"type":"event","name":"start"}`; host imports each `*.py` plugin.
 4. Plugin API calls become JSON request/notification lines; C++ handles them on the GUI thread and replies when needed.
 5. On shutdown: `exit` event, then terminate/kill if needed.
+6. If the host exits early, `PluginHostRestart` waits 500 ms, 1 s, 2 s, 4 s, then 8 s, and stops after five crashes (`kMaxRestarts`). A host that stays up for 30 seconds (`kStableResetMs`) resets the count. The host is a separate process with the user’s privileges. It is not a sandbox.
 
 ### Window snapping
 
@@ -332,7 +352,7 @@ flowchart TB
 | Network stream policy | `playHttpStream` in `winamp_window.h` |
 | Skin constants / vis colors | `constants.h`, `winamp_bitmaps.h` |
 | Build / deps / install | `CMakeLists.txt` |
-| User docs | `README.md`, `CONFIGURATION.md`, `PLUGIN_DEVELOPMENT.md` |
+| User docs | `README.md`, `CONFIGURATION.md`, `PLUGIN_DEVELOPMENT.md`, `CLAUDE.md` |
 
 ---
 
