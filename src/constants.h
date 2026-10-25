@@ -3,15 +3,18 @@
 
 #include <QString>
 #include <QStringList>
+#include <QVector>
 #include <QDir>
 #include <QColor>
 #include <QFile>
 #include <QTextStream>
-#include <QProcess>
 #include <QFileInfo>
 #include <QUrl>
 #include <QDebug>
+#include <QProcess>
 #include <QRegularExpression>
+#include <algorithm>
+#include <utility>
 
 // Product version — keep aligned with GitHub release tags (currently v1.2.2).
 // CMake project(VERSION) and WINAMP_VERSION_FULL must match this label.
@@ -85,24 +88,105 @@ static inline bool isPlaylistPath(const QString &pathOrUrl) {
     return lower.endsWith(".pls") || lower.endsWith(".m3u") || lower.endsWith(".m3u8");
 }
 
-// Extracts the first playable remote/local entry from M3U/M3U8 or PLS playlist text.
-// M3U(8) lists bare paths/URLs per line (blank lines and '#' comments skipped).
-// PLS uses INI-style "FileN=<url>" entries; other keys (Title/Length/...) are ignored.
-static inline QString firstPlaylistEntry(const QByteArray &data) {
-    const QStringList lines = QString::fromUtf8(data).split('\n');
+// "File" or "FileN" (PLS). TitleN / LengthN / NumberOfEntries are not entries.
+static inline bool playlistFileKey(const QString &key, int *index) {
+    if (!key.startsWith(QLatin1String("file"), Qt::CaseInsensitive))
+        return false;
+    const QString rest = key.mid(4);
+    if (rest.isEmpty()) {
+        *index = 0;
+        return true;
+    }
+    bool ok = false;
+    const int n = rest.toInt(&ok);
+    if (!ok || n < 0)
+        return false;
+    *index = n;
+    return true;
+}
+
+// Resolve a playlist entry against the playlist's own location. `base` is the
+// playlist file URL (remote) or the playlist's directory as a local-file URL
+// with a trailing slash. Absolute URLs and absolute paths are left alone.
+static inline QString resolvePlaylistLocation(const QString &raw, const QUrl &base) {
+    QString value = raw.trimmed();
+    value.remove(QLatin1Char('\r'));
+    if (value.isEmpty())
+        return QString();
+    if (!value.contains(QLatin1String("://")) && value.contains(QLatin1Char('\\')))
+        value.replace(QLatin1Char('\\'), QLatin1Char('/'));
+    // QUrl::fromUserInput("b.mp3") becomes http://b.mp3, so only an explicit scheme
+    // counts as a remote entry. Relative names are resolved against `base`.
+    const QUrl explicitUrl(value);
+    const QString scheme = explicitUrl.scheme().toLower();
+    if (explicitUrl.isValid() && !scheme.isEmpty()
+        && (scheme == QLatin1String("http") || scheme == QLatin1String("https")
+            || scheme == QLatin1String("icy") || scheme == QLatin1String("ftp")))
+        return value;
+    if (explicitUrl.isValid() && explicitUrl.isLocalFile())
+        return QFileInfo(explicitUrl.toLocalFile()).absoluteFilePath();
+    if (QFileInfo(value).isAbsolute())
+        return QFileInfo(value).absoluteFilePath();
+    if (!base.isValid())
+        return value;
+    if (base.isLocalFile())
+        return QDir(base.toLocalFile()).absoluteFilePath(value);
+    return base.resolved(QUrl(value)).toString();
+}
+
+// Every playable entry in an M3U/M3U8 or PLS body, in playlist order.
+// PLS: every FileN= value (not only the first). M3U: every non-comment line.
+// Relative paths are resolved against `base`.
+static inline QStringList playlistEntries(const QByteArray &data, const QUrl &base) {
+    const QStringList lines = QString::fromUtf8(data).split(QLatin1Char('\n'));
+    bool pls = false;
     for (const QString &rawLine : lines) {
         const QString line = rawLine.trimmed();
-        if (line.isEmpty() || line.startsWith('#')) continue;
-
-        QString candidate = line;
-        int eq = line.indexOf('=');
-        if (eq > 0 && line.left(eq).trimmed().startsWith("file", Qt::CaseInsensitive)) {
-            candidate = line.mid(eq + 1).trimmed(); // PLS "FileN=<url>"
+        const int eq = line.indexOf(QLatin1Char('='));
+        if (eq <= 0)
+            continue;
+        int index = 0;
+        if (playlistFileKey(line.left(eq).trimmed(), &index) && index > 0) {
+            pls = true;
+            break;
         }
-        if (isRemoteMediaLocation(candidate) || QFile::exists(candidate))
-            return candidate;
     }
-    return QString();
+
+    struct Row {
+        int order;
+        QString location;
+    };
+    QVector<Row> rows;
+    int lineNo = 0;
+    for (const QString &rawLine : lines) {
+        ++lineNo;
+        const QString line = rawLine.trimmed();
+        if (line.isEmpty() || line.startsWith(QLatin1Char('#')) || line.startsWith(QLatin1Char('[')))
+            continue;
+        QString candidate = line;
+        int order = lineNo;
+        const int eq = line.indexOf(QLatin1Char('='));
+        if (pls) {
+            if (eq <= 0)
+                continue;
+            int index = 0;
+            if (!playlistFileKey(line.left(eq).trimmed(), &index))
+                continue;
+            candidate = line.mid(eq + 1).trimmed();
+            order = index;
+        }
+        const QString resolved = resolvePlaylistLocation(candidate, base);
+        if (!resolved.isEmpty())
+            rows.append(Row{order, resolved});
+    }
+    std::stable_sort(rows.begin(), rows.end(), [](const Row &a, const Row &b) {
+        return a.order < b.order;
+    });
+    QStringList out;
+    out.reserve(rows.size());
+    for (const Row &row : rows)
+        out.append(row.location);
+    return out;
 }
 
 // Display label for a playlist entry (filename for local, host/path for remote)

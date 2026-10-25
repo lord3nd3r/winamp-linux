@@ -35,6 +35,8 @@ private slots:
     void testDragReorder();
     void testEqualizerOffWithoutAudioTap();
     void testFolderScanDestructorWaits();
+    void testPlaylistEntries();
+    void testOpenPlaylistText();
 
 private:
     void assertRowsMatchTracks(PlaylistWindow &playlist) const;
@@ -441,6 +443,65 @@ void TestPlaylist::testFolderScanDestructorWaits() {
     playlist.addFolderAsync(dir.path(), false);
     QTRY_COMPARE_WITH_TIMEOUT(playlist.trackCount(), 1, 5000);
     QCOMPARE(playlist.trackAt(0), dir.filePath("song.mp3"));
+}
+
+void TestPlaylist::testPlaylistEntries() {
+    const QByteArray pls =
+        "[playlist]\n"
+        "NumberOfEntries=3\n"
+        "File2=b.mp3\n"
+        "Title1=Not a file\n"
+        "File1=http://example.com/a.mp3\n"
+        "Length1=-1\n"
+        "File3=sub\\c.mp3\n";
+    const QUrl remoteBase(QStringLiteral("http://radio.example/stations/list.pls"));
+    const QStringList remote = playlistEntries(pls, remoteBase);
+    QCOMPARE(remote.size(), 3);
+    QCOMPARE(remote.at(0), QStringLiteral("http://example.com/a.mp3"));
+    QCOMPARE(remote.at(1), QStringLiteral("http://radio.example/stations/b.mp3"));
+    QCOMPARE(remote.at(2), QStringLiteral("http://radio.example/stations/sub/c.mp3"));
+
+    const QByteArray m3u =
+        "#EXTM3U\n"
+        "#EXTINF:1,Skip me\n"
+        "rel.mp3\n"
+        "http://example.com/abs.mp3\n";
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QUrl localBase = QUrl::fromLocalFile(dir.path() + QLatin1Char('/'));
+    const QStringList local = playlistEntries(m3u, localBase);
+    QCOMPARE(local.size(), 2);
+    QCOMPARE(local.at(0), QDir(dir.path()).absoluteFilePath(QStringLiteral("rel.mp3")));
+    QCOMPARE(local.at(1), QStringLiteral("http://example.com/abs.mp3"));
+}
+
+void TestPlaylist::testOpenPlaylistText() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QDir(dir.path()).mkpath(QStringLiteral("sub"));
+    QFile local(dir.filePath(QStringLiteral("b.mp3")));
+    QVERIFY(local.open(QIODevice::WriteOnly));
+    local.write("x");
+    local.close();
+    QFile nested(dir.filePath(QStringLiteral("sub/c.mp3")));
+    QVERIFY(nested.open(QIODevice::WriteOnly));
+    nested.write("y");
+    nested.close();
+
+    const QByteArray pls =
+        "[playlist]\n"
+        "File1=http://example.com/a.mp3\n"
+        "Title1=Nope\n"
+        "File2=b.mp3\n"
+        "File3=sub/c.mp3\n"
+        "NumberOfEntries=3\n";
+    PlaylistWindow playlist;
+    const QUrl base = QUrl::fromLocalFile(dir.path() + QLatin1Char('/'));
+    QCOMPARE(playlist.addPlaylistText(pls, base), 3);
+    QCOMPARE(playlist.trackCount(), 3);
+    QCOMPARE(playlist.trackAt(0), QStringLiteral("http://example.com/a.mp3"));
+    QCOMPARE(playlist.trackAt(1), local.fileName());
+    QCOMPARE(playlist.trackAt(2), nested.fileName());
 }
 
 QTEST_MAIN(TestPlaylist)
