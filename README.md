@@ -33,7 +33,7 @@ Built in **C++17** with **Qt 6** (Qt 5 fallback), faithful classic skins, a real
 
 ## Why this project?
 
-Classic Winamp defined how a generation listened to music on the desktop: skinnable chrome, a green spectrum, an always-there playlist editor, and an EQ that actually changed the sound. **Winamp for Linux** brings that workflow to native Linux without a Windows compatibility layer—same interaction model, modern backends (GStreamer / FFmpeg via Qt Multimedia), and safe extensibility through sandboxed Python plugins.
+Classic Winamp defined how a generation listened to music on the desktop: skinnable chrome, a green spectrum, an always-there playlist editor, and an EQ that actually changed the sound. **Winamp for Linux** brings that workflow to native Linux without a Windows compatibility layer—same interaction model, modern backends (GStreamer / FFmpeg via Qt Multimedia), and extensibility through process-isolated Python plugins.
 
 ---
 
@@ -72,7 +72,7 @@ Classic Winamp defined how a generation listened to music on the desktop: skinna
 ### Extensibility & desktop
 | Feature | Details |
 |---------|---------|
-| **Python plugins** | Out-of-process `python3` host, JSON-RPC over stdin/stdout. A bad plugin cannot crash the player process. |
+| **Python plugins** | Out-of-process `python3` host, JSON-RPC over stdin/stdout. A bad plugin cannot crash the player process. This is process isolation, not an OS sandbox: the plugin has the user's normal privileges. A crashed host is restarted with backoff and then given up on. |
 | **Plugin manager UI** | Preferences → Plug-ins: enable/disable, add, remove, open config. |
 | **Example plugins** | `hello_winamp.py`, production-oriented `icecast_dj.py` (Icecast via `ffmpeg`). |
 | **MPRIS2** | Media keys, lock-screen controls, KDE Connect–style clients (**Qt 6 + Qt DBus**). |
@@ -90,7 +90,7 @@ Classic Winamp defined how a generation listened to music on the desktop: skinna
 |-------|----------------|
 | **[CONTRIBUTING.md](CONTRIBUTING.md)** | Dependencies, Qt 5/6 builds, tests, packaging, architecture, coding standards, PR workflow |
 | **[CONFIGURATION.md](CONFIGURATION.md)** | Paths, `winamp.conf` keys (verified against source), skins, plugins dir, bookmarks |
-| **[PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md)** | Sandbox model, lifecycle hooks, full API reference, examples, Icecast DJ notes |
+| **[PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md)** | Process isolation (not an OS sandbox), lifecycle hooks, full API reference, examples, Icecast DJ notes |
 | **[winamp.png](winamp.png)** | README hero screenshot (classic main + equalizer) |
 
 ---
@@ -382,7 +382,7 @@ Architecture diagram and contribution workflow: **[CONTRIBUTING.md](CONTRIBUTING
 - Compiler flags: `-Wall -Wextra -Wpedantic`, `-fstack-protector-strong`, `_FORTIFY_SOURCE=2`.
 - HTTP streams: redirect policy + max redirects (5) + transfer timeout (15s).
 - Modern skin XML: include recursion depth limit and circular-include detection.
-- Python plugins: process isolation (crash boundary). Plugins still have full OS privileges of the `python3` user process—treat third-party plugins like any untrusted script.
+- Python plugins: a separate `python3` process so a plugin crash does not take down the player. It is not a sandbox — no seccomp, filesystem jail, or network policy. Plugins have the full OS privileges of that user process. Treat third-party plugins like any untrusted script.
 
 ---
 
@@ -392,7 +392,7 @@ These are intentional or inherited constraints, not silent omissions:
 
 - **Classic skins first** — modern Winamp 5 skin support is limited; classic is the primary path.
 - **MPRIS2 on Qt 6 only** — Qt 5 builds skip the DBus media player interface.
-- **Plugin sandbox** — process isolation, not full OS sandbox (no seccomp/cgroup jail by default).
+- **Plugin process isolation** — a separate `python3` process, not an OS sandbox (no seccomp, cgroup, or filesystem jail).
 - **Test surface** — EQ DSP and playlist logic covered; full UI automation is not yet in-tree.
 
 ---

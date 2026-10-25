@@ -2,6 +2,7 @@
 #include <QObject>
 #include <cmath>
 #include "../src/eq_dsp.h"
+#include "../src/python_plugin.h"
 
 class TestEqDsp : public QObject {
     Q_OBJECT
@@ -16,6 +17,7 @@ private slots:
     void testSetGain();
     void testProcessf();
     void testBalanceReachesOutputChain();
+    void testPluginHostRestartLimit();
 };
 
 void TestEqDsp::initTestCase() {
@@ -112,6 +114,18 @@ void TestEqDsp::testProcessf() {
         QVERIFY(!std::isnan(output[i]));
         QVERIFY(!std::isinf(output[i]));
     }
+}
+
+void TestEqDsp::testPluginHostRestartLimit() {
+    QVERIFY(PluginHostRestart::shouldRestart(0));
+    QVERIFY(PluginHostRestart::shouldRestart(PluginHostRestart::kMaxRestarts - 1));
+    QVERIFY(!PluginHostRestart::shouldRestart(PluginHostRestart::kMaxRestarts));
+    QCOMPARE(PluginHostRestart::backoffMs(0), 500);
+    QCOMPARE(PluginHostRestart::backoffMs(1), 1000);
+    QCOMPARE(PluginHostRestart::backoffMs(2), 2000);
+    QCOMPARE(PluginHostRestart::backoffMs(3), 4000);
+    QCOMPARE(PluginHostRestart::backoffMs(4), 8000);
+    QCOMPARE(PluginHostRestart::backoffMs(20), 8000);
 }
 
 void TestEqDsp::testBalanceReachesOutputChain() {

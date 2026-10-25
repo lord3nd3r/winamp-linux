@@ -1,6 +1,6 @@
 # Python plugin development
 
-Winamp for Linux extends itself through **user Python scripts** loaded in a **separate process**. This guide covers the sandbox model, lifecycle, full API reference, logging rules, packaging tips, and the shipped examples.
+Winamp for Linux extends itself through **user Python scripts** loaded in a **separate `python3` process**. That process is a crash boundary, **not an OS sandbox**: a plugin can read the user's files, open sockets, and spawn programs. This guide covers that process-isolation model, lifecycle, full API reference, logging rules, packaging tips, and the shipped examples.
 
 ---
 
@@ -38,7 +38,7 @@ Winamp for Linux extends itself through **user Python scripts** loaded in a **se
 | Plugins | `~/.config/winamp/plugins/*.py` | Your code |
 
 **Why out-of-process?**  
-An exception, infinite loop, or native crash inside a plugin kills the host process, not the player. The UI and audio pipeline keep running (plugins simply stop until restart).
+An exception, infinite loop, or native crash inside a plugin kills the host process, not the player. The UI and audio pipeline keep running. The player starts the host again with exponential backoff (500 ms, then 1 s, 2 s, 4 s, 8 s) and stops after five crashes in a row, so a plugin that exits immediately cannot spin. A host that stays up for 30 seconds resets that count. This is process isolation only: there is no seccomp filter, filesystem jail, or network policy.
 
 **RPC details (host):**
 
@@ -337,9 +337,9 @@ See the defaults at the top of `icecast_dj.py` for the full schema.
 
 | Layer | Protection |
 |-------|------------|
-| Process isolation | Plugin crashes do not tear down `winamp` |
+| Process isolation | Plugin crashes do not tear down `winamp`. The host is restarted with backoff, then left stopped if it keeps crashing |
 | RPC allowlist | Only implemented methods in `handleRequest` run |
-| **Not** provided | Filesystem jail, seccomp, network policy, memory quotas |
+| **Not** provided | This is not a sandbox. No filesystem jail, seccomp, network policy, or memory quotas |
 
 **Treat plugins as full user-level code.** A plugin can read your home directory, open network sockets, and spawn processes (as Icecast DJ does with `ffmpeg`). Only install plugins you trust.
 
