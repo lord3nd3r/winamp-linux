@@ -1,5 +1,7 @@
 # Winamp for Linux
 
+[![Donate - PayPal](https://img.shields.io/badge/Donate-PayPal-0070ba?style=for-the-badge&logo=paypal&logoColor=white)](https://3nd3r.net/paypal) [![Donate - BTC](https://img.shields.io/badge/Donate-BTC-f7931a?style=for-the-badge&logo=bitcoin&logoColor=white)](https://3nd3r.net/btc)
+
 **A native classic Winamp 2.x–style media player for modern Linux desktops.**
 
 **Current release: [v1.2.2](https://github.com/lord3nd3r/winamp-linux/releases/tag/v1.2.2)**
