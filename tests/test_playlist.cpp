@@ -4,8 +4,93 @@
 #include <QTemporaryDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QDir>
+#include <cstring>
+#include <zlib.h>
 #include "../src/playlist.h"
 #include "../src/equalizer.h"
+
+static void appendU16(QByteArray *b, quint16 v) {
+    b->append(char(v & 0xff));
+    b->append(char((v >> 8) & 0xff));
+}
+static void appendU32(QByteArray *b, quint32 v) {
+    appendU16(b, quint16(v & 0xffff));
+    appendU16(b, quint16(v >> 16));
+}
+
+struct StoredZipItem {
+    QString name;
+    QByteArray data;
+    quint32 declaredUncomp = 0; // 0 means "use data.size()"
+    bool deflate = false;
+};
+
+static QByteArray deflateRaw(const QByteArray &in) {
+    z_stream strm;
+    std::memset(&strm, 0, sizeof(strm));
+    deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, -MAX_WBITS, 8, Z_DEFAULT_STRATEGY);
+    QByteArray out(in.size() + 64, Qt::Uninitialized);
+    strm.next_in = reinterpret_cast<Bytef *>(const_cast<char *>(in.constData()));
+    strm.avail_in = static_cast<uInt>(in.size());
+    strm.next_out = reinterpret_cast<Bytef *>(out.data());
+    strm.avail_out = static_cast<uInt>(out.size());
+    deflate(&strm, Z_FINISH);
+    out.resize(static_cast<int>(strm.total_out));
+    deflateEnd(&strm);
+    return out;
+}
+
+static QByteArray makeZip(const QList<StoredZipItem> &items) {
+    QByteArray local;
+    QByteArray central;
+    for (const StoredZipItem &item : items) {
+        const QByteArray name = item.name.toUtf8();
+        const QByteArray payload = item.deflate ? deflateRaw(item.data) : item.data;
+        const quint32 crc = crc32(0L, reinterpret_cast<const Bytef *>(item.data.constData()),
+                                   static_cast<uInt>(item.data.size()));
+        const quint32 uncomp = item.declaredUncomp ? item.declaredUncomp : quint32(item.data.size());
+        const quint16 method = item.deflate ? 8 : 0;
+        const quint32 offset = quint32(local.size());
+        auto writeHeader = [&](QByteArray *dst, bool centralHeader) {
+            dst->append(centralHeader ? QByteArray("PK\x01\x02", 4) : QByteArray("PK\x03\x04", 4));
+            appendU16(dst, 20);
+            if (centralHeader)
+                appendU16(dst, 20);
+            appendU16(dst, 0);
+            appendU16(dst, method);
+            appendU16(dst, 0);
+            appendU16(dst, 0);
+            appendU32(dst, crc);
+            appendU32(dst, quint32(payload.size()));
+            appendU32(dst, uncomp);
+            appendU16(dst, quint16(name.size()));
+            appendU16(dst, 0);
+            if (centralHeader) {
+                appendU16(dst, 0);
+                appendU16(dst, 0);
+                appendU16(dst, 0);
+                appendU32(dst, 0);
+                appendU32(dst, offset);
+            }
+            dst->append(name);
+        };
+        writeHeader(&local, false);
+        local.append(payload);
+        writeHeader(&central, true);
+    }
+    const quint32 cdOff = quint32(local.size());
+    QByteArray zip = local + central;
+    zip.append("PK\x05\x06", 4);
+    appendU16(&zip, 0);
+    appendU16(&zip, 0);
+    appendU16(&zip, quint16(items.size()));
+    appendU16(&zip, quint16(items.size()));
+    appendU32(&zip, quint32(central.size()));
+    appendU32(&zip, cdOff);
+    appendU16(&zip, 0);
+    return zip;
+}
 
 // Mock/stub any global required variables if not linked
 // In our build, playlist.cpp links with constants.h which declares the externs.
@@ -38,6 +123,7 @@ private slots:
     void testPlaylistEntries();
     void testOpenPlaylistText();
     void testDurationProbeOneAtATime();
+    void testSkinArchiveNestedAndRefresh();
 
 private:
     void assertRowsMatchTracks(PlaylistWindow &playlist) const;
@@ -552,6 +638,72 @@ void TestPlaylist::testDurationProbeOneAtATime() {
     QCOMPARE(playlist.trackDurations.at(0), static_cast<qint64>(0));
     QCOMPARE(playlist.durationProbePath, first.fileName());
     QVERIFY(playlist.durationProbeQueue.isEmpty());
+}
+
+void TestPlaylist::testSkinArchiveNestedAndRefresh() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString wsz = dir.filePath(QStringLiteral("wa-skin-nested-a421.wsz"));
+    QFile zip(wsz);
+    QVERIFY(zip.open(QIODevice::WriteOnly));
+    zip.write(makeZip({
+        {QStringLiteral("Cool/MAIN.BMP"), QByteArray("one"), 0, true},
+        {QStringLiteral("Cool/extra/note.txt"), QByteArray("nested"), 0, false},
+        {QStringLiteral("Cool/sub/a.txt"), QByteArray("inner"), 0, false},
+        {QStringLiteral("Cool/a.txt"), QByteArray("outer"), 0, false},
+    }));
+    zip.close();
+
+    const QString root = extractSkinArchive(wsz);
+    QVERIFY2(!root.isEmpty(), "extract failed");
+    QVERIFY(QFileInfo(root).fileName() == QLatin1String("Cool"));
+    QFile bmp(root + QStringLiteral("/MAIN.BMP"));
+    QVERIFY(bmp.open(QIODevice::ReadOnly));
+    QCOMPARE(bmp.readAll(), QByteArray("one"));
+    bmp.close();
+    QFile note(root + QStringLiteral("/extra/note.txt"));
+    QVERIFY(note.open(QIODevice::ReadOnly));
+    QCOMPARE(note.readAll(), QByteArray("nested"));
+    note.close();
+    QVERIFY(QFile::exists(root + QStringLiteral("/a.txt")));
+    QVERIFY(QFile::exists(root + QStringLiteral("/sub/a.txt")));
+
+    QVERIFY(zip.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    zip.write(makeZip({
+        {QStringLiteral("Cool/MAIN.BMP"), QByteArray("two"), 0, false},
+    }));
+    zip.close();
+    const QString again = extractSkinArchive(wsz);
+    QCOMPARE(QFileInfo(again).fileName(), QStringLiteral("Cool"));
+    QFile bmp2(again + QStringLiteral("/MAIN.BMP"));
+    QVERIFY(bmp2.open(QIODevice::ReadOnly));
+    QCOMPARE(bmp2.readAll(), QByteArray("two"));
+    bmp2.close();
+    QVERIFY(!QFile::exists(again + QStringLiteral("/extra/note.txt")));
+
+    const QString escape = dir.filePath(QStringLiteral("wa-skin-escape-a421.wsz"));
+    QFile bad(escape);
+    QVERIFY(bad.open(QIODevice::WriteOnly));
+    bad.write(makeZip({
+        {QStringLiteral("../wa-skin-escaped-a421.txt"), QByteArray("nope"), 0, false},
+    }));
+    bad.close();
+    QVERIFY(extractSkinArchive(escape).isEmpty());
+    QVERIFY(!QFile::exists(dir.filePath(QStringLiteral("wa-skin-escaped-a421.txt"))));
+    QVERIFY(!QFile::exists(QDir::homePath() + QStringLiteral("/wa-skin-escaped-a421.txt")));
+
+    const QString bomb = dir.filePath(QStringLiteral("wa-skin-bomb-a421.wsz"));
+    QFile huge(bomb);
+    QVERIFY(huge.open(QIODevice::WriteOnly));
+    huge.write(makeZip({
+        {QStringLiteral("MAIN.BMP"), QByteArray("x"), 200u * 1024u * 1024u, false},
+    }));
+    huge.close();
+    QVERIFY(extractSkinArchive(bomb).isEmpty());
+
+    QDir(QFileInfo(root).absolutePath()).removeRecursively();
+    QDir(QDir::homePath() + QStringLiteral("/.cache/winamp/skins/wa-skin-escape-a421")).removeRecursively();
+    QDir(QDir::homePath() + QStringLiteral("/.cache/winamp/skins/wa-skin-bomb-a421")).removeRecursively();
 }
 
 QTEST_MAIN(TestPlaylist)

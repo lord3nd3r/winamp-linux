@@ -44,6 +44,10 @@ find_library(PROJECTM_LIB projectM REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(TAGLIB REQUIRED IMPORTED_TARGET taglib)
 
+# Skin packs (.wsz / .zip / .wal) are unzipped in-process. zlib is enough;
+# the unzip program is not a runtime dependency.
+find_package(ZLIB REQUIRED)
+
 add_executable(winamp
     src/main.cpp
     src/winamp_window.h
@@ -101,6 +105,7 @@ target_link_libraries(winamp
     ${QT_PACKAGE}::Network
     ${PROJECTM_LIB}
     PkgConfig::TAGLIB
+    ZLIB::ZLIB
 )
 
 if(QT_PACKAGE STREQUAL "Qt6")
@@ -165,6 +170,7 @@ target_link_libraries(playlist_tests PRIVATE
     ${QT_PACKAGE}::Network
     ${QT_PACKAGE}::Test
     PkgConfig::TAGLIB
+    ZLIB::ZLIB
 )
 if(QT_PACKAGE STREQUAL "Qt6")
     target_link_libraries(playlist_tests PRIVATE Qt6::OpenGLWidgets)
@@ -195,6 +201,7 @@ target_link_libraries(playback_tests PRIVATE
     ${QT_PACKAGE}::Test
     ${PROJECTM_LIB}
     PkgConfig::TAGLIB
+    ZLIB::ZLIB
 )
 if(QT_PACKAGE STREQUAL "Qt6")
     target_link_libraries(playback_tests PRIVATE Qt6::OpenGLWidgets)
