@@ -10,6 +10,14 @@
 #include <random>
 
 PlaylistWindow::~PlaylistWindow() {
+    closing = true;
+    if (durationProbeTimer)
+        durationProbeTimer->stop();
+    if (durationProbePlayer)
+        QObject::disconnect(durationProbePlayer, nullptr, this, nullptr);
+    // Same Qt 6.8 FFmpeg cancel crash as the main players: wait out the probe.
+    waReleaseMediaPlayer(durationProbePlayer);
+    durationProbePlayer = nullptr;
     if (folderScanAlive)
         folderScanAlive->store(false);
     const QList<QThread *> threads = folderScanThreads;
@@ -754,6 +762,8 @@ void PlaylistWindow::addFolderAsync(const QString &dirPath, bool autoPlay) {
 }
 
 void PlaylistWindow::startNextDurationProbe() {
+    if (closing)
+        return;
     if (!durationProbePath.isEmpty())
         return; // one probe in flight
     if (durationProbeQueue.isEmpty()) {
@@ -795,7 +805,7 @@ void PlaylistWindow::cancelDurationProbes() {
 }
 
 void PlaylistWindow::onDurationProbeStatus(QMediaPlayer::MediaStatus status) {
-    if (!durationProbePlayer)
+    if (closing || !durationProbePlayer)
         return;
     if (status != QMediaPlayer::LoadedMedia && status != QMediaPlayer::InvalidMedia)
         return;
@@ -820,7 +830,7 @@ void PlaylistWindow::onDurationProbeStatus(QMediaPlayer::MediaStatus status) {
 }
 
 void PlaylistWindow::onDurationProbeTimeout() {
-    if (durationProbePath.isEmpty())
+    if (closing || durationProbePath.isEmpty())
         return;
     ++durationProbeSerial;
     durationProbePath.clear();
