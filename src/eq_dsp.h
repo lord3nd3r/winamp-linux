@@ -208,3 +208,45 @@ static inline void eq10_processf(eq10_t *eq, float *buf, float *outbuf, int sz, 
         eq->detect = detect;
     }
 }
+
+// Spectrum analyzer FFT. Inline so playback_tests, which compile
+// WinampWindow without main.cpp, still link on Qt 6.8+.
+#if defined(QT_VERSION_CHECK) && QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+inline void fft512(const float *input, float *magnitudes) {
+    const int N = 512;
+    float re[N], im[N];
+    for (int i = 0; i < N; i++) {
+        int j = 0;
+        for (int b = 0; b < 9; b++)
+            j |= ((i >> b) & 1) << (8 - b);
+        re[j] = input[i];
+        im[j] = 0.0f;
+    }
+    for (int s = 1; s <= 9; s++) {
+        int m = 1 << s;
+        int m2 = m >> 1;
+        const float wRe = cosf(-2.0f * float(M_PI) / m);
+        const float wIm = sinf(-2.0f * float(M_PI) / m);
+        for (int k = 0; k < N; k += m) {
+            float tRe = 1.0f, tIm = 0.0f;
+            for (int j = 0; j < m2; j++) {
+                float uRe = re[k + j], uIm = im[k + j];
+                float vRe = tRe * re[k + j + m2] - tIm * im[k + j + m2];
+                float vIm = tRe * im[k + j + m2] + tIm * re[k + j + m2];
+                re[k + j] = uRe + vRe;
+                im[k + j] = uIm + vIm;
+                re[k + j + m2] = uRe - vRe;
+                im[k + j + m2] = uIm - vIm;
+                float newTRe = tRe * wRe - tIm * wIm;
+                tIm = tRe * wIm + tIm * wRe;
+                tRe = newTRe;
+            }
+        }
+    }
+    for (int i = 0; i < N / 2; i++)
+        magnitudes[i] = sqrtf(re[i] * re[i] + im[i] * im[i]);
+}
+#endif

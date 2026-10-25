@@ -704,10 +704,6 @@ extern SkinPlaylistColors g_plColors;
 extern bool g_snapWindowsEnabled;
 extern int g_snapDistance;
 
-#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
-void fft512(const float *input, float *magnitudes);
-#endif
-
 // Built-in EQ Presets (slider values 0-63, center=32)
 struct EqPreset {
     const char *name;
