@@ -27,11 +27,13 @@ void TestEqDsp::cleanupTestCase() {
 }
 
 void TestEqDsp::testValToDb() {
-    // Slider pos: 63 = top = +12dB boost, 31 = center = 0dB, 0 = bottom = -11.625dB
-    QCOMPARE(eq10_valtodb(31), 0.0);
+    // Slider pos: 63 = top = +12dB, 32 = center = 0dB (Flat / default), 0 = -12dB.
+    QCOMPARE(eq10_valtodb(32), 0.0);
     QCOMPARE(eq10_valtodb(63), 12.0);
-    QCOMPARE(eq10_valtodb(0), -11.625);
-    
+    QCOMPARE(eq10_valtodb(0), -12.0);
+    // One notch below center is a cut, not silence-with-a-boost.
+    QCOMPARE(eq10_valtodb(31), -12.0 / 32.0);
+
     // Bounds checks
     QCOMPARE(eq10_valtodb(-5), -12.0);
     QCOMPARE(eq10_valtodb(100), 12.0);
