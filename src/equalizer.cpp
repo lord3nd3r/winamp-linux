@@ -121,6 +121,22 @@ int EqualizerWindow::getPreampValue() const { return preampValue; }
 
 bool EqualizerWindow::isEnabled() const { return eqEnabled; }
 
+bool EqualizerWindow::tryToggleEnabled() {
+#if QT_VERSION < QT_VERSION_CHECK(6, 8, 0)
+    eqEnabled = false;
+    QMessageBox::information(this, TR("win.equalizer.title", "Winamp Equalizer"),
+        QString("This build uses Qt %1, which cannot tap playback audio. "
+                "The equalizer needs Qt 6.8 or newer, so it stays off and does not change the sound.")
+            .arg(QLatin1String(QT_VERSION_STR)));
+    update();
+    return false;
+#else
+    eqEnabled = !eqEnabled;
+    update();
+    return true;
+#endif
+}
+
 bool EqualizerWindow::isAutoEnabled() const { return autoEnabled; }
 
 bool EqualizerWindow::isShadeMode() const { return shadeMode; }
@@ -229,7 +245,13 @@ void EqualizerWindow::showPresetsMenu(QPoint globalPos) {
             QPoint p(s.value("x").toInt(), s.value("y").toInt());
             if (QGuiApplication::screenAt(p)) move(p);  // skip off-screen (e.g. saved under Wayland)
         }
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
         eqEnabled = s.value("enabled", true).toBool();
+#else
+        // Ignore a saved "on" from a Qt 6.8 build: this process cannot apply it.
+        Q_UNUSED(s.value("enabled", false));
+        eqEnabled = false;
+#endif
         autoEnabled = s.value("auto", false).toBool();
         preampValue = s.value("preamp", 32).toInt();
         for (int i = 0; i < 10; i++) {
@@ -595,7 +617,8 @@ void EqualizerWindow::showPresetsMenu(QPoint globalPos) {
             
             // ON button: rel (16,47) size 20x9
             if (rx >= 16 && rx < 36 && ry >= 47 && ry < 56) {
-                eqEnabled = !eqEnabled; update(); return;
+                tryToggleEnabled();
+                return;
             }
             // AUTO button: rel (16,61) size 33x9
             if (rx >= 16 && rx < 49 && ry >= 61 && ry < 70) {
@@ -634,8 +657,7 @@ void EqualizerWindow::showPresetsMenu(QPoint globalPos) {
         
         // ON button: (14,18)-(39,30)
         if (x >= 14 && x < 39 && y >= 18 && y < 30) {
-            eqEnabled = !eqEnabled;
-            update();
+            tryToggleEnabled();
             return;
         }
         

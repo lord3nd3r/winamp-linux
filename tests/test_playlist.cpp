@@ -32,6 +32,7 @@ private slots:
     void testPreferenceSettingsPersist();
     void testRecycleBinRestore();
     void testDragReorder();
+    void testEqualizerOffWithoutAudioTap();
 
 private:
     void assertRowsMatchTracks(PlaylistWindow &playlist) const;
@@ -397,6 +398,28 @@ void TestPlaylist::testRecycleBinRestore() {
     playlist.restoreLastRemoved();
     QCOMPARE(playlist.trackCount(), 3);
     QCOMPARE(playlist.trackAt(1), QString("http://example.com/b.mp3"));
+}
+
+void TestPlaylist::testEqualizerOffWithoutAudioTap() {
+#if QT_VERSION < QT_VERSION_CHECK(6, 8, 0)
+    EqualizerWindow eq;
+    QVERIFY(!eq.isEnabled());
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString ini = dir.filePath("eq.ini");
+    {
+        QSettings saved(ini, QSettings::IniFormat);
+        saved.beginGroup("Equalizer");
+        saved.setValue("enabled", true);
+        saved.endGroup();
+    }
+    QSettings loaded(ini, QSettings::IniFormat);
+    eq.loadSettings(loaded);
+    QVERIFY(!eq.isEnabled());
+#else
+    QSKIP("QAudioBufferOutput is available, so the equalizer may be enabled");
+#endif
 }
 
 QTEST_MAIN(TestPlaylist)

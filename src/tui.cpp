@@ -447,6 +447,19 @@ void WinampTui::render() {
     }
 
     // --- Colored spectrum analyzer (green->yellow->red vertical gradient) ---
+#if QT_VERSION < QT_VERSION_CHECK(6, 8, 0)
+    // QAudioBufferOutput arrived in Qt 6.8. Draw an explanation instead of a
+    // flat analyzer that looks like silence.
+    for (int sr = kSpectrumRows - 1; sr >= 0; sr--) {
+        QString row(kContentW, QLatin1Char(' '));
+        if (sr == kSpectrumRows / 2) {
+            const QString note = QStringLiteral("spectrum needs Qt 6.8 (no audio tap)");
+            const int at = qMax(0, (kContentW - note.size()) / 2);
+            row.replace(at, qMin(note.size(), kContentW - at), note.left(kContentW - at));
+        }
+        borderRaw(std::string(kDimGreen) + row.toStdString() + kReset);
+    }
+#else
     for (int sr = kSpectrumRows - 1; sr >= 0; sr--) {
         std::string s;
         int palIdx = (sr * 6) / kSpectrumRows;   // 0..5 bottom..top
@@ -460,6 +473,7 @@ void WinampTui::render() {
         s += kReset;
         borderRaw(s);
     }
+#endif
 
     // --- Seek bar ---
     {
