@@ -171,6 +171,40 @@ if(QT_PACKAGE STREQUAL "Qt6")
 endif()
 add_test(NAME playlist_test COMMAND playlist_tests)
 
+add_executable(playback_tests
+    tests/test_playback.cpp
+    src/playlist.cpp
+    src/equalizer.cpp
+    src/preferences.cpp
+    src/video.cpp
+    src/tag_metadata.cpp
+    src/dialogs.h
+    src/winamp_window.h
+    src/media_library.h
+    src/mpris2_adaptors.h
+    src/milkdrop.h
+)
+target_link_libraries(playback_tests PRIVATE
+    ${QT_PACKAGE}::Core
+    ${QT_PACKAGE}::Gui
+    ${QT_PACKAGE}::Widgets
+    ${QT_PACKAGE}::Multimedia
+    ${QT_PACKAGE}::MultimediaWidgets
+    ${QT_PACKAGE}::OpenGL
+    ${QT_PACKAGE}::Network
+    ${QT_PACKAGE}::Test
+    ${PROJECTM_LIB}
+    PkgConfig::TAGLIB
+)
+if(QT_PACKAGE STREQUAL "Qt6")
+    target_link_libraries(playback_tests PRIVATE Qt6::OpenGLWidgets)
+endif()
+if(QT_PACKAGE STREQUAL "Qt6" AND ${QT_DBUS_FOUND_VAR})
+    target_link_libraries(playback_tests PRIVATE ${QT_PACKAGE}::DBus)
+    target_compile_definitions(playback_tests PRIVATE QT_DBUS_LIB)
+endif()
+add_test(NAME playback_test COMMAND playback_tests)
+
 add_executable(tag_metadata_tests
     tests/test_tag_metadata.cpp
     src/tag_metadata.cpp

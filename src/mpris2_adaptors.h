@@ -66,18 +66,34 @@ class Mpris2PlayerAdaptor : public QDBusAbstractAdaptor {
 
 public:
     Mpris2PlayerAdaptor(QMediaPlayer *player, QAudioOutput *audioOut, QObject *parent)
-        : QDBusAbstractAdaptor(parent), m_player(player), m_audioOutput(audioOut) {
-        
+        : QDBusAbstractAdaptor(parent), m_player(nullptr), m_audioOutput(nullptr) {
+        setActivePlayer(player, audioOut);
+    }
+
+    // Gapless playback swaps the QMediaPlayer that is actually playing.
+    // Follow that object so status, metadata, and volume stay on the live one.
+    void setActivePlayer(QMediaPlayer *player, QAudioOutput *audioOut) {
+        if (m_player == player && m_audioOutput == audioOut)
+            return;
+        if (m_player)
+            QObject::disconnect(m_player, nullptr, this, nullptr);
+        m_player = player;
+        m_audioOutput = audioOut;
+        if (!m_player || !m_audioOutput)
+            return;
         connect(m_player, &QMediaPlayer::playbackStateChanged, this, [this]() {
             emitPropertyChanged("PlaybackStatus", playbackStatus());
         });
         connect(m_player, &QMediaPlayer::metaDataChanged, this, [this]() {
             emitPropertyChanged("Metadata", metadata());
         });
-        connect(m_player, &QMediaPlayer::positionChanged, this, [this]() {
-            // Don't spam position updates — only on significant changes
-        });
+        emitPropertyChanged("PlaybackStatus", playbackStatus());
+        emitPropertyChanged("Metadata", metadata());
+        emitPropertyChanged("Volume", volume());
     }
+
+    QMediaPlayer *activePlayer() const { return m_player; }
+    QAudioOutput *activeAudioOutput() const { return m_audioOutput; }
 
     QString playbackStatus() const {
         switch (m_player->playbackState()) {
