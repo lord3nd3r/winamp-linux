@@ -226,7 +226,8 @@ void EqualizerWindow::showPresetsMenu(QPoint globalPos) {
     void EqualizerWindow::loadSettings(QSettings &s) {
         s.beginGroup("Equalizer");
         if (s.contains("x")) {
-            move(s.value("x").toInt(), s.value("y").toInt());
+            QPoint p(s.value("x").toInt(), s.value("y").toInt());
+            if (QGuiApplication::screenAt(p)) move(p);  // skip off-screen (e.g. saved under Wayland)
         }
         eqEnabled = s.value("enabled", true).toBool();
         autoEnabled = s.value("auto", false).toBool();
@@ -584,7 +585,7 @@ void EqualizerWindow::showPresetsMenu(QPoint globalPos) {
             // Titlebar
             if (y < tbH) {
                 if (x >= width() - 18) { hide(); return; }
-                isDragging = true;
+                isDragging = !waSystemMove(this);
                 dragPosition = waMouseGlobalPos(event) - frameGeometry().topLeft();
                 return;
             }
@@ -626,7 +627,7 @@ void EqualizerWindow::showPresetsMenu(QPoint globalPos) {
         // Title bar
         if (y < 14) {
             if (x >= 264) { hide(); return; }
-            isDragging = true;
+            isDragging = !waSystemMove(this);
             dragPosition = waMouseGlobalPos(event) - frameGeometry().topLeft();
             return;
         }

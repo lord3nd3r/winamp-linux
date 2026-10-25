@@ -151,7 +151,7 @@ protected:
             
             // Check if clicking in titlebar area (draggable)
             if (event->pos().y() < 24) {
-                isDragging = true;
+                isDragging = !waSystemMove(this);
                 dragStartPos = event->pos();
             }
         }

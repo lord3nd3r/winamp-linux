@@ -120,3 +120,18 @@ static inline QIcon createFallbackAppIcon() {
     return QIcon(pix);
 }
 #endif
+
+// Wayland forbids clients positioning their own windows, so move() is a no-op
+// there. Hand the drag to the compositor instead; returns true if it took it.
+#include <QGuiApplication>
+#include <QWidget>
+#include <QWindow>
+static inline bool waSystemMove(QWidget *w) {
+#if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
+    QWindow *h = w->window()->windowHandle();
+    return QGuiApplication::platformName() == "wayland" && h && h->startSystemMove();
+#else
+    Q_UNUSED(w);
+    return false;
+#endif
+}

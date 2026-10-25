@@ -295,7 +295,7 @@ void Mpris2PlayerAdaptor::Next() {
     WinampWindow *w = qobject_cast<WinampWindow*>(parent());
     if (w) {
         PlaylistWindow *pl = w->getPlaylistWindow();
-        if (pl) pl->nextTrack();
+        if (pl) w->playNext();
     }
 }
 void Mpris2PlayerAdaptor::Previous() {
@@ -316,6 +316,13 @@ void Mpris2PlayerAdaptor::OpenUri(const QString &uri) {
 
 #include "python_plugin.h"
 #include "tui.h"
+#include <QLoggingCategory>
+#include <taglib/tdebuglistener.h>
+#ifdef HAVE_AVUTIL
+extern "C" {
+#include <libavutil/log.h>
+}
+#endif
 
 int main(int argc, char *argv[]) {
     // Terminal (CLI/TUI) mode: the QPA platform must be selected before the
@@ -330,6 +337,13 @@ int main(int argc, char *argv[]) {
     if (tuiMode && qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
         qputenv("QT_QPA_PLATFORM", "offscreen");
     }
+    // Wayland forbids clients positioning their own windows: dragging works natively
+    // (waSystemMove), but EQ/playlist docking and snapping cannot. Default to XWayland
+    // for the full experience; QT_QPA_PLATFORM=wayland opts into native.
+    if (!tuiMode && qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")
+        && !qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY")) {
+        qputenv("QT_QPA_PLATFORM", "xcb");
+    }
     if (tuiMode) {
         // The terminal is the UI in --tui mode, so keep it clean: send the
         // multimedia backend / Qt / plugin diagnostics (all stderr) to a log
@@ -341,6 +355,18 @@ int main(int argc, char *argv[]) {
             qputenv("QT_LOGGING_RULES", "*=false");
         }
     }
+
+    // Quiet FFmpeg's per-file chatter ("Input #0 ...", "Estimating duration ...") while
+    // keeping errors. QT_LOGGING_RULES in the environment still overrides the Qt part.
+    QLoggingCategory::setFilterRules("qt.multimedia.ffmpeg*.debug=false\n"
+                                     "qt.multimedia.ffmpeg*.info=false");
+#ifdef HAVE_AVUTIL
+    av_log_set_level(AV_LOG_ERROR);
+#endif
+    // TagLib warns on every slightly malformed MP3 header; nothing actionable for users.
+    struct QuietTagLib : TagLib::DebugListener { void printMessage(const TagLib::String &) override {} };
+    static QuietTagLib quietTagLib;
+    TagLib::setDebugListener(&quietTagLib);
 
     QApplication app(argc, argv);
     app.setApplicationName("Winamp");
