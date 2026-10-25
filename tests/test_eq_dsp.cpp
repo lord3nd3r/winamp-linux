@@ -15,6 +15,7 @@ private slots:
     void testSetup();
     void testSetGain();
     void testProcessf();
+    void testBalanceReachesOutputChain();
 };
 
 void TestEqDsp::initTestCase() {
@@ -109,6 +110,29 @@ void TestEqDsp::testProcessf() {
         QVERIFY(!std::isnan(output[i]));
         QVERIFY(!std::isinf(output[i]));
     }
+}
+
+void TestEqDsp::testBalanceReachesOutputChain() {
+    QVERIFY(!playbackDspNeeded(false, 0));
+    QVERIFY(playbackDspNeeded(true, 0));
+    QVERIFY(playbackDspNeeded(false, -40));
+    QVERIFY(playbackDspNeeded(false, 40));
+
+    const PlaybackOutputGain center = playbackOutputGain(255, 0);
+    QCOMPARE(center.left, 1.0f);
+    QCOMPARE(center.right, 1.0f);
+
+    const PlaybackOutputGain left = playbackOutputGain(255, -127);
+    QCOMPARE(left.left, 1.0f);
+    QVERIFY(left.right < 0.001f);
+
+    const PlaybackOutputGain right = playbackOutputGain(255, 127);
+    QVERIFY(right.left < 0.001f);
+    QCOMPARE(right.right, 1.0f);
+
+    const PlaybackOutputGain quiet = playbackOutputGain(0, -127);
+    QCOMPARE(quiet.left, 0.0f);
+    QCOMPARE(quiet.right, 0.0f);
 }
 
 QTEST_MAIN(TestEqDsp)
