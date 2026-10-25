@@ -754,44 +754,81 @@ void PlaylistWindow::addFolderAsync(const QString &dirPath, bool autoPlay) {
 }
 
 void PlaylistWindow::startNextDurationProbe() {
+    if (!durationProbePath.isEmpty())
+        return; // one probe in flight
     if (durationProbeQueue.isEmpty()) {
         durationProbeActive = false;
+        if (durationProbeTimer)
+            durationProbeTimer->stop();
         return;
     }
     durationProbeActive = true;
-    QString nextFile = durationProbeQueue.takeFirst();
+    durationProbePath = durationProbeQueue.takeFirst();
+    ++durationProbeSerial;
 
-    // Create the shared probe player on first use
     if (!durationProbePlayer) {
         durationProbePlayer = new QMediaPlayer(this);
         connect(durationProbePlayer, &QMediaPlayer::mediaStatusChanged,
-            this, [this](QMediaPlayer::MediaStatus status) {
-                if (status == QMediaPlayer::LoadedMedia || status == QMediaPlayer::InvalidMedia) {
-                    // Find the track index matching the probed source
-                    QString probedPath = waSource(durationProbePlayer).toLocalFile();
-                    int idx = tracks.lastIndexOf(probedPath);
-                    if (idx >= 0 && idx < trackDurations.size() && status == QMediaPlayer::LoadedMedia) {
-                        trackDurations[idx] = durationProbePlayer->duration();
-                        updateTotalTimeDisplay();
-                    }
-                    // Probe next in queue
-                    startNextDurationProbe();
-                }
-            });
+                this, &PlaylistWindow::onDurationProbeStatus);
     }
+    if (!durationProbeTimer) {
+        durationProbeTimer = new QTimer(this);
+        durationProbeTimer->setSingleShot(true);
+        connect(durationProbeTimer, &QTimer::timeout, this, &PlaylistWindow::onDurationProbeTimeout);
+    }
+    durationProbeTimer->stop();
+    waSetSource(durationProbePlayer, QUrl::fromLocalFile(durationProbePath));
+    durationProbeTimer->start(5000);
+}
 
-    waSetSource(durationProbePlayer, QUrl::fromLocalFile(nextFile));
+void PlaylistWindow::cancelDurationProbes() {
+    durationProbeQueue.clear();
+    durationProbePath.clear();
+    ++durationProbeSerial;
+    durationProbeActive = false;
+    if (durationProbeTimer)
+        durationProbeTimer->stop();
+    if (durationProbePlayer) {
+        durationProbePlayer->stop();
+        waSetSource(durationProbePlayer, QUrl());
+    }
+}
 
-    // Safety timeout: if media never reaches Loaded/Invalid, skip after 5 seconds
-    QTimer::singleShot(5000, this, [this, nextFile]() {
-        if (durationProbeActive && waSource(durationProbePlayer).toLocalFile() == nextFile) {
-            // Timed out — skip this track's duration probe
-            startNextDurationProbe();
+void PlaylistWindow::onDurationProbeStatus(QMediaPlayer::MediaStatus status) {
+    if (!durationProbePlayer)
+        return;
+    if (status != QMediaPlayer::LoadedMedia && status != QMediaPlayer::InvalidMedia)
+        return;
+    const quint64 serial = durationProbeSerial;
+    const QString expected = durationProbePath;
+    const QString path = waSource(durationProbePlayer).toLocalFile();
+    if (expected.isEmpty() || path != expected)
+        return;
+    if (status == QMediaPlayer::LoadedMedia) {
+        const int idx = tracks.lastIndexOf(path);
+        if (idx >= 0 && idx < trackDurations.size()) {
+            trackDurations[idx] = durationProbePlayer->duration();
+            updateTotalTimeDisplay();
         }
-    });
+    }
+    if (serial != durationProbeSerial || durationProbePath != expected)
+        return;
+    if (durationProbeTimer)
+        durationProbeTimer->stop();
+    durationProbePath.clear();
+    startNextDurationProbe();
+}
+
+void PlaylistWindow::onDurationProbeTimeout() {
+    if (durationProbePath.isEmpty())
+        return;
+    ++durationProbeSerial;
+    durationProbePath.clear();
+    startNextDurationProbe();
 }
 
 void PlaylistWindow::clearPlaylist() {
+    cancelDurationProbes();
     listWidget->clear();
     tracks.clear();
     trackDurations.clear();
@@ -1355,19 +1392,11 @@ void PlaylistWindow::loadSettings(QSettings &s) {
     }
     s.endGroup();
 
-    // Add each saved track back into the playlist
-    for (const QString &track : savedTracks) {
-        QString trimmed = track.trimmed();
-        if (trimmed.isEmpty()) continue;
-        // Accept both local files that exist and remote stream URLs
-        if (!isRemoteMediaLocation(trimmed) && !QFile::exists(trimmed)) continue;
-        QListWidgetItem *item = new QListWidgetItem(trackDisplayName(tracks.size(), trimmed));
-        item->setData(Qt::UserRole, trimmed);
-        listWidget->addItem(item);
-        tracks.append(trimmed);
-        trackDurations.append(0); // Duration will be 0 until played
-    }
-    updateTotalTimeDisplay();
+    // addTrack queues a duration probe for local files. Restoring through it
+    // is what fills lengths after a restart; appending by hand left every
+    // saved row at 0:00 until the track was played.
+    for (const QString &track : savedTracks)
+        addTrack(track.trimmed());
 }
 
 // Right-click context menu on playlist items (matches Windows Winamp)

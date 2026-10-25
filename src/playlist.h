@@ -262,11 +262,20 @@ private:
     bool showTrackNumbersInPlaylist = true;
     QVector<QPair<int, QString>> removedTracksStack; // capped in removeSelected()
 
-    // Async duration probe queue (replaces blocking QEventLoop per-track)
+    // Async duration probe queue (replaces blocking QEventLoop per-track).
+    // One probe is in flight. A status is applied only when the player source
+    // is still the path that probe asked for, and the timeout is cancelled
+    // when that probe finishes.
     QMediaPlayer *durationProbePlayer = nullptr;
+    QTimer *durationProbeTimer = nullptr;
     QStringList durationProbeQueue;
+    QString durationProbePath;
+    quint64 durationProbeSerial = 0;
     bool durationProbeActive = false;
     void startNextDurationProbe();
+    void cancelDurationProbes();
+    void onDurationProbeStatus(QMediaPlayer::MediaStatus status);
+    void onDurationProbeTimeout();
 
     // Folder scans run off the GUI thread. The flag is cleared and the threads
     // are joined in the destructor so a late callback cannot touch a dead window.
