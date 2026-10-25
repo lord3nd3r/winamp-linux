@@ -1,5 +1,6 @@
 #include <QtTest>
 #include <QObject>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QFile>
 #include <QFileInfo>
@@ -30,6 +31,10 @@ private slots:
     void testAddFolderAsync();
     void testPreferenceSettingsPersist();
     void testRecycleBinRestore();
+    void testDragReorder();
+
+private:
+    void assertRowsMatchTracks(PlaylistWindow &playlist) const;
 };
 
 void TestPlaylist::initTestCase() {
@@ -261,6 +266,120 @@ void TestPlaylist::testPreferenceSettingsPersist() {
     QCOMPARE(p2.trackDisplayName(0, "song.mp3"), QString("song.mp3"));
     p2.setShowTrackNumbers(true);
     QCOMPARE(p2.trackDisplayName(0, "song.mp3"), QString("1. song.mp3"));
+}
+
+void TestPlaylist::assertRowsMatchTracks(PlaylistWindow &playlist) const {
+    QCOMPARE(playlist.listWidget->count(), playlist.trackCount());
+    QCOMPARE(playlist.trackDurations.size(), playlist.trackCount());
+    QStringList seen;
+    for (int i = 0; i < playlist.trackCount(); ++i) {
+        const QString path = playlist.listWidget->item(i)->data(Qt::UserRole).toString();
+        QCOMPARE(path, playlist.trackAt(i));
+        QVERIFY(!seen.contains(path));
+        seen.append(path);
+        QCOMPARE(playlist.listWidget->item(i)->text(), playlist.trackDisplayName(i, path));
+    }
+}
+
+void TestPlaylist::testDragReorder() {
+    PlaylistWindow playlist;
+    playlist.addTrack("http://example.com/a.mp3");
+    playlist.addTrack("http://example.com/b.mp3");
+    playlist.addTrack("http://example.com/c.mp3");
+    playlist.addTrack("http://example.com/d.mp3");
+    playlist.trackDurations = {10, 20, 30, 40};
+    assertRowsMatchTracks(playlist);
+
+    const QString a = QStringLiteral("http://example.com/a.mp3");
+    const QString b = QStringLiteral("http://example.com/b.mp3");
+    const QString c = QStringLiteral("http://example.com/c.mp3");
+    const QString d = QStringLiteral("http://example.com/d.mp3");
+
+    // Move the first row to the end. The old rowsMoved handler passed
+    // destination == size() to QList::move and aborted.
+    playlist.moveTrackRows({0}, playlist.trackCount());
+    QCOMPARE(playlist.allTracks(), QStringList({b, c, d, a}));
+    QCOMPARE(playlist.trackDurations, (QList<qint64>{20, 30, 40, 10}));
+    QCOMPARE(playlist.listWidget->count(), 4);
+    assertRowsMatchTracks(playlist);
+
+    // Last row to the start.
+    playlist.moveTrackRows({3}, 0);
+    QCOMPARE(playlist.allTracks(), QStringList({a, b, c, d}));
+    QCOMPARE(playlist.trackDurations, (QList<qint64>{10, 20, 30, 40}));
+    assertRowsMatchTracks(playlist);
+
+    // Two rows to the end, then a non-contiguous gather.
+    playlist.moveTrackRows({0, 1}, playlist.trackCount());
+    QCOMPARE(playlist.allTracks(), QStringList({c, d, a, b}));
+    QCOMPARE(playlist.trackDurations, (QList<qint64>{30, 40, 10, 20}));
+    playlist.moveTrackRows({0, 2}, playlist.trackCount());
+    QCOMPARE(playlist.allTracks(), QStringList({d, b, c, a}));
+    QCOMPARE(playlist.trackDurations, (QList<qint64>{40, 20, 30, 10}));
+    assertRowsMatchTracks(playlist);
+
+    // Dropping a row onto itself or just after itself keeps the list.
+    const QStringList unchanged = playlist.allTracks();
+    playlist.moveTrackRows({1}, 1);
+    playlist.moveTrackRows({1}, 2);
+    playlist.moveTrackRows({0, 1}, 0);
+    playlist.moveTrackRows({0, 1}, 2);
+    QCOMPARE(playlist.allTracks(), unchanged);
+    QCOMPARE(playlist.listWidget->count(), unchanged.size());
+
+    // Same moves through the model. destination == count is the append that aborted.
+    QVERIFY(playlist.listWidget->model()->moveRows(
+        QModelIndex(), 0, 1, QModelIndex(), playlist.trackCount()));
+    QCOMPARE(playlist.allTracks(), QStringList({b, c, a, d}));
+    QCOMPARE(playlist.trackDurations, (QList<qint64>{20, 30, 10, 40}));
+    assertRowsMatchTracks(playlist);
+
+    QVERIFY(playlist.listWidget->model()->moveRows(
+        QModelIndex(), 0, 2, QModelIndex(), playlist.trackCount()));
+    QCOMPARE(playlist.allTracks(), QStringList({a, d, b, c}));
+    QCOMPARE(playlist.trackDurations, (QList<qint64>{10, 40, 20, 30}));
+    assertRowsMatchTracks(playlist);
+
+    QVERIFY(playlist.listWidget->model()->moveRows(
+        QModelIndex(), 3, 1, QModelIndex(), 0));
+    QCOMPARE(playlist.allTracks(), QStringList({c, a, d, b}));
+    QCOMPARE(playlist.trackDurations, (QList<qint64>{30, 10, 40, 20}));
+    assertRowsMatchTracks(playlist);
+
+    // A destination inside the source block is rejected and must not abort or reshuffle.
+    const QStringList blocked = playlist.allTracks();
+    QVERIFY(!playlist.listWidget->model()->moveRows(
+        QModelIndex(), 0, 1, QModelIndex(), 0));
+    QVERIFY(!playlist.listWidget->model()->moveRows(
+        QModelIndex(), 0, 1, QModelIndex(), 1));
+    QVERIFY(!playlist.listWidget->model()->moveRows(
+        QModelIndex(), 0, 2, QModelIndex(), 1));
+    QVERIFY(!playlist.listWidget->model()->moveRows(
+        QModelIndex(), 0, 2, QModelIndex(), 2));
+    QCOMPARE(playlist.allTracks(), blocked);
+    assertRowsMatchTracks(playlist);
+
+    // Double-click plays the file shown on that row.
+    QSignalSpy spy(&playlist, &PlaylistWindow::trackDoubleClicked);
+    QListWidgetItem *shown = playlist.listWidget->item(playlist.listWidget->count() - 1);
+    QVERIFY(shown);
+    emit playlist.listWidget->itemDoubleClicked(shown);
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.at(0).at(0).toString(), shown->data(Qt::UserRole).toString());
+    QCOMPARE(spy.at(0).at(0).toString(), playlist.trackAt(playlist.trackCount() - 1));
+
+    // A row past tracks[] must still play its own path instead of indexing off the end.
+    auto *extra = new QListWidgetItem(QStringLiteral("ghost"));
+    extra->setData(Qt::UserRole, QStringLiteral("http://example.com/ghost.mp3"));
+    playlist.listWidget->addItem(extra);
+    QVERIFY(playlist.listWidget->count() > playlist.trackCount());
+    emit playlist.listWidget->itemDoubleClicked(extra);
+    QCOMPARE(spy.count(), 2);
+    QCOMPARE(spy.at(1).at(0).toString(), QStringLiteral("http://example.com/ghost.mp3"));
+
+    extra->setData(Qt::UserRole, QString());
+    emit playlist.listWidget->itemDoubleClicked(extra);
+    QCOMPARE(spy.count(), 2);
 }
 
 void TestPlaylist::testRecycleBinRestore() {
