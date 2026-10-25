@@ -158,6 +158,11 @@ public:
         playlistWindow = new PlaylistWindow(this);
         connect(playlistWindow, &PlaylistWindow::trackDoubleClicked, this, &WinampWindow::playTrack);
         eqWindow = new EqualizerWindow(this);
+
+        // Tray Exit, MPRIS Quit, and the terminal UI call QApplication::quit()
+        // without closing this window, so closeEvent never runs. aboutToQuit
+        // still fires while the windows are alive.
+        connect(qApp, &QCoreApplication::aboutToQuit, this, [this]() { saveAllSettings(); });
         
         // Create video window (hidden by default)
         videoWindow = new VideoWindow(this);
@@ -239,63 +244,67 @@ public:
     }
 
     void playFile(const QString &file) {
-        if (!file.isEmpty() && QFile::exists(file)) {
-            if (isPlaylistPath(file)) {
-                resolveLocalPlaylistFile(file, 0);
-                return;
-            }
-            streamViaReplyActive = false;
-            streamDirectFallbackTried = false;
-            pendingStreamUrl = QUrl();
-            cleanupNetworkStream();
-            currentFile = file;
-            waSetSource(player, QUrl::fromLocalFile(file));
-            player->play();
+        if (file.isEmpty() || !QFile::exists(file))
+            return;
+        const quint64 generation = ++playbackGeneration;
+        if (isPlaylistPath(file)) {
+            resolveLocalPlaylistFile(file, 0, generation);
+            return;
         }
+        streamViaReplyActive = false;
+        streamDirectFallbackTried = false;
+        pendingStreamUrl = QUrl();
+        cleanupNetworkStream();
+        currentFile = file;
+        waSetSource(player, QUrl::fromLocalFile(file));
+        player->play();
     }
 
     void playUrl(const QString &url) {
-        if (!url.isEmpty()) {
-            QUrl parsed = QUrl::fromUserInput(url.trimmed());
-            if (parsed.isLocalFile()) {
-                playFile(parsed.toLocalFile());
-                return;
-            }
-
-            if (isPlaylistPath(parsed.path())) {
-                resolvePlaylistUrl(parsed, 0);
-                return;
-            }
-
-            if (parsed.scheme().compare("http", Qt::CaseInsensitive) == 0 ||
-                parsed.scheme().compare("https", Qt::CaseInsensitive) == 0) {
-                playHttpStream(parsed);
-                return;
-            }
-
-            streamViaReplyActive = false;
-            streamDirectFallbackTried = false;
-            pendingStreamUrl = QUrl();
-            cleanupNetworkStream();
-
-            // icy/ftp (and any other non-http(s) remote scheme) still reach a network backend,
-            // so apply the same SSRF host guard used for http(s) streams (WA-001).
-            validateStreamHostAsync(parsed, [this, url, parsed](bool allowed) {
-                if (!allowed) {
-                    qWarning() << "Refusing to play stream: disallowed host" << parsed.host();
-                    return;
-                }
-                currentFile = url;
-                waSetSource(player, parsed);
-                player->play();
-                updateTrayTooltip();
-
-                if (showSongNotifications && trayIcon) {
-                    QString title = metaTitle.isEmpty() ? url : metaTitle;
-                    trayIcon->showMessage("Winamp", title, QSystemTrayIcon::Information, 3000);
-                }
-            });
+        if (url.isEmpty())
+            return;
+        const quint64 generation = ++playbackGeneration;
+        QUrl parsed = QUrl::fromUserInput(url.trimmed());
+        if (parsed.isLocalFile()) {
+            playFile(parsed.toLocalFile());
+            return;
         }
+
+        if (isPlaylistPath(parsed.path())) {
+            resolvePlaylistUrl(parsed, 0, generation);
+            return;
+        }
+
+        if (parsed.scheme().compare("http", Qt::CaseInsensitive) == 0 ||
+            parsed.scheme().compare("https", Qt::CaseInsensitive) == 0) {
+            playHttpStream(parsed);
+            return;
+        }
+
+        streamViaReplyActive = false;
+        streamDirectFallbackTried = false;
+        pendingStreamUrl = QUrl();
+        cleanupNetworkStream();
+
+        // icy/ftp (and any other non-http(s) remote scheme) still reach a network backend,
+        // so apply the same SSRF host guard used for http(s) streams (WA-001).
+        validateStreamHostAsync(parsed, [this, url, parsed, generation](bool allowed) {
+            if (!playbackCallbackCurrent(generation))
+                return;
+            if (!allowed) {
+                qWarning() << "Refusing to play stream: disallowed host" << parsed.host();
+                return;
+            }
+            currentFile = url;
+            waSetSource(player, parsed);
+            player->play();
+            updateTrayTooltip();
+
+            if (showSongNotifications && trayIcon) {
+                QString title = metaTitle.isEmpty() ? url : metaTitle;
+                trayIcon->showMessage("Winamp", title, QSystemTrayIcon::Information, 3000);
+            }
+        });
     }
 
 public slots:
@@ -1261,12 +1270,20 @@ public:
     // Fetches a remote M3U/PLS playlist, extracts the first real media entry, and plays
     // it. Without this, the playlist's raw text gets handed straight to FFmpeg, which can
     // misdetect it as some other container and "play" it with no audio stream at all.
-    void resolvePlaylistUrl(const QUrl &url, int depth) {
+    bool playbackCallbackCurrent(quint64 generation) const {
+        return generation == playbackGeneration;
+    }
+
+    void resolvePlaylistUrl(const QUrl &url, int depth, quint64 generation) {
         if (depth >= kMaxPlaylistResolveDepth) {
             qWarning() << "Playlist resolution exceeded max depth, giving up:" << url;
             return;
         }
-        validateStreamHostAsync(url, [this, url, depth](bool allowed) {
+        if (!playbackCallbackCurrent(generation))
+            return;
+        validateStreamHostAsync(url, [this, url, depth, generation](bool allowed) {
+            if (!playbackCallbackCurrent(generation))
+                return;
             if (!allowed) {
                 qWarning() << "Refusing to fetch playlist: disallowed host" << url.host();
                 return;
@@ -1286,8 +1303,10 @@ public:
 
             QNetworkReply *reply = networkManager->get(request);
 #if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
-            connect(reply, &QNetworkReply::redirected, this, [this, reply](const QUrl &redirectUrl) {
-                validateStreamHostAsync(redirectUrl, [reply, redirectUrl](bool allowed) {
+            connect(reply, &QNetworkReply::redirected, this, [this, reply, generation](const QUrl &redirectUrl) {
+                validateStreamHostAsync(redirectUrl, [this, reply, redirectUrl, generation](bool allowed) {
+                    if (!playbackCallbackCurrent(generation))
+                        return;
                     if (allowed) reply->redirectAllowed();
                     else {
                         qWarning() << "Refusing to follow playlist redirect: disallowed host" << redirectUrl.host();
@@ -1296,8 +1315,10 @@ public:
                 });
             });
 #endif
-            connect(reply, &QNetworkReply::finished, this, [this, reply, depth]() {
+            connect(reply, &QNetworkReply::finished, this, [this, reply, depth, generation]() {
                 reply->deleteLater();
+                if (!playbackCallbackCurrent(generation))
+                    return;
                 if (reply->error() != QNetworkReply::NoError) {
                     qWarning() << "Failed to fetch playlist:" << reply->errorString();
                     return;
@@ -1308,7 +1329,7 @@ public:
                     return;
                 }
                 if (isPlaylistPath(entry)) {
-                    resolvePlaylistUrl(QUrl::fromUserInput(entry), depth + 1);
+                    resolvePlaylistUrl(QUrl::fromUserInput(entry), depth + 1, generation);
                 } else {
                     playUrl(entry);
                 }
@@ -1317,7 +1338,9 @@ public:
     }
 
     // Local-file counterpart of resolvePlaylistUrl() — same reasoning, no network fetch needed.
-    void resolveLocalPlaylistFile(const QString &path, int depth) {
+    void resolveLocalPlaylistFile(const QString &path, int depth, quint64 generation) {
+        if (!playbackCallbackCurrent(generation))
+            return;
         if (depth >= kMaxPlaylistResolveDepth) {
             qWarning() << "Playlist resolution exceeded max depth, giving up:" << path;
             return;
@@ -1330,32 +1353,37 @@ public:
             qWarning() << "No playable entries found in playlist" << path;
             return;
         }
+        if (!playbackCallbackCurrent(generation))
+            return;
         if (isPlaylistPath(entry)) {
             QUrl entryUrl = QUrl::fromUserInput(entry);
-            if (entryUrl.isLocalFile()) resolveLocalPlaylistFile(entryUrl.toLocalFile(), depth + 1);
-            else resolvePlaylistUrl(entryUrl, depth + 1);
+            if (entryUrl.isLocalFile()) resolveLocalPlaylistFile(entryUrl.toLocalFile(), depth + 1, generation);
+            else resolvePlaylistUrl(entryUrl, depth + 1, generation);
         } else {
             playUrl(entry);
         }
     }
 
     void playHttpStream(const QUrl &url) {
+        const quint64 generation = ++playbackGeneration;
         pendingStreamUrl = url;
         streamViaReplyActive = true;
         streamDirectFallbackTried = false;
         cleanupNetworkStream();
 
-        validateStreamHostAsync(url, [this, url](bool allowed) {
+        validateStreamHostAsync(url, [this, url, generation](bool allowed) {
+            if (!playbackCallbackCurrent(generation))
+                return;
             if (!allowed) {
                 qWarning() << "Refusing to stream: disallowed host" << url.host();
                 streamViaReplyActive = false;
                 return;
             }
-            startHttpStreamRequest(url);
+            startHttpStreamRequest(url, generation);
         });
     }
 
-    void startHttpStreamRequest(const QUrl &url) {
+    void startHttpStreamRequest(const QUrl &url, quint64 generation) {
         if (!networkManager) {
             networkManager = new QNetworkAccessManager(this);
         }
@@ -1385,17 +1413,19 @@ public:
         request.setRawHeader("Origin", origin.toUtf8());
 
         streamReply = networkManager->get(request);
-        connect(streamReply, &QNetworkReply::finished, this, [this]() {
+        connect(streamReply, &QNetworkReply::finished, this, [this, generation]() {
+            if (!playbackCallbackCurrent(generation)) return;
             if (!streamViaReplyActive || !streamReply) return;
             if (streamReply->error() != QNetworkReply::NoError) {
                 fallbackToDirectStream();
             }
         });
 #if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
-        connect(streamReply, &QNetworkReply::redirected, this, [this](const QUrl &redirectUrl) {
+        connect(streamReply, &QNetworkReply::redirected, this, [this, generation](const QUrl &redirectUrl) {
             QNetworkReply *reply = streamReply;
             if (!reply) return;
-            validateStreamHostAsync(redirectUrl, [this, reply, redirectUrl](bool allowed) {
+            validateStreamHostAsync(redirectUrl, [this, reply, redirectUrl, generation](bool allowed) {
+                if (!playbackCallbackCurrent(generation)) return;
                 if (streamReply != reply) return; // stream already replaced/aborted
                 if (allowed) {
                     reply->redirectAllowed();
@@ -3032,6 +3062,9 @@ protected:
 public:
     void playTrack(const QString &fileName) {
         if (fileName.isEmpty()) return;
+        // Drop in-flight DNS from the previous track before starting this one.
+        // playUrl / playFile bump the generation again for their own callbacks.
+        ++playbackGeneration;
         if (isRemoteMediaLocation(fileName)) {
             playUrl(fileName);
             return;
@@ -3175,7 +3208,10 @@ public:
     
     void saveAllSettings() {
         QSettings s(configPath(), QSettings::IniFormat);
-        
+        writeSettings(s);
+    }
+
+    void writeSettings(QSettings &s) {
         s.beginGroup("MainWindow");
         s.setValue("x", x());
         s.setValue("y", y());
@@ -3340,6 +3376,9 @@ private:
     QNetworkAccessManager *networkManager = nullptr;
     QNetworkReply *streamReply = nullptr;
     QUrl pendingStreamUrl;
+    // Bumped on every new play request. DNS and playlist callbacks captured an
+    // older value must not start or replace the track the user has since chosen.
+    quint64 playbackGeneration = 0;
     bool streamViaReplyActive = false;
     bool streamDirectFallbackTried = false;
     QPoint dragPosition;
