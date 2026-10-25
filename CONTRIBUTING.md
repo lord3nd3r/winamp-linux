@@ -230,7 +230,7 @@ Smoke coverage in the script: `--help`, `--version`, an offscreen launch, and `-
 
 ### Version
 
-`project(Winamp VERSION 1.3.0 ...)` in `CMakeLists.txt` plus `WINAMP_VERSION_FULL` (`1.3.0`) and `kWinampVersion` in `src/constants.h` must stay aligned with **GitHub release tags**. Bump all three when cutting a release. The AppImage filename uses that same version (`Winamp-1.3.0-x86_64.AppImage`).
+`project(Winamp VERSION 1.3.0 ...)` in `CMakeLists.txt` plus `WINAMP_VERSION_FULL` (`1.3.0`) and `kWinampVersion` in `src/constants.h` must stay aligned with **GitHub release tags**. Bump all three when cutting a release, and record the user-visible changes in [CHANGELOG.md](CHANGELOG.md). The AppImage filename uses that same version (`Winamp-1.3.0-x86_64.AppImage`).
 
 ---
 
