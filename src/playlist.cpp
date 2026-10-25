@@ -9,6 +9,18 @@
 #include <algorithm>
 #include <random>
 
+PlaylistWindow::~PlaylistWindow() {
+    if (folderScanAlive)
+        folderScanAlive->store(false);
+    const QList<QThread *> threads = folderScanThreads;
+    folderScanThreads.clear();
+    for (QThread *thread : threads) {
+        thread->requestInterruption();
+        thread->wait();
+        delete thread;
+    }
+}
+
 QString PlaylistWindow::trackDisplayName(int index, const QString &filePath) {
     // Winamp 2.x default: show "Artist - Title" from ID3 when present.
     QString title = TagMetadata::displayTitle(filePath);
@@ -694,30 +706,42 @@ void PlaylistWindow::addTrack(const QString &filePath) {
 }
 
 void PlaylistWindow::addFolderAsync(const QString &dirPath, bool autoPlay) {
-    QThread *thread = QThread::create([this, dirPath, autoPlay]() {
-        QDirIterator it(dirPath, {"*.mp3", "*.wav", "*.flac", "*.ogg", "*.m4a", "*.aac", "*.wma", "*.opus"}, 
+    const auto alive = folderScanAlive;
+    QThread *thread = QThread::create([this, alive, dirPath, autoPlay]() {
+        QDirIterator it(dirPath, {"*.mp3", "*.wav", "*.flac", "*.ogg", "*.m4a", "*.aac", "*.wma", "*.opus"},
                         QDir::Files, QDirIterator::Subdirectories);
         QStringList files;
         while (it.hasNext()) {
+            if (!alive->load() || QThread::currentThread()->isInterruptionRequested())
+                return;
             files.append(it.next());
         }
+        if (!alive->load() || QThread::currentThread()->isInterruptionRequested())
+            return;
         std::sort(files.begin(), files.end());
-        
-        QMetaObject::invokeMethod(this, [this, files, autoPlay]() {
+        if (!alive->load())
+            return;
+
+        QMetaObject::invokeMethod(this, [this, alive, files, autoPlay]() {
+            if (!alive->load())
+                return;
             int startIdx = tracks.size();
             for (const QString &file : files) {
                 addTrack(file);
             }
             if (autoPlay && startIdx < tracks.size()) {
                 setCurrentTrackIndex(startIdx);
-                if (mainWindow) {
+                if (mainWindow)
                     mainWindow->playTrack(tracks[startIdx]);
-                }
             }
         }, Qt::QueuedConnection);
     });
-    
-    connect(thread, &QThread::finished, thread, &QThread::deleteLater);
+
+    folderScanThreads.append(thread);
+    connect(thread, &QThread::finished, this, [this, thread]() {
+        folderScanThreads.removeAll(thread);
+        thread->deleteLater();
+    });
     thread->start();
 }
 
