@@ -21,8 +21,12 @@
 #include <tstring.h>
 #include <tfile.h>
 
-#if TAGLIB_MAJOR_VERSION >= 2
+// ID3v2::Version and File::StripTags arrived in TagLib 1.12. 1.11 only has
+// the int/bool save() overload.
+#if TAGLIB_MAJOR_VERSION > 1 || (TAGLIB_MAJOR_VERSION == 1 && TAGLIB_MINOR_VERSION >= 12)
 #  include <id3v2.h>
+#endif
+#if TAGLIB_MAJOR_VERSION >= 2
 #  include <tpropertymap.h>
 #endif
 
@@ -85,6 +89,50 @@ void applyTagFields(TagLib::Tag *tag, const MediaTags &tags) {
     tag->setTrack(tags.track > 0 ? static_cast<unsigned int>(tags.track) : 0);
 }
 
+// ID3v1 is ISO-8859-1. TagLib's default StringHandler writes no bytes for a
+// field when any code point is outside that set, which wipes the Latin-1
+// prefix of a mixed string. Map the rest to '?' and cut to the on-disk limit
+// (one byte per Latin-1 character) before the field is stored.
+QString id3v1Text(const QString &value, int maxBytes) {
+    QString out;
+    out.reserve(qMin(value.size(), maxBytes));
+    int bytes = 0;
+    for (int i = 0; i < value.size() && bytes < maxBytes; ++i) {
+        const QChar ch = value.at(i);
+        if (ch.isHighSurrogate()) {
+            if (i + 1 < value.size() && value.at(i + 1).isLowSurrogate())
+                ++i;
+            out.append(QLatin1Char('?'));
+            ++bytes;
+            continue;
+        }
+        out.append(ch.unicode() > 0xFF ? QLatin1Char('?') : ch);
+        ++bytes;
+    }
+    return out;
+}
+
+void applyId3v1Fields(TagLib::ID3v1::Tag *tag, const MediaTags &tags) {
+    if (!tag)
+        return;
+    MediaTags trimmed = tags;
+    trimmed.title = id3v1Text(tags.title, 30);
+    trimmed.artist = id3v1Text(tags.artist, 30);
+    trimmed.album = id3v1Text(tags.album, 30);
+    // TagLib renders every ID3v1 tag as v1.1: 28-byte comment, NUL, track.
+    // A 30-character comment would lose its last two characters on write.
+    trimmed.comment = id3v1Text(tags.comment, 28);
+    bool yearOk = false;
+    const unsigned int year = tags.year.trimmed().toUInt(&yearOk);
+    // The year field is four characters. 10000 would be stored as "1000".
+    if (!yearOk || year == 0 || year > 9999)
+        trimmed.year.clear();
+    // Track is a single byte; 0 means unset. Don't saturate to 255.
+    if (tags.track < 1 || tags.track > 255)
+        trimmed.track = 0;
+    applyTagFields(tag, trimmed);
+}
+
 MediaTags extractTagFields(const TagLib::Tag *tag) {
     MediaTags out;
     if (!tag)
@@ -115,20 +163,29 @@ MediaTags readMpegTags(TagLib::MPEG::File &mpeg) {
 }
 
 bool writeMpegTags(TagLib::MPEG::File &mpeg, const MediaTags &tags) {
-    // Winamp 2.x / classic nullsoft: keep both ID3v1 and ID3v2 in sync on save.
+    // Winamp 2.x writes both tags. ID3v2.3 (UTF-16) is the default: a lot of
+    // older players and hardware reject v2.4. ID3v1 gets a Latin-1 prefix.
+    // Do not duplicate — that copies the full v2 strings back onto v1.
     TagLib::ID3v2::Tag *v2 = mpeg.ID3v2Tag(true);
     TagLib::ID3v1::Tag *v1 = mpeg.ID3v1Tag(true);
-    applyTagFields(v2, tags);
-    applyTagFields(v1, tags);
-    // ID3v1 title/artist/album are 30-char; TagLib truncates on write.
-#if TAGLIB_MAJOR_VERSION >= 2
+    // v2.3 stores the year in TYER, which is four digits. 10000 would be
+    // written back as 1000, so leave the frame unset instead.
+    MediaTags stored = tags;
+    bool yearOk = false;
+    const unsigned int year = tags.year.trimmed().toUInt(&yearOk);
+    if (yearOk && year > 9999)
+        stored.year.clear();
+    applyTagFields(v2, stored);
+    applyId3v1Fields(v1, stored);
+#if TAGLIB_MAJOR_VERSION > 1 || (TAGLIB_MAJOR_VERSION == 1 && TAGLIB_MINOR_VERSION >= 12)
     return mpeg.save(TagLib::MPEG::File::AllTags,
                      TagLib::File::StripOthers,
-                     TagLib::ID3v2::v4,
-                     TagLib::File::Duplicate);
+                     TagLib::ID3v2::v3,
+                     TagLib::File::DoNotDuplicate);
 #else
-    // TagLib 1.x: save(tags, stripOthers, id3v2Version, duplicateTags)
-    return mpeg.save(TagLib::MPEG::File::AllTags, true, 4, true);
+    // TagLib 1.11: save(tags, stripOthers, id3v2Version, duplicateTags).
+    // Version 3 is ID3v2.3. This overload is not deprecated on 1.11.
+    return mpeg.save(TagLib::MPEG::File::AllTags, true, 3, false);
 #endif
 }
 
