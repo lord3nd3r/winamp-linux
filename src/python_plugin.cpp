@@ -1,4 +1,4 @@
-// python_plugin.cpp — Sandbox-Isolated Python Plugin Host Manager implementation
+// python_plugin.cpp — Process-isolated Python plugin host.
 #include "python_plugin.h"
 #include "winamp_window.h"
 #include "playlist.h"
@@ -12,6 +12,7 @@
 #include <QFile>
 #include <QDebug>
 #include <QMediaPlayer>
+#include <QTimer>
 
 PythonPluginManager::PythonPluginManager(WinampWindow *w)
     : QObject(nullptr)
@@ -29,8 +30,6 @@ PythonPluginManager::PythonPluginManager(WinampWindow *w)
     hostScriptPath = hostDir + "/winamp_plugin_host.py";
     writeHostScript();
 
-    qDebug() << "[Python Plugins] Spawning sandbox plugin host process...";
-
     process = new QProcess(this);
     process->setProcessChannelMode(QProcess::SeparateChannels);
     connect(process, &QProcess::readyReadStandardOutput,
@@ -45,9 +44,18 @@ PythonPluginManager::PythonPluginManager(WinampWindow *w)
     connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             this, &PythonPluginManager::handleProcessFinished);
 
-    process->start(QStringLiteral("python3"), QStringList() << hostScriptPath);
+    startHostProcess();
+}
 
+void PythonPluginManager::startHostProcess()
+{
+    if (shuttingDown || !process || process->state() != QProcess::NotRunning)
+        return;
+    qDebug() << "[Python Plugins] Starting plugin host process...";
+    hostRunningTimer.invalidate();
+    process->start(QStringLiteral("python3"), QStringList() << hostScriptPath);
     if (process->waitForStarted(2000)) {
+        hostRunningTimer.start();
         qDebug() << "[Python Plugins] Host process started successfully (PID:"
                  << process->processId() << ")";
         sendEvent(QStringLiteral("start"));
@@ -59,6 +67,7 @@ PythonPluginManager::PythonPluginManager(WinampWindow *w)
 
 PythonPluginManager::~PythonPluginManager()
 {
+    shuttingDown = true;
     if (process && process->state() == QProcess::Running) {
         qDebug() << "[Python Plugins] Shutting down plugin host process...";
         sendEvent(QStringLiteral("exit"));
@@ -113,6 +122,24 @@ void PythonPluginManager::handleProcessFinished(int exitCode, QProcess::ExitStat
 {
     qDebug() << "[Python Plugins] Subprocess finished with exit code:" << exitCode
              << "status:" << exitStatus;
+    if (shuttingDown)
+        return;
+    // A host that survived a while was not crash-looping; allow a fresh set of retries.
+    if (hostRunningTimer.isValid() && hostRunningTimer.elapsed() >= PluginHostRestart::kStableResetMs)
+        hostRestartCount = 0;
+    hostRunningTimer.invalidate();
+    if (!PluginHostRestart::shouldRestart(hostRestartCount)) {
+        qWarning() << "[Python Plugins] Host exited repeatedly; not restarting again";
+        return;
+    }
+    const int delay = PluginHostRestart::backoffMs(hostRestartCount);
+    ++hostRestartCount;
+    qWarning() << "[Python Plugins] Host exited; restarting in" << delay << "ms"
+               << "(attempt" << hostRestartCount << "of" << PluginHostRestart::kMaxRestarts << ")";
+    QTimer::singleShot(delay, this, [this]() {
+        if (!shuttingDown)
+            startHostProcess();
+    });
 }
 
 void PythonPluginManager::handleRequest(const QJsonObject &req)
@@ -223,7 +250,7 @@ void PythonPluginManager::writeHostScript()
     // on_winamp_start (get_volume, etc.) do not deadlock waiting for a response
     // that nobody is reading.
     out << R"PY(#!/usr/bin/env python3
-# winamp_plugin_host.py — sandboxed plugin host (generated; do not edit)
+# winamp_plugin_host.py — process-isolated plugin host (generated; do not edit)
 import importlib
 import json
 import os
@@ -349,7 +376,7 @@ class PluginHost:
         if not os.path.isdir(plugin_dir):
             return
 
-        # Prefer instance API over import winamp.Api for sandbox proxy
+        # Prefer instance API over import winamp.Api for the process-isolated proxy
         class WinampDummyModule:
             Api = type('Api', (), {})
         sys.modules['winamp'] = WinampDummyModule()
