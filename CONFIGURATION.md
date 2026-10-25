@@ -16,6 +16,7 @@ This document describes **where Winamp for Linux stores state**, how skins and l
 8. [Recent files](#8-recent-files)
 9. [Environment & runtime](#9-environment--runtime)
 10. [Reset / backup](#10-reset--backup)
+11. [Playback behavior stored outside the INI](#playback-behavior-stored-outside-the-ini)
 
 ---
 
@@ -31,6 +32,8 @@ This document describes **where Winamp for Linux stores state**, how skins and l
 | `~/.config/winamp/plugins/*.json` | Optional per-plugin config (e.g. `icecast_dj.json`) |
 | `~/.config/winamp/bookmarks.txt` | Bookmark list (one entry per line) |
 | `~/.cache/winamp/winamp_plugin_host.py` | **Generated** plugin host (do not treat as a user plugin) |
+| `~/.cache/winamp/skins/<name>/` | Extracted `.wsz` / `.zip` / `.wal` skin, plus a `.source-stamp` |
+| `~/.cache/winamp/winamp-tui.log` | stderr while `--tui` / `--cli` is running |
 
 Qt resolves `~/.config` via `QStandardPaths::ConfigLocation` and cache via `CacheLocation`.
 
@@ -84,8 +87,8 @@ Written/read outside the grouped window sections:
 | `volume` | int | `200` | Volume 0–255 (classic scale) |
 | `balance` | int | `0` | Stereo balance (−127 … +127; 0 = center) |
 | `shuffle` | bool | `false` | Shuffle playlist order |
-| `repeat` | bool | `false` | Repeat playlist |
-| `repeatTrack` | bool | `false` | Repeat current track only |
+| `repeat` | bool | `false` | Repeat playlist (`repeatOn`) |
+| `repeatTrack` | bool | `false` | Repeat the current track. The classic repeat button, the `R` key, and the modern repeat control cycle together: off (`repeat` false, `repeatTrack` false) → all (`repeat` true, `repeatTrack` false) → one (both true) → off. The menu can set any of the three directly. A saved pair with `repeat` false and `repeatTrack` true is treated as off on the next cycle |
 | `eqVisible` | bool | `false` | Equalizer window shown |
 | `plVisible` | bool | `true` | Playlist window shown |
 | `visMode` | int | `1` | Spectrum / visualization mode index |
@@ -110,12 +113,12 @@ Written/read outside the grouped window sections:
 | `visible` | bool | — | Saved visibility (paired with main UI toggles) |
 | `enabled` | bool | `true` | EQ DSP processing active |
 | `auto` | bool | `false` | Auto-EQ mode flag |
-| `preamp` | int | `32` | Preamp slider 0–63 (center 32 ≈ 0 dB) |
-| `band0` … `band9` | int | `32` | Per-band gain 0–63 (center 32 ≈ 0 dB) |
+| `preamp` | int | `32` | Preamp slider 0–63 (center 32 = 0 dB). The DSP path that applies it needs Qt 6.8 |
+| `band0` … `band9` | int | `32` | Per-band gain 0–63 (center 32 = 0 dB) |
 | `snapped` | bool | `false` | Snapped to main window |
 
-**Band frequency mapping (classic):**  
-`band0` 60 Hz · `band1` 170 Hz · `band2` 310 Hz · `band3` 600 Hz · `band4` 1 kHz · `band5` 3 kHz · `band6` 6 kHz · `band7` 12 kHz · `band8` 14 kHz · `band9` 16 kHz
+**Band center frequencies** (`eq10_freq` in `eq_dsp.h`):  
+`band0` 70 Hz · `band1` 180 Hz · `band2` 320 Hz · `band3` 600 Hz · `band4` 1 kHz · `band5` 3 kHz · `band6` 6 kHz · `band7` 12 kHz · `band8` 14 kHz · `band9` 16 kHz
 
 ### `[Playlist]`
 
@@ -144,7 +147,11 @@ Managed by `recent_files.h`:
 
 ### Classic skins
 
-Classic skins are directories (or archives) of bitmap resources: `MAIN.BMP`, `CBUTTONS.BMP`, `titlebar.bmp`, `Eqmain.bmp`, `Pledit.bmp`, `volume.bmp`, `text.bmp`, `numbers.bmp`, and related files. Loading is case-insensitive on Linux where the loader probes variants.
+Classic skins are directories or archives of bitmap resources: `MAIN.BMP`, `CBUTTONS.BMP`, `titlebar.bmp`, `Eqmain.bmp`, `Pledit.bmp`, `volume.bmp`, `text.bmp`, `numbers.bmp`, and related files. Loading is case-insensitive on Linux where the loader probes variants.
+
+`.wsz`, `.zip`, and `.wal` packs are ordinary zip files. `extractSkinArchive()` in `constants.h` reads them with zlib. The `unzip` program is not used. Nested directories inside the archive are kept, and the loader then looks for the bitmap root (or `skin.xml`) inside that tree. Archives larger than 128 MB, or with more than 512 entries, are rejected.
+
+Extracts land in `~/.cache/winamp/skins/<archive base name>/`. A `.source-stamp` file records size, mtime, and SHA-256. A later launch reuses the cache only when all three still match; otherwise the directory is deleted and extracted again.
 
 **Search order (typical):**
 
@@ -216,11 +223,13 @@ Stored in `winamp.conf` under `[RecentFiles]` (see above). Updated as local file
 
 | Variable / factor | Effect |
 |-------------------|--------|
-| `PATH` | Must include `python3` for plugins |
-| `QT_QPA_PLATFORM` | e.g. `offscreen` for headless tests |
+| `PATH` | Must include `python3` for plugins. The AppImage does not bundle the interpreter |
+| `QT_QPA_PLATFORM` | e.g. `offscreen` for headless tests. On Wayland the GUI defaults to `xcb` so window positions work; set `wayland` to opt into native Wayland |
 | `QT_LOGGING_RULES` | Qt category logging |
 | Multimedia backend | GStreamer/FFmpeg packages determine format support |
-| DBus session bus | Required for MPRIS2 clients to see the player |
+| Qt version | Spectrum, EQ processing, Milkdrop PCM, and balance need Qt 6.8 (`QAudioBufferOutput`). Older Qt plays through `QAudioOutput`. Dragging balance appends ` (NO TAP)` |
+| DBus session bus | Required for MPRIS2. The interface is registered only on Qt 6 with Qt DBus, as `org.mpris.MediaPlayer2.winamp` |
+| `APPIMAGE_EXTRACT_AND_RUN` | Set to `1` to run the AppImage without FUSE |
 
 ---
 
@@ -235,9 +244,34 @@ mv ~/.config/winamp ~/.config/winamp.bak.$(date +%s)
 
 # Plugin host only
 rm -f ~/.cache/winamp/winamp_plugin_host.py
+
+# Force skin archives to extract again
+rm -rf ~/.cache/winamp/skins
 ```
 
 After reset, defaults apply on next launch (volume 200, playlist visible, etc.—see load defaults above).
+
+---
+
+## Playback behavior stored outside the INI
+
+These are code paths, not extra keys. They are listed here because they change what a saved playlist or a desktop controller does.
+
+### M3U and PLS
+
+Opening a `.m3u`, `.m3u8`, or `.pls` file (local or remote) parses every entry and enqueues them. M3U uses every non-comment line. PLS uses every `FileN=` value (`TitleN` and `LengthN` are not tracks). Relative names are resolved against the playlist’s directory or, for a remote playlist, against the playlist URL. A name with no scheme is a relative path; it is not turned into `http://`. Nested playlist files are followed for up to 3 hops. The first real media entry starts playback.
+
+### MPRIS
+
+On Qt 6 with DBus, `Volume` is a 0–1 double written through the player’s 0–255 control (`setPluginVolume`). `OpenUri` plays a local file path or an `http`/`https` URL. `ftp` is ignored. `Previous` calls the same shuffle and repeat logic as `Next`: shuffle picks another track, and repeat wraps from the first track to the last.
+
+### ID3
+
+File Info (Alt+3) writes MP3 tags as ID3v2.3 plus ID3v1. ID3v2 keeps the full text. ID3v1 is Latin-1, cut to 30 bytes for title, artist, and album and 28 bytes for the comment. A numeric year above 9999 is omitted on both tags, because v2.3’s year frame is four digits and would otherwise store `10000` as `1000`. A track outside 1–255 becomes 0 on the v1 tag and is kept on v2. TagLib 1.12 and newer use the current `save` API with `ID3v2::v3` and `DoNotDuplicate`. TagLib 1.11 uses `save(AllTags, true, 3, false)`.
+
+### Repeat cycle
+
+See `[Playback]` `repeat` / `repeatTrack` above. One click, the `R` key, and the modern repeat button all call `cycleRepeat()`.
 
 ---
 

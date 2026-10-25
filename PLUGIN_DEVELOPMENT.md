@@ -52,7 +52,7 @@ An exception, infinite loop, or native crash inside a plugin kills the host proc
 
 | Requirement | Notes |
 |-------------|--------|
-| `python3` on `PATH` | Invoked as `python3 /path/to/host.py` |
+| `python3` on `PATH` | Invoked as `python3 /path/to/host.py`. The AppImage does not bundle Python; the machine that runs it still needs `python3` |
 | Standard library | Host uses `json`, `threading`, `importlib`, `queue` only |
 | Extra packages | Only if *your* plugin imports them (`pip install --user …`) |
 | Optional tools | e.g. `ffmpeg` for the Icecast DJ example |
@@ -349,7 +349,8 @@ See the defaults at the top of `icecast_dj.py` for the full schema.
 
 | Symptom | Checks |
 |---------|--------|
-| No `[Python Plugins] Host process started` | Is `python3` installed and on `PATH`? |
+| No `[Python Plugins] Host process started` | Is `python3` installed and on `PATH`? The AppImage does not include it |
+| Host stops after a few seconds of retries | Five crashes end the restart loop (500 ms, 1 s, 2 s, 4 s, 8 s). Fix the plugin and start the player again. A host that stays up 30 seconds clears the count |
 | Host starts but no plugins load | Files under `~/.config/winamp/plugins/` ending in `.py`? Disabled suffix? |
 | `JSON parse error` on player | Something wrote non-JSON to the RPC stdout path—use stderr for logs |
 | API returns `None` | Player busy/timeout (5 s); call fewer request APIs during heavy UI work |
