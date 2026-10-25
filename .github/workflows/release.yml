@@ -46,11 +46,11 @@ jobs:
             image: debian:trixie@sha256:fac46bff2e02f51425b6e33b0e1169f55dfb053d83511ca28aa50c09fd5ed7a4
             family: deb
           # --- RPM family ---
-          - distro: fedora-41
-            image: fedora:41@sha256:f1a3fab47bcb3c3ddf3135d5ee7ba8b7b25f2e809a47440936212a3a50957f3d
+          - distro: fedora-43
+            image: fedora:43@sha256:a651ddf48ea28a06ed4e1e6519f51c9f47e7a5a138722ade87369b8fbb7e5b42
             family: rpm
-          - distro: fedora-42
-            image: fedora:42@sha256:99e203b80b1c3d8f7e161ec10a68fd02b081ef83a3963553e513c82846b97814
+          - distro: fedora-44
+            image: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
             family: rpm
           - distro: opensuse-tumbleweed
             image: opensuse/tumbleweed@sha256:18a8c2a41252a0100ae4a7dae0a0e925fb522971645b97b05c57f9b6e73c3b4f
@@ -304,7 +304,7 @@ jobs:
             | Family | Distros |
             |--------|---------|
             | **.deb** | Ubuntu 22.04, 24.04, Resolute · Debian Bookworm, Trixie |
-            | **.rpm** | Fedora 41, 42 · openSUSE Tumbleweed |
+            | **.rpm** | Fedora 43, 44 · openSUSE Tumbleweed |
             | **.tar.gz** | Same matrix (portable install layout) |
             | **AppImage** | `Winamp-<version>-x86_64.AppImage` (Ubuntu 22.04 base, Qt 6 + plugins, GStreamer, TagLib, projectM) and a `.zsync` update file |
 

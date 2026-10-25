@@ -186,7 +186,7 @@ ls -la build-qt6/winamp-*
 
 # Fedora / openSUSE (RPM + TGZ; needs rpm-build)
 cmake -S . -B build-rpm -G Ninja -DCMAKE_BUILD_TYPE=Release \
-  -DWINAMP_DISTRO_ID=fedora-41 \
+  -DWINAMP_DISTRO_ID=fedora-43 \
   -DCPACK_GENERATOR="RPM;TGZ"
 ninja -C build-rpm package
 ```
@@ -214,11 +214,11 @@ CPack metadata lives in `CMakeLists.txt` (DEB shlibdeps, RPM autoreq, license, c
 | `ubuntu-resolute` | `ubuntu:resolute` | `.deb` + `.tar.gz` |
 | `debian-bookworm` | `debian:bookworm` | `.deb` + `.tar.gz` |
 | `debian-trixie` | `debian:trixie` | `.deb` + `.tar.gz` |
-| `fedora-41` | `fedora:41` | `.rpm` + `.tar.gz` |
-| `fedora-42` | `fedora:42` | `.rpm` + `.tar.gz` |
+| `fedora-43` | `fedora:43` | `.rpm` + `.tar.gz` |
+| `fedora-44` | `fedora:44` | `.rpm` + `.tar.gz` |
 | `opensuse-tumbleweed` | `opensuse/tumbleweed` | `.rpm` + `.tar.gz` |
 
-CI uses a smaller matrix (Ubuntu 22.04/24.04, Debian Bookworm, Fedora 41, openSUSE Tumbleweed) plus a dedicated **`ubuntu-22.04-qt5`** job (`CMAKE_DISABLE_FIND_PACKAGE_Qt6=ON`, build directory `build-qt5`). Each job installs libavutil and fails the configure step unless the log contains `libavutil found - HAVE_AVUTIL`. The Qt 5 job also requires `Using Qt5`.
+CI uses a smaller matrix (Ubuntu 22.04/24.04, Debian Bookworm, Fedora 43 and 44, openSUSE Tumbleweed) plus a dedicated **`ubuntu-22.04-qt5`** job (`CMAKE_DISABLE_FIND_PACKAGE_Qt6=ON`, build directory `build-qt5`). Each job installs libavutil and fails the configure step unless the log contains `libavutil found - HAVE_AVUTIL`. The Qt 5 job also requires `Using Qt5`.
 
 **Arch Linux** is intentionally not in the matrix: distro packages only ship **projectM 4.x**, while Milkdrop support uses the classic 3.x API (`libprojectM/projectM.hpp`).
 
