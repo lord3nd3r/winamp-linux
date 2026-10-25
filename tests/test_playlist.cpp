@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include "../src/playlist.h"
+#include "../src/equalizer.h"
 
 // Mock/stub any global required variables if not linked
 // In our build, playlist.cpp links with constants.h which declares the externs.
@@ -33,6 +34,7 @@ private slots:
     void testRecycleBinRestore();
     void testDragReorder();
     void testEqualizerOffWithoutAudioTap();
+    void testFolderScanDestructorWaits();
 
 private:
     void assertRowsMatchTracks(PlaylistWindow &playlist) const;
@@ -420,6 +422,25 @@ void TestPlaylist::testEqualizerOffWithoutAudioTap() {
 #else
     QSKIP("QAudioBufferOutput is available, so the equalizer may be enabled");
 #endif
+}
+
+void TestPlaylist::testFolderScanDestructorWaits() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QFile file(dir.filePath("song.mp3"));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("not really audio");
+    file.close();
+
+    {
+        PlaylistWindow playlist;
+        playlist.addFolderAsync(dir.path(), false);
+    }
+
+    PlaylistWindow playlist;
+    playlist.addFolderAsync(dir.path(), false);
+    QTRY_COMPARE_WITH_TIMEOUT(playlist.trackCount(), 1, 5000);
+    QCOMPARE(playlist.trackAt(0), dir.filePath("song.mp3"));
 }
 
 QTEST_MAIN(TestPlaylist)

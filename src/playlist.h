@@ -26,6 +26,10 @@
 #include "bookmark_manager.h"
 #include "dialogs.h"
 #include <QSettings>
+#include <atomic>
+#include <memory>
+
+class QThread;
 
 class WinampWindow;
 class PlaylistWindow;
@@ -69,6 +73,7 @@ class PlaylistWindow : public QWidget {
     friend class PlaylistListWidget;
 public:
     PlaylistWindow(WinampWindow *parent = nullptr);
+    ~PlaylistWindow() override;
     void addTrack(const QString &filePath);
     void addFolderAsync(const QString &dirPath, bool autoPlay = false);
     void clearPlaylist();
@@ -259,5 +264,11 @@ private:
     QStringList durationProbeQueue;
     bool durationProbeActive = false;
     void startNextDurationProbe();
+
+    // Folder scans run off the GUI thread. The flag is cleared and the threads
+    // are joined in the destructor so a late callback cannot touch a dead window.
+    std::shared_ptr<std::atomic<bool>> folderScanAlive =
+        std::make_shared<std::atomic<bool>>(true);
+    QList<QThread *> folderScanThreads;
 };
 
