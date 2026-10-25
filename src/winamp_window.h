@@ -56,6 +56,7 @@
 
 class WinampWindow : public QWidget {
     Q_OBJECT
+    friend class TestPlayback;
 public:
     WinampWindow(QWidget *parent = nullptr) : QWidget(parent), dragPosition(0,0), isDragging(false),
                  volume(200), hoveredButton(-1), pressedButton(-1),
@@ -123,7 +124,7 @@ public:
         // (equivalent to Windows global hotkeys + WM_COMMAND remote control)
 #if defined(QT_DBUS_LIB) && QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
         new Mpris2RootAdaptor(this);
-        new Mpris2PlayerAdaptor(player, audioOutput, this);
+        mprisPlayer = new Mpris2PlayerAdaptor(player, audioOutput, this);
         QDBusConnection dbus = QDBusConnection::sessionBus();
         dbus.registerObject("/org/mpris/MediaPlayer2", this);
         dbus.registerService("org.mpris.MediaPlayer2.winamp");
@@ -142,163 +143,11 @@ public:
         });
         scrollTimer->start(150);
         
-        connect(player, &QMediaPlayer::positionChanged, this, [this](qint64) { update(); });
-        
-        // Auto-show video window when video content is detected
-        connect(player, &QMediaPlayer::hasVideoChanged, this, [this](bool hasVideo) {
-            if (hasVideo && videoWindow) {
-                videoWindow->setHasVideo(true);
-                videoWindow->show();
-                videoWindow->raise();
-            } else if (videoWindow) {
-                videoWindow->setHasVideo(false);
-                videoWindow->hide();
-            }
-        });
-        
-        // Auto-advance to next track when current one ends
-        connect(player, &QMediaPlayer::mediaStatusChanged, this, [this](QMediaPlayer::MediaStatus status) {
-            if (streamViaReplyActive) {
-                if (status == QMediaPlayer::BufferedMedia ||
-                    status == QMediaPlayer::BufferingMedia ||
-                    status == QMediaPlayer::LoadedMedia) {
-                    streamViaReplyActive = false;
-                } else if (status == QMediaPlayer::InvalidMedia ||
-                           status == QMediaPlayer::NoMedia ||
-                           status == QMediaPlayer::StalledMedia) {
-                    fallbackToDirectStream();
-                    return;
-                }
-            }
-
-            if (status == QMediaPlayer::EndOfMedia) {
-                // Stop after current track (like Windows g_stopaftercur)
-                if (stopAfterCurrent) {
-                    stopAfterCurrent = false;
-                    player->stop();
-                    update();
-                    return;
-                }
-                
-                // Repeat track (repeat one): replay same track
-                if (repeatOn && repeatTrack) {
-                    player->setPosition(0);
-                    player->play();
-                    return;
-                }
-                
-                // Gapless playback: if next track is preloaded, swap players
-                if (waSource(nextPlayer).isValid() && !shuffleOn) {
-                    // Swap players for seamless transition
-                    std::swap(player, nextPlayer);
-                    std::swap(audioOutput, nextAudioOutput);
-                    
-                    // Update visualization to use the now-active player
-#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
-                    player->setAudioBufferOutput(audioBufferOutput);
-                    nextPlayer->setAudioBufferOutput(nullptr);
-#endif
-                    
-                    // Start the preloaded track
-                    player->play();
-                    
-                    // Update currentFile
-                    currentFile = waSource(player).toLocalFile();
-                    
-                    // Update playlist index
-                    int curIdx = playlistWindow->currentTrackIndex();
-                    int count = playlistWindow->trackCount();
-                    int nextIdx = curIdx + 1;
-                    if (nextIdx < count) {
-                        playlistWindow->setCurrentTrackIndex(nextIdx);
-                    } else if (repeatOn && count > 0) {
-                        playlistWindow->setCurrentTrackIndex(0);
-                    }
-                    
-                    // Update tray and show notification
-                    QString fileName = currentFile;
-                    RecentFilesManager::instance().addFile(fileName);
-                    updateTrayTooltip();
-                    if (showSongNotifications && trayIcon) {
-                        QString title = metaTitle.isEmpty() ? QFileInfo(fileName).completeBaseName() : metaTitle;
-                        trayIcon->showMessage("Winamp", title, QSystemTrayIcon::Information, 3000);
-                    }
-                    
-                    // Preload the next track
-                    preloadNextTrack();
-                    return;
-                }
-                
-                // Fallback to normal track advancing (for shuffle or when preload failed)
-                playNext();
-            }
-        });
-        
-        // Extract bitrate and song metadata when available
-    #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-        connect(player, &QMediaPlayer::metaDataChanged, this, [this]() {
-    #else
-        connect(player, QOverload<>::of(&QMediaPlayer::metaDataChanged), this, [this]() {
-    #endif
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-            QMediaMetaData md = player->metaData();
-            QVariant br = md.value(QMediaMetaData::AudioBitRate);
-            if (br.isValid()) {
-                mediaBitrate = br.toInt() / 1000;  // bps -> kbps
-            }
-            // Extract title and artist for scrolling display
-            QString title = md.value(QMediaMetaData::Title).toString();
-            QString artist;
-            QVariant artistVar = md.value(QMediaMetaData::ContributingArtist);
-            if (artistVar.canConvert<QStringList>())
-                artist = artistVar.toStringList().join(", ");
-            else
-                artist = artistVar.toString();
-            
-            QString newMetaTitle;
-            if (!title.isEmpty()) {
-                if (!artist.isEmpty())
-                    newMetaTitle = artist + " - " + title;
-                else
-                    newMetaTitle = title;
-            }
-            
-            // If metadata changed (for streams), show notification
-            if (!newMetaTitle.isEmpty() && newMetaTitle != metaTitle) {
-                metaTitle = newMetaTitle;
-                if (showSongNotifications && trayIcon) {
-                    trayIcon->showMessage("Winamp", metaTitle, QSystemTrayIcon::Information, 3000);
-                }
-            } else if (!newMetaTitle.isEmpty()) {
-                metaTitle = newMetaTitle;
-            }
-#else
-            QVariant br = player->metaData("AudioBitRate");
-            if (br.isValid()) {
-                mediaBitrate = br.toInt() / 1000;
-            }
-
-            QString title = player->metaData("Title").toString();
-            QString artist = player->metaData("Author").toString();
-
-            QString newMetaTitle;
-            if (!title.isEmpty()) {
-                newMetaTitle = artist.isEmpty() ? title : (artist + " - " + title);
-            }
-
-            if (!newMetaTitle.isEmpty() && newMetaTitle != metaTitle) {
-                metaTitle = newMetaTitle;
-                if (showSongNotifications && trayIcon) {
-                    trayIcon->showMessage("Winamp", metaTitle, QSystemTrayIcon::Information, 3000);
-                }
-            } else if (!newMetaTitle.isEmpty()) {
-                metaTitle = newMetaTitle;
-            }
-#endif
-            
-            // Update tray tooltip
-            updateTrayTooltip();
-        });
+        // Both players stay connected. Gapless playback swaps the pointers, so a
+        // connection made only on the original object would keep end-of-track,
+        // metadata, and video events on the idle player.
+        watchPlayer(player);
+        watchPlayer(nextPlayer);
         
         // Create playlist and EQ windows
         playlistWindow = new PlaylistWindow(this);
@@ -2934,43 +2783,238 @@ protected:
         }
     }
     
-    // Preload the next track for smoother transitions (gapless playback)
-    void preloadNextTrack() {
-        int curIdx = playlistWindow->currentTrackIndex();
-        int count = playlistWindow->trackCount();
-        if (count == 0) return;
-        
-        int nextIdx;
-        if (shuffleOn) {
-            // For shuffle, we can't really preload since it's random; drop any
-            // stale source left by a gapless swap so it can't be replayed later.
-            waSetSource(nextPlayer, QUrl());
+    // Local path for file URLs, full URL for streams. toLocalFile() is empty
+    // for http(s), which used to blank currentFile after a gapless swap.
+    static QString locationFromMediaUrl(const QUrl &url) {
+        if (url.isLocalFile())
+            return url.toLocalFile();
+        if (url.isValid() && !url.scheme().isEmpty())
+            return url.toString();
+        return QString();
+    }
+
+    void watchPlayer(QMediaPlayer *p) {
+        if (!p)
             return;
+        connect(p, &QMediaPlayer::positionChanged, this, [this, p](qint64) {
+            if (p == player)
+                update();
+        });
+        connect(p, &QMediaPlayer::hasVideoChanged, this, [this, p](bool hasVideo) {
+            if (p == player)
+                applyVideoAvailability(hasVideo);
+        });
+        connect(p, &QMediaPlayer::mediaStatusChanged, this, [this, p](QMediaPlayer::MediaStatus status) {
+            handleActiveMediaStatus(p, status);
+        });
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        connect(p, &QMediaPlayer::metaDataChanged, this, [this, p]() {
+            if (p == player)
+                refreshActiveMetadata();
+        });
+#else
+        connect(p, QOverload<>::of(&QMediaPlayer::metaDataChanged), this, [this, p]() {
+            if (p == player)
+                refreshActiveMetadata();
+        });
+#endif
+    }
+
+    void applyVideoAvailability(bool hasVideo) {
+        if (!videoWindow)
+            return;
+        videoWindow->setHasVideo(hasVideo);
+        if (hasVideo) {
+            videoWindow->show();
+            videoWindow->raise();
         } else {
-            nextIdx = curIdx + 1;
+            videoWindow->hide();
         }
-        
-        if (nextIdx < count) {
-            QString nextFile = playlistWindow->trackAt(nextIdx);
-            if (!nextFile.isEmpty()) {
-                if (QFile::exists(nextFile)) {
-                    waSetSource(nextPlayer, QUrl::fromLocalFile(nextFile));
-                    // Don't play yet, just preload
-                } else if (isRemoteMediaLocation(nextFile)) {
-                    waSetSource(nextPlayer, QUrl::fromUserInput(nextFile));
-                }
-            }
-        } else if (repeatOn && count > 0) {
-            // If repeat all is on, preload first track
-            QString nextFile = playlistWindow->trackAt(0);
-            if (!nextFile.isEmpty()) {
-                if (QFile::exists(nextFile)) {
-                    waSetSource(nextPlayer, QUrl::fromLocalFile(nextFile));
-                } else if (isRemoteMediaLocation(nextFile)) {
-                    waSetSource(nextPlayer, QUrl::fromUserInput(nextFile));
-                }
+    }
+
+    void syncVideoFromActivePlayer() {
+        if (!player)
+            return;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        applyVideoAvailability(player->hasVideo());
+#else
+        applyVideoAvailability(player->isVideoAvailable());
+#endif
+    }
+
+    // Move sinks that were bound to a specific QMediaPlayer onto the one
+    // currently pointed at by `player`.
+    void attachActivePlayerOutputs() {
+        if (player && nextPlayer && videoWindow) {
+            nextPlayer->setVideoOutput(nullptr);
+            player->setVideoOutput(videoWindow->getVideoWidget());
+        }
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+        if (player && nextPlayer && audioBufferOutput) {
+            nextPlayer->setAudioBufferOutput(nullptr);
+            player->setAudioBufferOutput(audioBufferOutput);
+        }
+#endif
+#if defined(QT_DBUS_LIB) && QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        if (mprisPlayer && player)
+            mprisPlayer->setActivePlayer(player, audioOutput);
+#endif
+        if (eqDspActive)
+            waSetOutputVolume(player, audioOutput, 0.0f);
+        else
+            waSetOutputVolume(player, audioOutput, volume / 255.0f);
+        waSetOutputVolume(nextPlayer, nextAudioOutput, volume / 255.0f);
+    }
+
+    void refreshActiveMetadata() {
+        if (!player)
+            return;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        QMediaMetaData md = player->metaData();
+        QVariant br = md.value(QMediaMetaData::AudioBitRate);
+        if (br.isValid())
+            mediaBitrate = br.toInt() / 1000;
+        QString title = md.value(QMediaMetaData::Title).toString();
+        QString artist;
+        QVariant artistVar = md.value(QMediaMetaData::ContributingArtist);
+        if (artistVar.canConvert<QStringList>())
+            artist = artistVar.toStringList().join(", ");
+        else
+            artist = artistVar.toString();
+        QString newMetaTitle;
+        if (!title.isEmpty())
+            newMetaTitle = artist.isEmpty() ? title : (artist + " - " + title);
+#else
+        QVariant br = player->metaData("AudioBitRate");
+        if (br.isValid())
+            mediaBitrate = br.toInt() / 1000;
+        QString title = player->metaData("Title").toString();
+        QString artist = player->metaData("Author").toString();
+        QString newMetaTitle;
+        if (!title.isEmpty())
+            newMetaTitle = artist.isEmpty() ? title : (artist + " - " + title);
+#endif
+        if (!newMetaTitle.isEmpty() && newMetaTitle != metaTitle) {
+            metaTitle = newMetaTitle;
+            if (showSongNotifications && trayIcon)
+                trayIcon->showMessage("Winamp", metaTitle, QSystemTrayIcon::Information, 3000);
+        } else if (!newMetaTitle.isEmpty()) {
+            metaTitle = newMetaTitle;
+        }
+        updateTrayTooltip();
+    }
+
+    void handleActiveMediaStatus(QMediaPlayer *source, QMediaPlayer::MediaStatus status) {
+        if (source != player)
+            return;
+
+        if (streamViaReplyActive) {
+            if (status == QMediaPlayer::BufferedMedia ||
+                status == QMediaPlayer::BufferingMedia ||
+                status == QMediaPlayer::LoadedMedia) {
+                streamViaReplyActive = false;
+            } else if (status == QMediaPlayer::InvalidMedia ||
+                       status == QMediaPlayer::NoMedia ||
+                       status == QMediaPlayer::StalledMedia) {
+                fallbackToDirectStream();
+                return;
             }
         }
+
+        if (status != QMediaPlayer::EndOfMedia)
+            return;
+
+        if (stopAfterCurrent) {
+            stopAfterCurrent = false;
+            player->stop();
+            update();
+            return;
+        }
+
+        if (repeatOn && repeatTrack) {
+            player->setPosition(0);
+            player->play();
+            return;
+        }
+
+        if (nextPlayer && waSource(nextPlayer).isValid() && !shuffleOn) {
+            std::swap(player, nextPlayer);
+            std::swap(audioOutput, nextAudioOutput);
+            attachActivePlayerOutputs();
+            player->play();
+
+            const QString loc = locationFromMediaUrl(waSource(player));
+            int nextIdx = -1;
+            if (playlistWindow) {
+                const int curIdx = playlistWindow->currentTrackIndex();
+                const int count = playlistWindow->trackCount();
+                if (curIdx + 1 < count)
+                    nextIdx = curIdx + 1;
+                else if (repeatOn && count > 0)
+                    nextIdx = 0;
+                if (nextIdx >= 0)
+                    playlistWindow->setCurrentTrackIndex(nextIdx);
+            }
+            if (nextIdx >= 0 && playlistWindow) {
+                const QString fromList = playlistWindow->trackAt(nextIdx);
+                currentFile = !fromList.isEmpty() ? fromList : loc;
+            } else if (!loc.isEmpty()) {
+                currentFile = loc;
+            }
+
+            if (!currentFile.isEmpty())
+                RecentFilesManager::instance().addFile(currentFile);
+            updateTrayTooltip();
+            if (showSongNotifications && trayIcon) {
+                QString title = metaTitle.isEmpty() ? QFileInfo(currentFile).completeBaseName() : metaTitle;
+                if (!title.isEmpty())
+                    trayIcon->showMessage("Winamp", title, QSystemTrayIcon::Information, 3000);
+            }
+            // Metadata and hasVideo may already have been delivered while this
+            // player was the idle one, before it became `player`.
+            refreshActiveMetadata();
+            syncVideoFromActivePlayer();
+            preloadNextTrack();
+            return;
+        }
+
+        playNext();
+    }
+
+    // Preload the next track for smoother transitions (gapless playback).
+    // Always clears nextPlayer when there is nothing to preload. After a swap
+    // the idle player still holds the track that just finished; leaving that
+    // source in place makes the following end-of-track replay it.
+    void preloadNextTrack() {
+        auto clearNext = [this]() {
+            if (nextPlayer)
+                waSetSource(nextPlayer, QUrl());
+        };
+        if (!playlistWindow || !nextPlayer) {
+            clearNext();
+            return;
+        }
+        const int count = playlistWindow->trackCount();
+        if (count == 0 || shuffleOn || (repeatOn && repeatTrack)) {
+            clearNext();
+            return;
+        }
+        int nextIdx = playlistWindow->currentTrackIndex() + 1;
+        if (nextIdx >= count) {
+            if (repeatOn)
+                nextIdx = 0;
+            else {
+                clearNext();
+                return;
+            }
+        }
+        const QString nextFile = playlistWindow->trackAt(nextIdx);
+        if (QFile::exists(nextFile))
+            waSetSource(nextPlayer, QUrl::fromLocalFile(nextFile));
+        else if (isRemoteMediaLocation(nextFile))
+            waSetSource(nextPlayer, QUrl::fromUserInput(nextFile));
+        else
+            clearNext();
     }
     
 public:
@@ -3256,6 +3300,9 @@ private:
     QMediaPlayer *nextPlayer;  // Preload next track for gapless playback
     WAudioOutput *nextAudioOutput;
     bool usingNextPlayer;  // Track which player is active
+#if defined(QT_DBUS_LIB) && QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    Mpris2PlayerAdaptor *mprisPlayer = nullptr;
+#endif
     
     // Real EQ DSP processing (ported from Windows eq10dsp.cpp / In.cpp)
     // Audio flow: QMediaPlayer → QAudioBufferOutput → EQ10 DSP → QAudioSink
