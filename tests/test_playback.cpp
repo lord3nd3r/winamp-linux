@@ -99,8 +99,10 @@ void TestPlayback::testGaplessSwapFollowsActivePlayer() {
     QCOMPARE(window.nextPlayer, original);
     QCOMPARE(window.currentFile, QStringLiteral("http://example.com/b.mp3"));
     QCOMPARE(playlist->currentTrackIndex(), 1);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     QCOMPARE(window.player->videoOutput(), static_cast<QObject *>(window.videoWindow->getVideoWidget()));
     QCOMPARE(window.nextPlayer->videoOutput(), static_cast<QObject *>(nullptr));
+#endif
     // The track that just finished must not stay queued on the idle player.
     QVERIFY(waSource(window.nextPlayer).isEmpty());
 #if defined(QT_DBUS_LIB) && QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)

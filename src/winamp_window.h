@@ -2983,7 +2983,7 @@ protected:
     // currently pointed at by `player`.
     void attachActivePlayerOutputs() {
         if (player && nextPlayer && videoWindow) {
-            nextPlayer->setVideoOutput(nullptr);
+            nextPlayer->setVideoOutput(static_cast<QVideoWidget *>(nullptr));
             player->setVideoOutput(videoWindow->getVideoWidget());
         }
 #if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)

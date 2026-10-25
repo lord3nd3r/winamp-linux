@@ -184,8 +184,8 @@ void PlaylistWindow::moveTrackRows(const QList<int> &rowsIn, int destinationRow)
 
     while (trackDurations.size() < tracks.size())
         trackDurations.append(0);
-    if (trackDurations.size() > tracks.size())
-        trackDurations.resize(tracks.size());
+    while (trackDurations.size() > tracks.size())
+        trackDurations.removeLast();
 
     QStringList moved;
     QList<qint64> movedDurations;
@@ -233,8 +233,8 @@ void PlaylistWindow::applyRowsMoved(int sourceStart, int sourceEnd, int destinat
 
     while (trackDurations.size() < tracks.size())
         trackDurations.append(0);
-    if (trackDurations.size() > tracks.size())
-        trackDurations.resize(tracks.size());
+    while (trackDurations.size() > tracks.size())
+        trackDurations.removeLast();
 
     // Mirror QListModel::moveRows. The signal's destination may equal size()
     // for an append; QList::move requires the index to be strictly inside.
