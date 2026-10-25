@@ -4,7 +4,7 @@
 
 **A native classic Winamp 2.x–style media player for modern Linux desktops.**
 
-**Current release: [v1.3.0](https://github.com/lord3nd3r/winamp-linux/releases/tag/v1.3.0).**
+**Current release: [v1.3.0](https://github.com/lord3nd3r/winamp-linux/releases/tag/v1.3.0).** Changes by version are in [CHANGELOG.md](CHANGELOG.md).
 
 Built in **C++17** with **Qt 6** (Qt 5 fallback), faithful classic skins, a real 10-band EQ, gapless dual-player audio, out-of-process Python plugins, and desktop integration via MPRIS2.
 
@@ -89,6 +89,7 @@ Classic Winamp defined how a generation listened to music on the desktop: skinna
 
 | Guide | What it covers |
 |-------|----------------|
+| **[CHANGELOG.md](CHANGELOG.md)** | Release history (Keep a Changelog), newest first |
 | **[CONTRIBUTING.md](CONTRIBUTING.md)** | Dependencies, Qt 5/6 builds, tests, packaging, architecture, coding standards, PR workflow |
 | **[CONFIGURATION.md](CONFIGURATION.md)** | Paths, `winamp.conf` keys (verified against source), skins, plugins dir, bookmarks |
 | **[PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md)** | Process isolation (not an OS sandbox), lifecycle hooks, full API reference, examples, Icecast DJ notes |
