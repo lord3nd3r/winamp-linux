@@ -363,6 +363,21 @@ public slots:
         else player->play();
     }
 
+    // Repeat button, R key, and the modern repeat control share one cycle:
+    // off → repeat all → repeat one → off. Toggling only repeatOn left
+    // repeatTrack set, so the next click came back as repeat-one.
+    void cycleRepeat() {
+        if (!repeatOn) {
+            repeatOn = true;
+            repeatTrack = false;
+        } else if (!repeatTrack) {
+            repeatTrack = true;
+        } else {
+            repeatOn = false;
+            repeatTrack = false;
+        }
+    }
+
     // Advance to the next track, honouring shuffle and repeat-all. Shared by the
     // Next button, B key, tray, MPRIS, plugins, TUI and end-of-track.
     void playNext() {
@@ -2122,8 +2137,7 @@ protected:
                 break;
             case Qt::Key_R:
                 if (event->modifiers() == Qt::NoModifier) {
-                    // R = Toggle repeat
-                    repeatOn = !repeatOn;
+                    cycleRepeat();
                     update();
                 }
                 break;
@@ -2543,7 +2557,7 @@ protected:
         
         // Repeat button: (210,89) to (238,104)
         if (x >= 210 && x < 238 && y >= 89 && y < 104) {
-            repeatOn = !repeatOn;
+            cycleRepeat();
             update();
             return;
         }
@@ -2790,9 +2804,7 @@ protected:
                             break;
                         }
                         case MB_REPEAT:
-                            if (!repeatOn) { repeatOn = true; repeatTrack = false; }
-                            else if (!repeatTrack) { repeatTrack = true; }
-                            else { repeatOn = false; repeatTrack = false; }
+                            cycleRepeat();
                             break;
                         case MB_SHUFFLE:
                             shuffleOn = !shuffleOn;

@@ -70,6 +70,7 @@ private slots:
     void testStalePlaybackCallback();
     void testLocalPlaylistEnqueuesEveryEntry();
     void testPreviousMatchesNextWrap();
+    void testRepeatCyclesOffAllOne();
     void testMprisVolumeAndOpenUri();
 };
 
@@ -226,6 +227,30 @@ void TestPlayback::testPreviousMatchesNextWrap() {
     QVERIFY(playlist->currentTrackIndex() != 1);
     QVERIFY(playlist->currentTrackIndex() >= 0);
     QVERIFY(playlist->currentTrackIndex() < 3);
+}
+
+void TestPlayback::testRepeatCyclesOffAllOne() {
+    WinampWindow window;
+    // Stale repeat-one flag with repeat off used to make the next click
+    // land on repeat-one. The cycle treats that as off.
+    window.repeatOn = false;
+    window.repeatTrack = true;
+
+    window.cycleRepeat();
+    QVERIFY(window.repeatOn);
+    QVERIFY(!window.repeatTrack);
+
+    window.cycleRepeat();
+    QVERIFY(window.repeatOn);
+    QVERIFY(window.repeatTrack);
+
+    window.cycleRepeat();
+    QVERIFY(!window.repeatOn);
+    QVERIFY(!window.repeatTrack);
+
+    window.cycleRepeat();
+    QVERIFY(window.repeatOn);
+    QVERIFY(!window.repeatTrack);
 }
 
 void TestPlayback::testMprisVolumeAndOpenUri() {
