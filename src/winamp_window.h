@@ -237,25 +237,6 @@ public:
     }
     
     ~WinampWindow() {
-        // QMediaPlayer's destructor cancels a load that is still opening.
-        // On Qt 6.8+ that cancel segfaults inside FFmpeg. Stop timers, ignore
-        // status callbacks, and let the open finish before the players die.
-        // The wait runs a nested event loop, so drop in-flight DNS and playlist
-        // callbacks before that loop can start a new open or call play().
-        retiring = true;
-        ++playbackGeneration;
-        if (timer)
-            timer->stop();
-        if (scrollTimer)
-            scrollTimer->stop();
-        if (player)
-            QObject::disconnect(player, nullptr, this, nullptr);
-        if (nextPlayer)
-            QObject::disconnect(nextPlayer, nullptr, this, nullptr);
-        waReleaseMediaPlayer(player);
-        waReleaseMediaPlayer(nextPlayer);
-        player = nullptr;
-        nextPlayer = nullptr;
         delete playlistWindow;
         delete eqWindow;
         delete videoWindow;
@@ -263,7 +244,7 @@ public:
     }
 
     void playFile(const QString &file) {
-        if (retiring || file.isEmpty() || !QFile::exists(file))
+        if (file.isEmpty() || !QFile::exists(file))
             return;
         const quint64 generation = ++playbackGeneration;
         if (isPlaylistPath(file)) {
@@ -280,7 +261,7 @@ public:
     }
 
     void playUrl(const QString &url) {
-        if (retiring || url.isEmpty())
+        if (url.isEmpty())
             return;
         const quint64 generation = ++playbackGeneration;
         QUrl parsed = QUrl::fromUserInput(url.trimmed());
@@ -400,7 +381,6 @@ public slots:
     // Advance to the next track, honouring shuffle and repeat-all. Shared by the
     // Next button, B key, tray, MPRIS, plugins, TUI and end-of-track.
     void playNext() {
-        if (retiring || !playlistWindow) return;
         int count = playlistWindow->trackCount();
         if (count == 0) return;
         int cur = playlistWindow->currentTrackIndex();
@@ -421,7 +401,6 @@ public slots:
     // first track to the last. Without repeat, Previous on the first track
     // stays put, the same way Next on the last track does.
     void playPrevious() {
-        if (retiring || !playlistWindow) return;
         int count = playlistWindow->trackCount();
         if (count == 0) return;
         int cur = playlistWindow->currentTrackIndex();
@@ -1287,7 +1266,7 @@ public:
     }
 
     void fallbackToDirectStream() {
-        if (retiring || !player || !streamViaReplyActive || streamDirectFallbackTried || !pendingStreamUrl.isValid()) return;
+        if (!streamViaReplyActive || streamDirectFallbackTried || !pendingStreamUrl.isValid()) return;
         streamDirectFallbackTried = true;
         streamViaReplyActive = false;
 
@@ -1503,8 +1482,6 @@ public:
     }
 
     void startHttpStreamRequest(const QUrl &url, quint64 generation) {
-        if (retiring || !player || !playbackCallbackCurrent(generation))
-            return;
         if (!networkManager) {
             networkManager = new QNetworkAccessManager(this);
         }
@@ -3065,7 +3042,7 @@ protected:
     }
 
     void handleActiveMediaStatus(QMediaPlayer *source, QMediaPlayer::MediaStatus status) {
-        if (retiring || source != player)
+        if (source != player)
             return;
 
         if (streamViaReplyActive) {
@@ -3146,8 +3123,6 @@ protected:
     // the idle player still holds the track that just finished; leaving that
     // source in place makes the following end-of-track replay it.
     void preloadNextTrack() {
-        if (retiring)
-            return;
         auto clearNext = [this]() {
             if (nextPlayer)
                 waSetSource(nextPlayer, QUrl());
@@ -3181,7 +3156,7 @@ protected:
     
 public:
     void playTrack(const QString &fileName) {
-        if (retiring || fileName.isEmpty()) return;
+        if (fileName.isEmpty()) return;
         // Drop in-flight DNS from the previous track before starting this one.
         // playUrl / playFile bump the generation again for their own callbacks.
         ++playbackGeneration;
@@ -3465,12 +3440,12 @@ public:
     }
 
 private:
-    QMediaPlayer *player = nullptr;
+    QMediaPlayer *player;
     WAudioOutput *audioOutput;
 #if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
     QAudioBufferOutput *audioBufferOutput;
 #endif
-    QMediaPlayer *nextPlayer = nullptr;  // Preload next track for gapless playback
+    QMediaPlayer *nextPlayer;  // Preload next track for gapless playback
     WAudioOutput *nextAudioOutput;
     bool usingNextPlayer;  // Track which player is active
 #if defined(QT_DBUS_LIB) && QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
@@ -3491,8 +3466,8 @@ private:
     QVector<float> eqDspFloatBuf;  // Pre-allocated input buffer (resized on format change)
     QVector<float> eqDspOutBuf;    // Pre-allocated output buffer (resized on format change)
     QByteArray eqSinkPending;      // Tail of a short QAudioSink write, replayed next callback
-    QTimer *timer = nullptr;
-    QTimer *scrollTimer = nullptr;
+    QTimer *timer;
+    QTimer *scrollTimer;
     QString currentFile;
     QNetworkAccessManager *networkManager = nullptr;
     QNetworkReply *streamReply = nullptr;
@@ -3500,9 +3475,6 @@ private:
     // Bumped on every new play request. DNS and playlist callbacks captured an
     // older value must not start or replace the track the user has since chosen.
     quint64 playbackGeneration = 0;
-    // Set for the whole destructor so a nested status event cannot start
-    // another FFmpeg open while the players are being drained.
-    bool retiring = false;
     bool streamViaReplyActive = false;
     bool streamDirectFallbackTried = false;
     QPoint dragPosition;
