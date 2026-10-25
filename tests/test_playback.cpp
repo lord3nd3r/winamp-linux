@@ -1,6 +1,8 @@
 #include <QtTest>
 #include <QObject>
 #include <QColor>
+#include <QSettings>
+#include <QTemporaryDir>
 #include <QUrl>
 
 #include "../src/constants.h"
@@ -38,6 +40,8 @@ class TestPlayback : public QObject {
 private slots:
     void testGaplessSwapFollowsActivePlayer();
     void testGaplessClearsStaleSuccessor();
+    void testSettingsWrite();
+    void testStalePlaybackCallback();
 };
 
 void TestPlayback::testGaplessSwapFollowsActivePlayer() {
@@ -103,6 +107,43 @@ void TestPlayback::testGaplessClearsStaleSuccessor() {
     window.shuffleOn = true;
     window.preloadNextTrack();
     QVERIFY(waSource(window.nextPlayer).isEmpty());
+}
+
+void TestPlayback::testSettingsWrite() {
+    WinampWindow window;
+    window.volume = 123;
+    window.balance = -40;
+    window.shuffleOn = true;
+    window.repeatOn = true;
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString ini = dir.filePath("winamp.ini");
+    {
+        QSettings s(ini, QSettings::IniFormat);
+        window.writeSettings(s);
+    }
+    QSettings loaded(ini, QSettings::IniFormat);
+    loaded.beginGroup("Playback");
+    QCOMPARE(loaded.value("volume").toInt(), 123);
+    QCOMPARE(loaded.value("balance").toInt(), -40);
+    QCOMPARE(loaded.value("shuffle").toBool(), true);
+    QCOMPARE(loaded.value("repeat").toBool(), true);
+    loaded.endGroup();
+}
+
+void TestPlayback::testStalePlaybackCallback() {
+    WinampWindow window;
+    const quint64 before = window.playbackGeneration;
+    window.playUrl(QStringLiteral("http://example.test/a.mp3"));
+    const quint64 firstRequest = window.playbackGeneration;
+    QVERIFY(firstRequest > before);
+    QVERIFY(window.playbackCallbackCurrent(firstRequest));
+
+    window.playUrl(QStringLiteral("http://example.test/b.mp3"));
+    QVERIFY(window.playbackGeneration > firstRequest);
+    QVERIFY(!window.playbackCallbackCurrent(firstRequest));
+    QVERIFY(window.playbackCallbackCurrent(window.playbackGeneration));
 }
 
 QTEST_MAIN(TestPlayback)
