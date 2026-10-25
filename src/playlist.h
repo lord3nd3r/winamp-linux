@@ -7,6 +7,8 @@
 #include <QMenu>
 #include <QFileDialog>
 #include <QDropEvent>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
 #include <QMimeData>
 #include <QUrl>
 #include <QScrollBar>
@@ -26,12 +28,17 @@
 #include <QSettings>
 
 class WinampWindow;
+class PlaylistWindow;
+
 class PlaylistListWidget : public QListWidget {
     Q_OBJECT
 public:
     PlaylistListWidget(QWidget *parent = nullptr) : QListWidget(parent) {}
     
 protected:
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dragMoveEvent(QDragMoveEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     QMimeData* mimeData(const QList<QListWidgetItem*> &items) const override {
 #else
@@ -59,6 +66,7 @@ protected:
 class PlaylistWindow : public QWidget {
     Q_OBJECT
     friend class TestPlaylist;
+    friend class PlaylistListWidget;
 public:
     PlaylistWindow(WinampWindow *parent = nullptr);
     void addTrack(const QString &filePath);
@@ -205,6 +213,13 @@ private:
     void exploreFolderOfSelected();
     void generateHtmlPlaylist();
     QString trackDisplayName(int index, const QString &filePath);
+    // Internal drag reorder. destinationRow is the insertion index in the
+    // current list (0..count, count means append). Does not insert copies.
+    void moveTrackRows(const QList<int> &rows, int destinationRow);
+    // QListModel::moveRows() reports a destination that may equal size()
+    // (append). Mirror that adjustment so QList::move() is never called
+    // with an index equal to size().
+    void applyRowsMoved(int sourceStart, int sourceEnd, int destinationRow);
 
     PlaylistListWidget *listWidget;
     QList<QString> tracks;

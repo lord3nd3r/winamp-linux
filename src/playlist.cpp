@@ -32,33 +32,221 @@ PlaylistWindow::PlaylistWindow(WinampWindow *parent) : QWidget(nullptr), mainWin
     
     // Enable drag and drop for files. External file drops over the list are rejected by
     // QListWidget (not its item format) and propagate up to this window's dropEvent.
+    // Internal reorders are handled by PlaylistListWidget::dropEvent so a Copy drop
+    // cannot insert a second row without a matching tracks entry. Drag-out stays a copy.
     setAcceptDrops(true);
     listWidget->setAcceptDrops(true);
     listWidget->setDragEnabled(true);
     listWidget->setDropIndicatorShown(true);
-    listWidget->setDragDropMode(QAbstractItemView::DragDrop); // Allow both internal move and drag-out
+    listWidget->setDragDropMode(QAbstractItemView::DragDrop);
     
     // Enable resizing from edges and corners
     setMouseTracking(true);
     
-    // Connect signals for drag and drop
+    // Play the file stored on the row. Indexing tracks[] here crashes once the
+    // widget has more rows than tracks (QList::operator[] is asserted).
     connect(listWidget, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *item) {
-        if (item) {
-            int index = listWidget->row(item);
-            emit trackDoubleClicked(tracks[index]);
-        }
+        if (!item)
+            return;
+        const QString path = item->data(Qt::UserRole).toString();
+        if (!path.isEmpty())
+            emit trackDoubleClicked(path);
     });
 
-    connect(listWidget->model(), &QAbstractItemModel::rowsMoved, this, [this](const QModelIndex &parent, int start, int end, const QModelIndex &destination, int row) {
-        // Rearrange tracks and durations lists to match the new order in the list widget
-        for (int i = 0; i <= end - start; ++i) {
-            tracks.move(start, row + i);
-            trackDurations.move(start, row + i);
-        }
+    connect(listWidget->model(), &QAbstractItemModel::rowsMoved, this,
+            [this](const QModelIndex &, int start, int end, const QModelIndex &, int row) {
+        applyRowsMoved(start, end, row);
     });
 
     // Install event filter for keyboard shortcuts and right-click context menu
     listWidget->installEventFilter(this);
+}
+
+static QPoint dropEventPos(const QDropEvent *event) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    return event->position().toPoint();
+#else
+    return event->pos();
+#endif
+}
+
+// Show a move cursor for an internal drag without changing the action the
+// base handler uses to decide whether the pointer is "on itself". Forcing
+// MoveAction first makes QAbstractItemView ignore the hover and keep a stale
+// drop indicator. The drop itself is accepted as CopyAction so startDrag does
+// not delete the rows after we have already reordered them.
+static void showInternalMoveCursor(QDropEvent *event) {
+    if (event->isAccepted() && (event->possibleActions() & Qt::MoveAction)) {
+        event->setDropAction(Qt::MoveAction);
+        event->accept();
+    }
+}
+
+void PlaylistListWidget::dragEnterEvent(QDragEnterEvent *event) {
+    QListWidget::dragEnterEvent(event);
+    if (event->source() == this)
+        showInternalMoveCursor(event);
+}
+
+void PlaylistListWidget::dragMoveEvent(QDragMoveEvent *event) {
+    QListWidget::dragMoveEvent(event);
+    if (event->source() == this)
+        showInternalMoveCursor(event);
+}
+
+void PlaylistListWidget::dropEvent(QDropEvent *event) {
+    // File-manager drops are not this view's mime type, so dragEnter ignores
+    // them and PlaylistWindow::dropEvent adds the files. Anything that still
+    // arrives here from outside must not be inserted as a duplicate row.
+    if (event->source() != this) {
+        event->ignore();
+        return;
+    }
+
+    auto *playlist = qobject_cast<PlaylistWindow *>(parentWidget());
+    if (!playlist) {
+        event->ignore();
+        return;
+    }
+
+    int dest = count();
+    const QModelIndex idx = indexAt(dropEventPos(event));
+    if (idx.isValid()) {
+        switch (dropIndicatorPosition()) {
+        case BelowItem:
+            dest = idx.row() + 1;
+            break;
+        case OnViewport:
+            dest = count();
+            break;
+        case AboveItem:
+        case OnItem:
+        default:
+            dest = idx.row();
+            break;
+        }
+    }
+
+    QList<int> rows;
+    const QList<QListWidgetItem *> selected = selectedItems();
+    rows.reserve(selected.size());
+    for (QListWidgetItem *item : selected)
+        rows.append(row(item));
+
+    // QListWidget::dropEvent always inserts a MIME copy and never moves.
+    playlist->moveTrackRows(rows, dest);
+    stopAutoScroll();
+    setState(NoState);
+    if (viewport())
+        viewport()->update();
+    event->setDropAction(Qt::CopyAction);
+    event->accept();
+}
+
+void PlaylistWindow::moveTrackRows(const QList<int> &rowsIn, int destinationRow) {
+    if (rowsIn.isEmpty() || tracks.isEmpty() || !listWidget)
+        return;
+
+    QList<int> rows = rowsIn;
+    std::sort(rows.begin(), rows.end());
+    rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
+    for (int r : rows) {
+        if (r < 0 || r >= tracks.size())
+            return;
+    }
+    if (destinationRow < 0)
+        destinationRow = 0;
+    if (destinationRow > tracks.size())
+        destinationRow = tracks.size();
+
+    bool contiguous = true;
+    for (int i = 1; i < rows.size(); ++i) {
+        if (rows[i] != rows[0] + i) {
+            contiguous = false;
+            break;
+        }
+    }
+    // Dropping a contiguous block onto itself does not change order.
+    if (contiguous && destinationRow >= rows.first() && destinationRow <= rows.last() + 1)
+        return;
+
+    while (trackDurations.size() < tracks.size())
+        trackDurations.append(0);
+    if (trackDurations.size() > tracks.size())
+        trackDurations.resize(tracks.size());
+
+    QStringList moved;
+    QList<qint64> movedDurations;
+    moved.reserve(rows.size());
+    movedDurations.reserve(rows.size());
+    for (int r : rows) {
+        moved.append(tracks[r]);
+        movedDurations.append(trackDurations[r]);
+    }
+    for (int i = rows.size() - 1; i >= 0; --i) {
+        const int r = rows[i];
+        tracks.removeAt(r);
+        trackDurations.removeAt(r);
+        if (r < destinationRow)
+            --destinationRow;
+    }
+    for (int i = 0; i < moved.size(); ++i) {
+        tracks.insert(destinationRow + i, moved[i]);
+        trackDurations.insert(destinationRow + i, movedDurations[i]);
+    }
+
+    rebuildListDisplay();
+    updateTotalTimeDisplay();
+    listWidget->clearSelection();
+    for (int i = 0; i < moved.size(); ++i) {
+        if (QListWidgetItem *item = listWidget->item(destinationRow + i))
+            item->setSelected(true);
+    }
+    if (destinationRow >= 0 && destinationRow < listWidget->count())
+        listWidget->setCurrentRow(destinationRow);
+}
+
+void PlaylistWindow::applyRowsMoved(int sourceStart, int sourceEnd, int destinationRow) {
+    const int count = sourceEnd - sourceStart + 1;
+    if (!listWidget || count <= 0 || listWidget->count() != tracks.size())
+        return;
+    if (sourceStart < 0 || sourceEnd >= tracks.size())
+        return;
+    if (destinationRow < 0 || destinationRow > tracks.size())
+        return;
+    // QListModel::moveRows rejects a destination inside the source block,
+    // including a drop just after the block. Those calls do not emit rowsMoved.
+    if (destinationRow >= sourceStart && destinationRow <= sourceEnd + 1)
+        return;
+
+    while (trackDurations.size() < tracks.size())
+        trackDurations.append(0);
+    if (trackDurations.size() > tracks.size())
+        trackDurations.resize(tracks.size());
+
+    // Mirror QListModel::moveRows. The signal's destination may equal size()
+    // for an append; QList::move requires the index to be strictly inside.
+    int fromRow = sourceStart;
+    int dest = destinationRow;
+    if (dest < sourceStart)
+        fromRow += count - 1;
+    else
+        --dest;
+
+    int left = count;
+    while (left--) {
+        if (fromRow < 0 || fromRow >= tracks.size() || dest < 0 || dest >= tracks.size())
+            return;
+        tracks.move(fromRow, dest);
+        trackDurations.move(fromRow, dest);
+    }
+
+    for (int i = 0; i < listWidget->count(); ++i) {
+        QListWidgetItem *item = listWidget->item(i);
+        if (!item)
+            continue;
+        item->setText(trackDisplayName(i, item->data(Qt::UserRole).toString()));
+    }
 }
 
 void PlaylistWindow::applyPlaylistColors() {
