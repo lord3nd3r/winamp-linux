@@ -34,7 +34,8 @@ namespace TagMetadata {
 // Read tags from a local media file. Remote URLs / missing files → invalid.
 MediaTags readTags(const QString &filePath);
 
-// Write tags. For MPEG/MP3, writes both ID3v1 and ID3v2 (Winamp 2.x behavior).
+// Write tags. For MPEG/MP3, writes ID3v2.3 plus an ID3v1 tag whose text
+// fields are Latin-1 and cut to the v1 limits (Winamp 2.x behavior).
 // Other formats use TagLib's native tag (Vorbis comment, FLAC, MP4, etc.).
 // Returns true on successful save to disk.
 bool writeTags(const QString &filePath, const MediaTags &tags, QString *errorOut = nullptr);
