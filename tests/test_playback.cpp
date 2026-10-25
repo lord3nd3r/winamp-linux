@@ -1,9 +1,12 @@
 #include <QtTest>
 #include <QObject>
 #include <QColor>
+#include <QDir>
+#include <QFile>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QUrl>
+#include <memory>
 
 #include "../src/constants.h"
 #include "../src/winamp_window.h"
@@ -42,6 +45,7 @@ private slots:
     void testGaplessClearsStaleSuccessor();
     void testSettingsWrite();
     void testStalePlaybackCallback();
+    void testLocalPlaylistEnqueuesEveryEntry();
 };
 
 void TestPlayback::testGaplessSwapFollowsActivePlayer() {
@@ -130,6 +134,39 @@ void TestPlayback::testSettingsWrite() {
     QCOMPARE(loaded.value("shuffle").toBool(), true);
     QCOMPARE(loaded.value("repeat").toBool(), true);
     loaded.endGroup();
+}
+
+void TestPlayback::testLocalPlaylistEnqueuesEveryEntry() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QDir(dir.path()).mkpath(QStringLiteral("sub"));
+    QFile song(dir.filePath(QStringLiteral("b.mp3")));
+    QVERIFY(song.open(QIODevice::WriteOnly));
+    song.write("x");
+    song.close();
+    QFile nested(dir.filePath(QStringLiteral("sub/c.mp3")));
+    QVERIFY(nested.open(QIODevice::WriteOnly));
+    nested.write("y");
+    nested.close();
+    QFile pls(dir.filePath(QStringLiteral("list.pls")));
+    QVERIFY(pls.open(QIODevice::WriteOnly));
+    pls.write("[playlist]\n"
+              "File1=http://example.com/a.mp3\n"
+              "Title1=Nope\n"
+              "File2=b.mp3\n"
+              "File3=sub/c.mp3\n"
+              "NumberOfEntries=3\n");
+    pls.close();
+
+    WinampWindow window;
+    const auto started = std::make_shared<bool>(false);
+    window.resolveLocalPlaylistFile(pls.fileName(), 0, window.playbackGeneration, started);
+    QCOMPARE(window.playlistWindow->trackCount(), 3);
+    QCOMPARE(window.playlistWindow->trackAt(0), QStringLiteral("http://example.com/a.mp3"));
+    QCOMPARE(window.playlistWindow->trackAt(1), song.fileName());
+    QCOMPARE(window.playlistWindow->trackAt(2), nested.fileName());
+    QCOMPARE(window.playlistWindow->currentTrackIndex(), 0);
+    QVERIFY(*started);
 }
 
 void TestPlayback::testStalePlaybackCallback() {

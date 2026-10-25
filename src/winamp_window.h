@@ -248,7 +248,7 @@ public:
             return;
         const quint64 generation = ++playbackGeneration;
         if (isPlaylistPath(file)) {
-            resolveLocalPlaylistFile(file, 0, generation);
+            resolveLocalPlaylistFile(file, 0, generation, std::make_shared<bool>(false));
             return;
         }
         streamViaReplyActive = false;
@@ -271,7 +271,7 @@ public:
         }
 
         if (isPlaylistPath(parsed.path())) {
-            resolvePlaylistUrl(parsed, 0, generation);
+            resolvePlaylistUrl(parsed, 0, generation, std::make_shared<bool>(false));
             return;
         }
 
@@ -1267,21 +1267,61 @@ public:
     // (e.g. an SSL variant), so cap the hop count rather than following indefinitely.
     static constexpr int kMaxPlaylistResolveDepth = 3;
 
-    // Fetches a remote M3U/PLS playlist, extracts the first real media entry, and plays
-    // it. Without this, the playlist's raw text gets handed straight to FFmpeg, which can
-    // misdetect it as some other container and "play" it with no audio stream at all.
+    // Fetches a remote M3U/PLS playlist and enqueues every entry. Without this, the
+    // playlist's raw text gets handed straight to FFmpeg, which can misdetect it as
+    // some other container and "play" it with no audio stream at all.
     bool playbackCallbackCurrent(quint64 generation) const {
         return generation == playbackGeneration;
     }
 
-    void resolvePlaylistUrl(const QUrl &url, int depth, quint64 generation) {
+    // `started` is shared across nested playlist hops so only the first real
+    // media entry begins playback. playTrack() bumps playbackGeneration; nested
+    // fetches keep using the generation from after that bump.
+    void enqueuePlaylistEntries(const QStringList &entries, int depth, quint64 generation,
+                                const std::shared_ptr<bool> &started) {
+        if (!playlistWindow || !started || !playbackCallbackCurrent(generation))
+            return;
+        QStringList nested;
+        int firstAdded = -1;
+        for (const QString &entry : entries) {
+            if (!playbackCallbackCurrent(generation))
+                return;
+            if (isPlaylistPath(entry)) {
+                nested.append(entry);
+                continue;
+            }
+            const int before = playlistWindow->trackCount();
+            playlistWindow->addTrack(entry);
+            if (firstAdded < 0 && playlistWindow->trackCount() > before)
+                firstAdded = before;
+        }
+        if (!*started && firstAdded >= 0 && playbackCallbackCurrent(generation)) {
+            *started = true;
+            playlistWindow->setCurrentTrackIndex(firstAdded);
+            playTrack(playlistWindow->trackAt(firstAdded));
+        }
+        if (depth + 1 >= kMaxPlaylistResolveDepth)
+            return;
+        const quint64 follow = playbackGeneration;
+        for (const QString &entry : nested) {
+            const QUrl entryUrl = QUrl::fromUserInput(entry);
+            const QString local = entryUrl.isLocalFile() ? entryUrl.toLocalFile() : entry;
+            if (entryUrl.isLocalFile() || (!isRemoteMediaLocation(entry) && QFile::exists(local)))
+                resolveLocalPlaylistFile(local, depth + 1, follow, started);
+            else
+                resolvePlaylistUrl(entryUrl, depth + 1, follow, started);
+        }
+    }
+
+    void resolvePlaylistUrl(const QUrl &url, int depth, quint64 generation,
+                            const std::shared_ptr<bool> &started) {
         if (depth >= kMaxPlaylistResolveDepth) {
             qWarning() << "Playlist resolution exceeded max depth, giving up:" << url;
             return;
         }
         if (!playbackCallbackCurrent(generation))
             return;
-        validateStreamHostAsync(url, [this, url, depth, generation](bool allowed) {
+        validateStreamHostAsync(url, [this, url, depth, generation, started](bool allowed) {
             if (!playbackCallbackCurrent(generation))
                 return;
             if (!allowed) {
@@ -1315,7 +1355,7 @@ public:
                 });
             });
 #endif
-            connect(reply, &QNetworkReply::finished, this, [this, reply, depth, generation]() {
+            connect(reply, &QNetworkReply::finished, this, [this, reply, url, depth, generation, started]() {
                 reply->deleteLater();
                 if (!playbackCallbackCurrent(generation))
                     return;
@@ -1323,22 +1363,19 @@ public:
                     qWarning() << "Failed to fetch playlist:" << reply->errorString();
                     return;
                 }
-                QString entry = firstPlaylistEntry(reply->readAll());
-                if (entry.isEmpty()) {
-                    qWarning() << "No playable entries found in playlist";
+                const QStringList entries = playlistEntries(reply->readAll(), url);
+                if (entries.isEmpty()) {
+                    qWarning() << "No playable entries found in playlist" << url;
                     return;
                 }
-                if (isPlaylistPath(entry)) {
-                    resolvePlaylistUrl(QUrl::fromUserInput(entry), depth + 1, generation);
-                } else {
-                    playUrl(entry);
-                }
+                enqueuePlaylistEntries(entries, depth, generation, started);
             });
         });
     }
 
     // Local-file counterpart of resolvePlaylistUrl() — same reasoning, no network fetch needed.
-    void resolveLocalPlaylistFile(const QString &path, int depth, quint64 generation) {
+    void resolveLocalPlaylistFile(const QString &path, int depth, quint64 generation,
+                                  const std::shared_ptr<bool> &started) {
         if (!playbackCallbackCurrent(generation))
             return;
         if (depth >= kMaxPlaylistResolveDepth) {
@@ -1347,21 +1384,17 @@ public:
         }
         QFile f(path);
         if (!f.open(QIODevice::ReadOnly)) return;
-        QString entry = firstPlaylistEntry(f.readAll());
+        const QByteArray data = f.readAll();
         f.close();
-        if (entry.isEmpty()) {
+        if (!playbackCallbackCurrent(generation))
+            return;
+        const QUrl base = QUrl::fromLocalFile(QFileInfo(path).absolutePath() + QLatin1Char('/'));
+        const QStringList entries = playlistEntries(data, base);
+        if (entries.isEmpty()) {
             qWarning() << "No playable entries found in playlist" << path;
             return;
         }
-        if (!playbackCallbackCurrent(generation))
-            return;
-        if (isPlaylistPath(entry)) {
-            QUrl entryUrl = QUrl::fromUserInput(entry);
-            if (entryUrl.isLocalFile()) resolveLocalPlaylistFile(entryUrl.toLocalFile(), depth + 1, generation);
-            else resolvePlaylistUrl(entryUrl, depth + 1, generation);
-        } else {
-            playUrl(entry);
-        }
+        enqueuePlaylistEntries(entries, depth, generation, started);
     }
 
     void playHttpStream(const QUrl &url) {

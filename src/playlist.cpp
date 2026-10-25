@@ -681,6 +681,14 @@ void PlaylistWindow::updateTotalTimeDisplay() {
     update();
 }
 
+int PlaylistWindow::addPlaylistText(const QByteArray &data, const QUrl &base) {
+    const int before = tracks.size();
+    const QStringList entries = playlistEntries(data, base);
+    for (const QString &entry : entries)
+        addTrack(entry);
+    return tracks.size() - before;
+}
+
 void PlaylistWindow::addTrack(const QString &filePath) {
     QString location = filePath.trimmed();
     if (location.isEmpty()) return;
@@ -1654,19 +1662,9 @@ void PlaylistWindow::showListMenu(QPoint globalPos) {
         if (!fileName.isEmpty()) {
             clearPlaylist();
             QFile file(fileName);
-            if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-                QTextStream in(&file);
-                QString basePath = QFileInfo(fileName).absolutePath();
-                while (!in.atEnd()) {
-                    QString line = in.readLine().trimmed();
-                    if (line.isEmpty() || line.startsWith('#'))
-                        continue;
-                    // Handle relative paths
-                    if (!QFileInfo(line).isAbsolute() && !isRemoteMediaLocation(line))
-                        line = basePath + "/" + line;
-                    if (QFile::exists(line) || isRemoteMediaLocation(line))
-                        addTrack(line);
-                }
+            if (file.open(QIODevice::ReadOnly)) {
+                const QUrl base = QUrl::fromLocalFile(QFileInfo(fileName).absolutePath() + QLatin1Char('/'));
+                addPlaylistText(file.readAll(), base);
                 file.close();
             }
         }

@@ -75,6 +75,9 @@ public:
     PlaylistWindow(WinampWindow *parent = nullptr);
     ~PlaylistWindow() override;
     void addTrack(const QString &filePath);
+    // Append every entry in an M3U/PLS body. `base` resolves relative paths
+    // (playlist directory, or the remote playlist URL). Returns how many were added.
+    int addPlaylistText(const QByteArray &data, const QUrl &base);
     void addFolderAsync(const QString &dirPath, bool autoPlay = false);
     void clearPlaylist();
     bool isSnapped() const { return isSnappedToMain && snapMode != 0; }
