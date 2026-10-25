@@ -10,6 +10,7 @@
 #include <QOpenGLFunctions>
 #include <libprojectM/projectM.hpp>
 #include "constants.h"
+#include "pcm_feed.h"
 
 class MilkdropWindow : public QOpenGLWidget, protected QOpenGLFunctions {
     Q_OBJECT
@@ -34,21 +35,25 @@ public:
     }
     
     void feedPCMInt16(const qint16 *data, int frames, int channels) {
-        if (!pm) return;
-        // Convert interleaved int16 stereo to the format projectM expects:
-        // addPCM16Data wants interleaved L,R,L,R... shorts
-        int n = qMin(frames, 512);
-        pm->pcm()->addPCM16Data(data, n);
+        if (!pm || !data || frames <= 0 || channels <= 0) return;
+        // addPCM16Data reads `n` stereo pairs. A mono buffer of `n` samples
+        // would be read `2n` shorts past its end, so duplicate mono into pairs
+        // and pull only the first two channels out of a wider layout.
+        constexpr int kMax = 512;
+        qint16 stereo[kMax * 2];
+        const int n = copyStereoInt16(data, frames, channels, stereo, kMax);
+        if (n > 0)
+            pm->pcm()->addPCM16Data(stereo, static_cast<short>(n));
     }
     
     void feedPCMFloat(const float *data, int frames, int channels) {
-        if (!pm) return;
-        // Convert interleaved float to mono float for addPCMfloat
-        float mono[512];
-        int n = qMin(frames, 512);
-        for (int i = 0; i < n; i++)
-            mono[i] = data[i * channels];
-        pm->pcm()->addPCMfloat(mono, n);
+        if (!pm || !data || frames <= 0 || channels <= 0) return;
+        // addPCMfloat consumes mono samples and duplicates them to L/R.
+        constexpr int kMax = 512;
+        float mono[kMax];
+        const int n = copyMonoFloat(data, frames, channels, mono, kMax);
+        if (n > 0)
+            pm->pcm()->addPCMfloat(mono, n);
     }
     
     void nextPreset() { if (pm) pm->selectNext(true); }

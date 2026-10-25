@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 
 #define EQ10_NOFBANDS 10
@@ -41,6 +42,22 @@ struct PlaybackOutputGain {
 
 inline bool playbackDspNeeded(bool equalizerOn, int balance) {
     return equalizerOn || balance != 0;
+}
+
+// QIODevice::write may accept fewer bytes than requested. Call it again until
+// it accepts nothing or the buffer is done. Returns how many bytes were accepted.
+template <typename WriteFn>
+inline std::int64_t writeAcceptedBytes(const char *data, std::int64_t bytes, WriteFn &&writeFn) {
+    if (!data || bytes <= 0)
+        return 0;
+    std::int64_t offset = 0;
+    while (offset < bytes) {
+        const std::int64_t n = static_cast<std::int64_t>(writeFn(data + offset, bytes - offset));
+        if (n <= 0 || n > bytes - offset)
+            break;
+        offset += n;
+    }
+    return offset;
 }
 
 inline PlaybackOutputGain playbackOutputGain(int volume, int balance) {
