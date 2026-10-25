@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.lord3nd3r.winamp</id>
+  <name>Winamp</name>
+  <summary>Classic Winamp media player for Linux</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-2.0-or-later</project_license>
+  <developer_name>lord3nd3r</developer_name>
+  <launchable type="desktop-id">winamp.desktop</launchable>
+  <url type="homepage">https://github.com/lord3nd3r/winamp-linux</url>
+  <description>
+    <p>
+      Winamp for Linux is a classic Winamp-style player: skins, a playlist,
+      an equalizer, and Milkdrop visuals via projectM.
+    </p>
+  </description>
+  <provides>
+    <binary>winamp</binary>
+  </provides>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="@WINAMP_VERSION_FULL@" date="2026-10-25"/>
+  </releases>
+</component>

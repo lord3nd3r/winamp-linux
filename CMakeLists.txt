@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
 # Numeric version for CMake/CPack; full label lives in src/constants.h
-# and must match the latest GitHub release tag (v1.2.2 → 1.2.2 / 1.2.2).
+# and must match the release tag being cut (v1.3.0 → 1.3.0).
 # C is required so Qt6's FindThreads dependency works on older CMake (e.g. Ubuntu 22.04 / Debian bookworm).
-project(Winamp VERSION 1.2.2 LANGUAGES C CXX)
-set(WINAMP_VERSION_FULL "1.2.2")
+project(Winamp VERSION 1.3.0 LANGUAGES C CXX)
+set(WINAMP_VERSION_FULL "1.3.0")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -132,6 +132,10 @@ if(QT_PACKAGE STREQUAL "Qt6" AND ${QT_DBUS_FOUND_VAR})
     target_compile_definitions(winamp PRIVATE QT_DBUS_LIB)
 endif()
 
+configure_file(packaging/linux/winamp.metainfo.xml.in
+               packaging/linux/winamp.metainfo.xml
+               @ONLY)
+
 install(TARGETS winamp RUNTIME DESTINATION bin)
 install(FILES winamp.desktop DESTINATION share/applications)
 install(DIRECTORY skins/ DESTINATION share/winamp/skins)
@@ -141,6 +145,9 @@ install(DIRECTORY lang/ DESTINATION share/winamp/lang)
 # implementations that only resolve icon *names* (not arbitrary absolute
 # paths embedded in a .desktop's Icon= key) can still find the app icon.
 install(DIRECTORY icons/ DESTINATION share/icons)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/packaging/linux/winamp.metainfo.xml"
+        DESTINATION share/metainfo
+        RENAME io.github.lord3nd3r.winamp.metainfo.xml)
 
 # Testing
 enable_testing()

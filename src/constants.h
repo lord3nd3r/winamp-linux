@@ -19,11 +19,11 @@
 #include <utility>
 #include <zlib.h>
 
-// Product version — keep aligned with GitHub release tags (currently v1.2.2).
+// Product version — keep aligned with the release being cut (v1.3.0).
 // CMake project(VERSION) and WINAMP_VERSION_FULL must match this label.
-inline constexpr const char *kWinampVersion = "1.2.2";
-inline constexpr const char *kWinampWindowTitle = "Winamp 1.2.2 for Linux";
-inline constexpr const char *kWinampAboutLine = "Winamp v1.2.2 for Linux";
+inline constexpr const char *kWinampVersion = "1.3.0";
+inline constexpr const char *kWinampWindowTitle = "Winamp 1.3.0 for Linux";
+inline constexpr const char *kWinampAboutLine = "Winamp v1.3.0 for Linux";
 
 // Shared Winamp-style QMenu stylesheet (used by all context menus)
 inline constexpr const char *kWinampMenuStyle =
