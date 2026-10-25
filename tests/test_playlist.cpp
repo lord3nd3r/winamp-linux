@@ -37,6 +37,7 @@ private slots:
     void testFolderScanDestructorWaits();
     void testPlaylistEntries();
     void testOpenPlaylistText();
+    void testDurationProbeOneAtATime();
 
 private:
     void assertRowsMatchTracks(PlaylistWindow &playlist) const;
@@ -502,6 +503,55 @@ void TestPlaylist::testOpenPlaylistText() {
     QCOMPARE(playlist.trackAt(0), QStringLiteral("http://example.com/a.mp3"));
     QCOMPARE(playlist.trackAt(1), local.fileName());
     QCOMPARE(playlist.trackAt(2), nested.fileName());
+}
+
+void TestPlaylist::testDurationProbeOneAtATime() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QFile first(dir.filePath(QStringLiteral("a.mp3")));
+    QVERIFY(first.open(QIODevice::WriteOnly));
+    first.write("a");
+    first.close();
+    QFile second(dir.filePath(QStringLiteral("b.mp3")));
+    QVERIFY(second.open(QIODevice::WriteOnly));
+    second.write("b");
+    second.close();
+
+    const QString ini = dir.filePath(QStringLiteral("playlist.ini"));
+    {
+        QSettings saved(ini, QSettings::IniFormat);
+        saved.beginGroup(QStringLiteral("Playlist"));
+        saved.setValue(QStringLiteral("trackList"),
+                       QStringList() << first.fileName()
+                                     << QStringLiteral("http://example.com/stream.mp3")
+                                     << second.fileName());
+        saved.endGroup();
+    }
+
+    PlaylistWindow playlist;
+    QSettings loaded(ini, QSettings::IniFormat);
+    playlist.loadSettings(loaded);
+    QCOMPARE(playlist.trackCount(), 3);
+    QVERIFY(playlist.durationProbeActive);
+    QCOMPARE(playlist.durationProbePath, first.fileName());
+    QCOMPARE(playlist.durationProbeQueue, QStringList() << second.fileName());
+    QVERIFY(playlist.durationProbeTimer);
+    QVERIFY(playlist.durationProbeTimer->isActive());
+
+    const quint64 serial = playlist.durationProbeSerial;
+    playlist.onDurationProbeTimeout();
+    QVERIFY(playlist.durationProbeTimer->isActive());
+    QCOMPARE(playlist.durationProbePath, second.fileName());
+    QVERIFY(playlist.durationProbeQueue.isEmpty());
+    QVERIFY(playlist.durationProbeSerial != serial);
+
+    // The player source is the second file. A LoadedMedia signal that does not
+    // belong to the probe path must not record a duration or start another probe.
+    playlist.durationProbePath = first.fileName();
+    playlist.onDurationProbeStatus(QMediaPlayer::LoadedMedia);
+    QCOMPARE(playlist.trackDurations.at(0), static_cast<qint64>(0));
+    QCOMPARE(playlist.durationProbePath, first.fileName());
+    QVERIFY(playlist.durationProbeQueue.isEmpty());
 }
 
 QTEST_MAIN(TestPlaylist)
