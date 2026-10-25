@@ -1,4 +1,5 @@
 #include "equalizer.h"
+#include "eq_dsp.h"
 #include "winamp_window.h"
 #include "winamp_bitmaps.h"
 #include <QFileDialog>
@@ -104,7 +105,7 @@ void EqualizerWindow::followMain() {
 float EqualizerWindow::getBandGainDb(int band) const {
     if (band < 0 || band >= 10) return 0.0f;
     if (!eqEnabled) return 0.0f;
-    return (eqValues[band] - 32) * 12.0f / 32.0f;
+    return static_cast<float>(eq10_valtodb(eqValues[band]));
 }
 
 float EqualizerWindow::getPreampGainDb() const {

@@ -72,10 +72,15 @@ static const float eq_preamp_table[64] = {
     0.303614f, 0.285462f, 0.267593f, 0.250000f
 };
 
-// Slider value (0-63) to dB (matches In.cpp VALTODB)
-// Slider pos: 63 = top = +12dB boost, 31 = center = 0dB, 0 = bottom = -12dB cut
+// Slider value (0-63) to dB.
+// The equalizer UI, the Flat preset, and saved presets all use 32 as the
+// center detent. Winamp's original VALTODB treated 31 as 0 dB, so a slider
+// left at 32 (and every Flat band) was about +0.39 dB. Map 32 → 0 dB so the
+// detent matches the sound. Stored slider integers are not rewritten: knobs
+// stay where they were, and a saved Flat preset becomes actually flat.
+// 63 = top = +12 dB, 32 = center = 0 dB, 0 = bottom = -12 dB.
 static inline double eq10_valtodb(int v) {
-    v = 31 - v;  // Flip: 63→-32 (boost), 0→+31 (cut)
+    v = 32 - v;  // 63 → -31 (boost), 32 → 0, 0 → +32 (cut)
     if (v < -31) v = -31;
     if (v > 32) v = 32;
     if (v > 0) return -12.0 * (v / 32.0);
