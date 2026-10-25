@@ -13,10 +13,6 @@ Release package text that only repeats the distro matrix is summarized, not copi
 - Playback tests that open media (`testGaplessSwapFollowsActivePlayer`, `testGaplessClearsStaleSuccessor`, and `testLocalPlaylistEnqueuesEveryEntry`) skip on Qt 6.8 and newer when `QT_MEDIA_BACKEND` is unset or `ffmpeg`. That backend crashes if `setSource` or player destruction cancels an in-flight open.
 - CI and the release workflow build Fedora 43 and Fedora 44 instead of Fedora 41 and Fedora 42. Ubuntu 22.04, Ubuntu 24.04, Ubuntu Resolute, Debian Bookworm, Debian Trixie, and openSUSE Tumbleweed are unchanged.
 
-### Removed
-
-- `CLAUDE.md` is no longer in the repository. `.gitignore` ignores `CLAUDE.md`, `.claude/`, `.cursor/`, and `AGENTS.md`.
-
 ## [1.3.0] - 2026-10-25
 
 Spectrum, the 10-band EQ, Milkdrop samples, and stereo balance require Qt 6.8 or newer (`QAudioBufferOutput`). On older Qt, including Qt 5 and Qt 6.2/6.4 (Ubuntu 22.04, Ubuntu 24.04, Debian Bookworm, and the 1.3.0 AppImage), audio still plays through the normal output and those four features are compiled out. Dragging the balance slider appends ` (NO TAP)`.
