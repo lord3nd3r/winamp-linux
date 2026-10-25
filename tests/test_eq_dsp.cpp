@@ -2,6 +2,7 @@
 #include <QObject>
 #include <cmath>
 #include "../src/eq_dsp.h"
+#include "../src/pcm_feed.h"
 #include "../src/python_plugin.h"
 
 class TestEqDsp : public QObject {
@@ -18,6 +19,8 @@ private slots:
     void testProcessf();
     void testBalanceReachesOutputChain();
     void testPluginHostRestartLimit();
+    void testMilkdropChannelCounts();
+    void testShortAudioSinkWrite();
 };
 
 void TestEqDsp::initTestCase() {
@@ -126,6 +129,53 @@ void TestEqDsp::testPluginHostRestartLimit() {
     QCOMPARE(PluginHostRestart::backoffMs(3), 4000);
     QCOMPARE(PluginHostRestart::backoffMs(4), 8000);
     QCOMPARE(PluginHostRestart::backoffMs(20), 8000);
+}
+
+void TestEqDsp::testMilkdropChannelCounts() {
+    const float monoIn[3] = {1.f, 2.f, 3.f};
+    float monoOut[3] = {};
+    QCOMPARE(copyMonoFloat(monoIn, 3, 1, monoOut, 3), 3);
+    QCOMPARE(monoOut[0], 1.f);
+    QCOMPARE(monoOut[1], 2.f);
+    QCOMPARE(monoOut[2], 3.f);
+
+    const float stereo[4] = {1.f, 3.f, 2.f, 6.f};
+    float down[2] = {};
+    QCOMPARE(copyMonoFloat(stereo, 2, 2, down, 2), 2);
+    QCOMPARE(down[0], 2.f);
+    QCOMPARE(down[1], 4.f);
+
+    const int16_t mono16[3] = {1, 2, 3};
+    int16_t stereo16[6] = {};
+    QCOMPARE(copyStereoInt16(mono16, 3, 1, stereo16, 3), 3);
+    QCOMPARE(stereo16[0], int16_t(1));
+    QCOMPARE(stereo16[1], int16_t(1));
+    QCOMPARE(stereo16[4], int16_t(3));
+    QCOMPARE(stereo16[5], int16_t(3));
+
+    const int16_t multi[6] = {1, 2, 9, 3, 4, 9};
+    int16_t pair[4] = {};
+    QCOMPARE(copyStereoInt16(multi, 2, 3, pair, 2), 2);
+    QCOMPARE(pair[0], int16_t(1));
+    QCOMPARE(pair[1], int16_t(2));
+    QCOMPARE(pair[2], int16_t(3));
+    QCOMPARE(pair[3], int16_t(4));
+}
+
+void TestEqDsp::testShortAudioSinkWrite() {
+    const char data[] = "abcdefghij";
+    QByteArray accepted;
+    qint64 budget = 4;
+    const qint64 n = writeAcceptedBytes(data, 10, [&](const char *p, qint64 len) -> qint64 {
+        if (budget <= 0)
+            return 0;
+        const qint64 take = qMin(qint64(3), qMin(len, budget));
+        accepted.append(p, static_cast<int>(take));
+        budget -= take;
+        return take;
+    });
+    QCOMPARE(n, qint64(4));
+    QCOMPARE(accepted, QByteArray("abcd"));
 }
 
 void TestEqDsp::testBalanceReachesOutputChain() {

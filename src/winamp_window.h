@@ -1021,8 +1021,10 @@ public:
 #if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
     void processAudioBuffer(const QAudioBuffer &buffer) {
         const QAudioFormat fmt = buffer.format();
-        int sampleCount = buffer.frameCount();
         int channels = fmt.channelCount();
+        int sampleCount = buffer.frameCount();
+        if (channels > 0)
+            sampleCount = qMin(sampleCount, buffer.sampleCount() / channels);
         
         // Update media info from audio format
         mediaChannels = channels;
@@ -1125,6 +1127,7 @@ public:
                     audioSink->stop();
                     delete audioSink;
                 }
+                eqSinkPending.clear();
                 QAudioFormat outFmt;
                 outFmt.setChannelCount(eqChannels);
                 outFmt.setSampleRate(sampleRate);
@@ -1199,8 +1202,28 @@ public:
             }
 
             if (audioSinkDevice) {
+                const char *out = reinterpret_cast<const char *>(eqDspOutBuf.constData());
                 const qint64 bytes = static_cast<qint64>(totalSamples) * static_cast<qint64>(sizeof(float));
-                audioSinkDevice->write(reinterpret_cast<const char *>(eqDspOutBuf.data()), bytes);
+                auto sinkWrite = [&](const char *data, qint64 count) {
+                    return writeAcceptedBytes(data, count, [&](const char *ptr, qint64 len) {
+                        return audioSinkDevice->write(ptr, len);
+                    });
+                };
+                // QAudioSink::write can accept only part of the buffer. Keep
+                // calling until it accepts nothing, and hold the tail for the
+                // next callback. Cap the hold so a stalled device cannot grow
+                // latency without bound; the oldest samples are dropped.
+                if (!eqSinkPending.isEmpty()) {
+                    const qint64 flushed = sinkWrite(eqSinkPending.constData(), eqSinkPending.size());
+                    if (flushed > 0)
+                        eqSinkPending.remove(0, static_cast<int>(flushed));
+                }
+                const qint64 accepted = sinkWrite(out, bytes);
+                if (accepted < bytes)
+                    eqSinkPending.append(out + accepted, static_cast<int>(bytes - accepted));
+                constexpr int kMaxPending = 256 * 1024;
+                if (eqSinkPending.size() > kMaxPending)
+                    eqSinkPending.remove(0, eqSinkPending.size() - kMaxPending);
             }
         } else if (eqDspActive) {
             waSetOutputVolume(player, audioOutput, volume / 255.0f);
@@ -1212,6 +1235,7 @@ public:
                 audioSink = nullptr;
                 audioSinkDevice = nullptr;
             }
+            eqSinkPending.clear();
             eqSampleRate = 0;
             eqChannels = 0;
         }
@@ -3429,6 +3453,7 @@ private:
     bool eqFiltersReady = false; // eq10_setup has run for the current rate
     QVector<float> eqDspFloatBuf;  // Pre-allocated input buffer (resized on format change)
     QVector<float> eqDspOutBuf;    // Pre-allocated output buffer (resized on format change)
+    QByteArray eqSinkPending;      // Tail of a short QAudioSink write, replayed next callback
     QTimer *timer;
     QTimer *scrollTimer;
     QString currentFile;
