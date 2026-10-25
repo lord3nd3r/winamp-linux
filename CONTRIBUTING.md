@@ -352,7 +352,7 @@ flowchart TB
 | Network stream policy | `playHttpStream` in `winamp_window.h` |
 | Skin constants / vis colors | `constants.h`, `winamp_bitmaps.h` |
 | Build / deps / install | `CMakeLists.txt` |
-| User docs | `README.md`, `CONFIGURATION.md`, `PLUGIN_DEVELOPMENT.md`, `CLAUDE.md` |
+| User docs | `README.md`, `CONFIGURATION.md`, `PLUGIN_DEVELOPMENT.md` |
 
 ---
 

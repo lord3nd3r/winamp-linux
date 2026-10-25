@@ -18,3 +18,7 @@ build_*/
 .local-agent/
 .continue/
 .windsurf/
+.claude/
+.cursor/
+AGENTS.md
+CLAUDE.md

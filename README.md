@@ -92,7 +92,6 @@ Classic Winamp defined how a generation listened to music on the desktop: skinna
 | **[CONTRIBUTING.md](CONTRIBUTING.md)** | Dependencies, Qt 5/6 builds, tests, packaging, architecture, coding standards, PR workflow |
 | **[CONFIGURATION.md](CONFIGURATION.md)** | Paths, `winamp.conf` keys (verified against source), skins, plugins dir, bookmarks |
 | **[PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md)** | Process isolation (not an OS sandbox), lifecycle hooks, full API reference, examples, Icecast DJ notes |
-| **[CLAUDE.md](CLAUDE.md)** | Short map of 1.3.0 behavior: PCM tap, skins, plugins, playlists, MPRIS, tags, AppImage, tests |
 | **[winamp.png](winamp.png)** | README hero screenshot (classic main + equalizer) |
 
 ---
