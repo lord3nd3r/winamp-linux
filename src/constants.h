@@ -11,10 +11,12 @@
 #include <QFileInfo>
 #include <QUrl>
 #include <QDebug>
-#include <QProcess>
-#include <QRegularExpression>
+#include <QCryptographicHash>
+#include <QDirIterator>
 #include <algorithm>
+#include <cstring>
 #include <utility>
+#include <zlib.h>
 
 // Product version — keep aligned with GitHub release tags (currently v1.2.2).
 // CMake project(VERSION) and WINAMP_VERSION_FULL must match this label.
@@ -264,94 +266,358 @@ static inline SkinPlaylistColors parsePleditTxt(const QString &skinPath) {
     return colors;
 }
 
-// Reject skin archives whose declared uncompressed footprint or entry count could fill the
-// disk on extraction (decompression-bomb guard). Reads the central directory via `unzip -l`
-// rather than extracting first, so a bomb never gets the chance to write anything.
-static inline bool skinArchivePassesSizeGuard(const QString &archivePath) {
-    static const qint64 kMaxUncompressedBytes = 128LL * 1024 * 1024; // 128 MB
-    static const int kMaxEntries = 512;
+// Skin archives are ordinary zip files (.wsz / .zip / .wal). They are read with zlib
+// so packaging does not depend on the unzip program. Nested directories are kept.
+// A cache hit requires the archive's size, mtime, and SHA-256 to match the last extract.
+static constexpr qint64 kSkinMaxUncompressedBytes = 128LL * 1024 * 1024;
+static constexpr qint64 kSkinMaxArchiveBytes = 128LL * 1024 * 1024;
+static constexpr int kSkinMaxEntries = 512;
 
-    QProcess list;
-    list.start("unzip", QStringList() << "-l" << archivePath);
-    if (!list.waitForFinished(10000) || list.exitStatus() != QProcess::NormalExit || list.exitCode() != 0) {
-        qWarning() << "Failed to list skin archive contents, refusing to extract:" << archivePath;
-        return false;
+static inline bool zipHave(const QByteArray &b, qint64 off, qint64 n) {
+    return off >= 0 && n >= 0 && off <= b.size() && n <= b.size() - off;
+}
+static inline quint16 zipU16(const uchar *p) {
+    return quint16(p[0]) | (quint16(p[1]) << 8);
+}
+static inline quint32 zipU32(const uchar *p) {
+    return quint32(p[0]) | (quint32(p[1]) << 8) | (quint32(p[2]) << 16) | (quint32(p[3]) << 24);
+}
+static inline quint64 zipU64(const uchar *p) {
+    return quint64(zipU32(p)) | (quint64(zipU32(p + 4)) << 32);
+}
+
+struct ZipCentralEntry {
+    QString name;
+    quint16 method = 0;
+    quint16 flags = 0;
+    quint32 crc = 0;
+    quint64 compSize = 0;
+    quint64 uncompSize = 0;
+    quint64 localOffset = 0;
+    quint32 extAttr = 0;
+    bool directory = false;
+};
+
+static inline void applyZip64Extra(ZipCentralEntry *entry, const uchar *extra, int extraLen) {
+    const bool needUncomp = entry->uncompSize == 0xFFFFFFFFu;
+    const bool needComp = entry->compSize == 0xFFFFFFFFu;
+    const bool needOff = entry->localOffset == 0xFFFFFFFFu;
+    int off = 0;
+    while (off + 4 <= extraLen) {
+        const quint16 id = zipU16(extra + off);
+        const quint16 sz = zipU16(extra + off + 2);
+        off += 4;
+        if (off + sz > extraLen)
+            return;
+        if (id == 0x0001) {
+            int z = 0;
+            auto take = [&](quint64 *dst, bool need) {
+                if (!need || z + 8 > sz)
+                    return;
+                *dst = zipU64(extra + off + z);
+                z += 8;
+            };
+            take(&entry->uncompSize, needUncomp);
+            take(&entry->compSize, needComp);
+            take(&entry->localOffset, needOff);
+        }
+        off += sz;
     }
+}
 
-    // Footer line looks like: "   123456                     7 files"
-    static const QRegularExpression footerRe(QStringLiteral("^(\\d+)\\s+(?:\\S+\\s+)*?(\\d+)\\s+files?$"));
-    qint64 totalBytes = -1;
-    int entryCount = -1;
-    const QList<QByteArray> lines = list.readAllStandardOutput().split('\n');
-    for (int i = lines.size() - 1; i >= 0; --i) {
-        const QString line = QString::fromLatin1(lines[i]).trimmed();
-        if (line.isEmpty()) continue;
-        auto m = footerRe.match(line);
-        if (m.hasMatch()) {
-            totalBytes = m.captured(1).toLongLong();
-            entryCount = m.captured(2).toInt();
+// Empty string means "skip" (directory, junk, symlink). A null QString is not used;
+// unsafe paths return a null QString via an out-flag so the caller can reject the archive.
+static inline QString safeZipRelativePath(const QByteArray &rawName, bool *unsafe, bool *directory) {
+    QString name = QString::fromUtf8(rawName);
+    name.replace(QLatin1Char('\\'), QLatin1Char('/'));
+    *directory = name.endsWith(QLatin1Char('/'));
+    if (name.startsWith(QLatin1Char('/')) || name.contains(QLatin1Char(':'))) {
+        *unsafe = true;
+        return QString();
+    }
+    QStringList parts;
+    const QStringList split = name.split(QLatin1Char('/'));
+    for (const QString &part : split) {
+        if (part.isEmpty() || part == QLatin1String("."))
+            continue;
+        if (part == QLatin1String("..")) {
+            *unsafe = true;
+            return QString();
+        }
+        parts.append(part);
+    }
+    if (parts.isEmpty())
+        return QString();
+    if (parts.first() == QLatin1String("__MACOSX"))
+        return QString();
+    return parts.join(QLatin1Char('/'));
+}
+
+static inline bool readZipCentralDirectory(const QByteArray &blob, QVector<ZipCentralEntry> *entries, QString *error) {
+    const uchar *p = reinterpret_cast<const uchar *>(blob.constData());
+    const int size = blob.size();
+    int eocd = -1;
+    const int scanFrom = qMax(0, size - (22 + 65535));
+    for (int i = size - 22; i >= scanFrom; --i) {
+        if (zipU32(p + i) == 0x06054b50u && i + 22 + zipU16(p + i + 20) == size) {
+            eocd = i;
             break;
         }
     }
-
-    if (totalBytes < 0 || entryCount < 0) {
-        qWarning() << "Could not determine skin archive footprint, refusing to extract:" << archivePath;
+    if (eocd < 0) {
+        *error = QStringLiteral("not a zip archive");
         return false;
     }
-    if (totalBytes > kMaxUncompressedBytes || entryCount > kMaxEntries) {
-        qWarning() << "Skin archive exceeds size/entry ceiling (" << totalBytes << "bytes,"
-                    << entryCount << "entries):" << archivePath;
+    quint64 entryCount = zipU16(p + eocd + 10);
+    quint64 cdSize = zipU32(p + eocd + 12);
+    quint64 cdOffset = zipU32(p + eocd + 16);
+    if (entryCount == 0xFFFFu || cdSize == 0xFFFFFFFFu || cdOffset == 0xFFFFFFFFu) {
+        if (eocd < 20 || zipU32(p + eocd - 20) != 0x07064b50u) {
+            *error = QStringLiteral("zip64 locator missing");
+            return false;
+        }
+        const quint64 z64 = zipU64(p + eocd - 12);
+        if (!zipHave(blob, static_cast<qint64>(z64), 56) || zipU32(p + z64) != 0x06064b50u) {
+            *error = QStringLiteral("zip64 directory missing");
+            return false;
+        }
+        entryCount = zipU64(p + z64 + 32);
+        cdSize = zipU64(p + z64 + 40);
+        cdOffset = zipU64(p + z64 + 48);
+    }
+    if (entryCount > static_cast<quint64>(kSkinMaxEntries)) {
+        *error = QStringLiteral("too many entries");
         return false;
+    }
+    if (!zipHave(blob, static_cast<qint64>(cdOffset), static_cast<qint64>(cdSize))) {
+        *error = QStringLiteral("central directory out of range");
+        return false;
+    }
+    qint64 pos = static_cast<qint64>(cdOffset);
+    quint64 declared = 0;
+    for (quint64 n = 0; n < entryCount; ++n) {
+        if (!zipHave(blob, pos, 46) || zipU32(p + pos) != 0x02014b50u) {
+            *error = QStringLiteral("bad central directory");
+            return false;
+        }
+        ZipCentralEntry entry;
+        entry.flags = zipU16(p + pos + 8);
+        entry.method = zipU16(p + pos + 10);
+        entry.crc = zipU32(p + pos + 16);
+        entry.compSize = zipU32(p + pos + 20);
+        entry.uncompSize = zipU32(p + pos + 24);
+        const int nameLen = zipU16(p + pos + 28);
+        const int extraLen = zipU16(p + pos + 30);
+        const int commentLen = zipU16(p + pos + 32);
+        entry.extAttr = zipU32(p + pos + 38);
+        entry.localOffset = zipU32(p + pos + 42);
+        if (!zipHave(blob, pos + 46, nameLen + extraLen + commentLen)) {
+            *error = QStringLiteral("central directory truncated");
+            return false;
+        }
+        const QByteArray rawName(blob.constData() + pos + 46, nameLen);
+        if (extraLen)
+            applyZip64Extra(&entry, p + pos + 46 + nameLen, extraLen);
+        pos += 46 + nameLen + extraLen + commentLen;
+        if (entry.flags & 0x1) {
+            *error = QStringLiteral("encrypted zip entries are not supported");
+            return false;
+        }
+        if (entry.method != 0 && entry.method != 8) {
+            *error = QStringLiteral("unsupported compression method");
+            return false;
+        }
+        declared += entry.uncompSize;
+        if (declared > static_cast<quint64>(kSkinMaxUncompressedBytes)) {
+            *error = QStringLiteral("uncompressed size exceeds 128MB");
+            return false;
+        }
+        const quint32 unixMode = entry.extAttr >> 16;
+        if ((unixMode & 0170000) == 0120000)
+            continue; // symlink: do not extract
+        bool unsafe = false;
+        entry.name = safeZipRelativePath(rawName, &unsafe, &entry.directory);
+        if (unsafe) {
+            *error = QStringLiteral("zip entry escapes the extract directory");
+            return false;
+        }
+        if (entry.name.isEmpty())
+            continue;
+        entries->append(entry);
     }
     return true;
 }
 
-// Extract a .wsz or .zip skin archive to a cache directory.
-// Returns the path to the extracted folder, or empty string on failure.
+static inline bool inflateZipEntry(const QByteArray &comp, quint64 uncompSize, QByteArray *out) {
+    if (uncompSize > static_cast<quint64>(kSkinMaxUncompressedBytes))
+        return false;
+    z_stream strm;
+    std::memset(&strm, 0, sizeof(strm));
+    if (inflateInit2(&strm, -MAX_WBITS) != Z_OK)
+        return false;
+    out->resize(static_cast<int>(uncompSize));
+    strm.next_in = reinterpret_cast<Bytef *>(const_cast<char *>(comp.constData()));
+    strm.avail_in = static_cast<uInt>(comp.size());
+    strm.next_out = reinterpret_cast<Bytef *>(out->data());
+    strm.avail_out = static_cast<uInt>(out->size());
+    const int rc = inflate(&strm, Z_FINISH);
+    const uLong produced = strm.total_out;
+    inflateEnd(&strm);
+    return rc == Z_STREAM_END && produced == uncompSize;
+}
+
+static inline bool extractZipBlob(const QByteArray &blob, const QString &destDir, QString *error) {
+    QVector<ZipCentralEntry> entries;
+    if (!readZipCentralDirectory(blob, &entries, error))
+        return false;
+    const uchar *p = reinterpret_cast<const uchar *>(blob.constData());
+    quint64 written = 0;
+    for (const ZipCentralEntry &entry : entries) {
+        if (!zipHave(blob, static_cast<qint64>(entry.localOffset), 30)
+            || zipU32(p + entry.localOffset) != 0x04034b50u) {
+            *error = QStringLiteral("bad local header");
+            return false;
+        }
+        const int nameLen = zipU16(p + entry.localOffset + 26);
+        const int extraLen = zipU16(p + entry.localOffset + 28);
+        const qint64 dataOff = static_cast<qint64>(entry.localOffset) + 30 + nameLen + extraLen;
+        if (!zipHave(blob, dataOff, static_cast<qint64>(entry.compSize))) {
+            *error = QStringLiteral("compressed data out of range");
+            return false;
+        }
+        QByteArray payload;
+        if (entry.method == 0) {
+            if (entry.compSize != entry.uncompSize) {
+                *error = QStringLiteral("stored entry size mismatch");
+                return false;
+            }
+            payload = QByteArray(blob.constData() + dataOff, static_cast<int>(entry.compSize));
+        } else {
+            const QByteArray comp(blob.constData() + dataOff, static_cast<int>(entry.compSize));
+            if (!inflateZipEntry(comp, entry.uncompSize, &payload)) {
+                *error = QStringLiteral("deflate failed");
+                return false;
+            }
+        }
+        if (entry.crc != 0 && entry.uncompSize != 0) {
+            const quint32 got = crc32(0L, reinterpret_cast<const Bytef *>(payload.constData()),
+                                       static_cast<uInt>(payload.size()));
+            if (got != entry.crc) {
+                *error = QStringLiteral("crc mismatch");
+                return false;
+            }
+        }
+        written += static_cast<quint64>(payload.size());
+        if (written > static_cast<quint64>(kSkinMaxUncompressedBytes)) {
+            *error = QStringLiteral("extract exceeded size ceiling");
+            return false;
+        }
+        const QString dest = destDir + QLatin1Char('/') + entry.name;
+        if (entry.directory) {
+            QDir().mkpath(dest);
+            continue;
+        }
+        QDir().mkpath(QFileInfo(dest).absolutePath());
+        QFile out(dest);
+        if (!out.open(QIODevice::WriteOnly) || out.write(payload) != payload.size()) {
+            *error = QStringLiteral("could not write ") + dest;
+            return false;
+        }
+    }
+    return true;
+}
+
+static inline bool directoryHasSkinMarker(const QString &dir) {
+    static const char *names[] = {
+        "MAIN.BMP", "main.bmp", "Main.bmp",
+        "EQMAIN.BMP", "eqmain.bmp", "Eqmain.bmp",
+        "skin.xml", "SKIN.XML", nullptr
+    };
+    for (const char *name : names) {
+        if (!name)
+            break;
+        if (QFile::exists(dir + QLatin1Char('/') + QLatin1String(name)))
+            return true;
+    }
+    return false;
+}
+
+// Shallowest directory that actually holds the skin. A pack that wraps its
+// bitmaps in one folder is used from that folder; files beside it stay put.
+static inline QString findSkinRoot(const QString &extractDir) {
+    if (directoryHasSkinMarker(extractDir))
+        return extractDir;
+    QStringList pending;
+    pending.append(extractDir);
+    while (!pending.isEmpty()) {
+        const QString dir = pending.takeFirst();
+        const QFileInfoList subs = QDir(dir).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+        for (const QFileInfo &sub : subs) {
+            if (sub.fileName() == QLatin1String("__MACOSX") || sub.fileName().startsWith(QLatin1Char('.')))
+                continue;
+            if (directoryHasSkinMarker(sub.absoluteFilePath()))
+                return sub.absoluteFilePath();
+            pending.append(sub.absoluteFilePath());
+        }
+    }
+    return QString();
+}
+
+static inline QString skinSourceStamp(const QString &archivePath) {
+    QFile f(archivePath);
+    if (!f.open(QIODevice::ReadOnly))
+        return QString();
+    const QByteArray hash = QCryptographicHash::hash(f.readAll(), QCryptographicHash::Sha256).toHex();
+    const QFileInfo fi(archivePath);
+    return QString::number(fi.size()) + QLatin1Char(' ')
+        + QString::number(fi.lastModified().toMSecsSinceEpoch()) + QLatin1Char(' ')
+        + QString::fromLatin1(hash);
+}
+
+// Extract a .wsz, .zip, or .wal skin archive to a cache directory.
+// Returns the skin root (the directory that contains the bitmaps or skin.xml).
 static inline QString extractSkinArchive(const QString &archivePath) {
     QFileInfo fi(archivePath);
-    if (!fi.exists()) return {};
-
-    // Cache dir: ~/.cache/winamp/skins/<basename_without_ext>
-    QString cacheDirBase = QDir::homePath() + "/.cache/winamp/skins";
-    QString skinName = fi.completeBaseName();
-    QString extractDir = cacheDirBase + "/" + skinName;
-    QDir().mkpath(extractDir);
-
-    // Check if already extracted (any .bmp file exists)
-    QDir ed(extractDir);
-    QStringList bmps = ed.entryList(QStringList() << "*.bmp" << "*.BMP", QDir::Files);
-    if (!bmps.isEmpty()) {
-        return extractDir;
-    }
-
-    if (!skinArchivePassesSizeGuard(archivePath)) {
+    if (!fi.exists() || !fi.isFile())
+        return {};
+    if (fi.size() > kSkinMaxArchiveBytes) {
+        qWarning() << "Skin archive exceeds size ceiling:" << archivePath;
         return {};
     }
 
-    // Extract using unzip
-    QProcess proc;
-    proc.setWorkingDirectory(extractDir);
-    proc.start("unzip", QStringList() << "-o" << "-j" << archivePath << "-d" << extractDir);
-    bool finished = proc.waitForFinished(10000);
-
-    if (!finished) {
-        // Timed out (or never started): kill it and treat as failure rather than returning a
-        // partially-extracted directory as if it were a complete skin (previously fail-open).
-        proc.kill();
-        proc.waitForFinished(3000);
-        qWarning() << "Skin extraction timed out or failed to start, aborting:" << archivePath;
-        QDir(extractDir).removeRecursively();
-        return {};
+    const QString cacheDir = QDir::homePath() + QStringLiteral("/.cache/winamp/skins/") + fi.completeBaseName();
+    const QString stampPath = cacheDir + QStringLiteral("/.source-stamp");
+    const QString stamp = skinSourceStamp(archivePath);
+    if (!stamp.isEmpty()) {
+        QFile existing(stampPath);
+        if (existing.open(QIODevice::ReadOnly)
+            && QString::fromUtf8(existing.readAll()).trimmed() == stamp) {
+            const QString cached = findSkinRoot(cacheDir);
+            if (!cached.isEmpty())
+                return cached;
+        }
     }
 
-    if (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0) {
-        qWarning() << "Failed to extract skin archive:" << archivePath << proc.readAllStandardError();
-        QDir(extractDir).removeRecursively();
+    QFile archive(archivePath);
+    if (!archive.open(QIODevice::ReadOnly))
+        return {};
+    const QByteArray blob = archive.readAll();
+    archive.close();
+
+    QDir(cacheDir).removeRecursively();
+    if (!QDir().mkpath(cacheDir))
+        return {};
+    QString error;
+    if (!extractZipBlob(blob, cacheDir, &error)) {
+        qWarning() << "Failed to extract skin archive:" << archivePath << error;
+        QDir(cacheDir).removeRecursively();
         return {};
     }
-
-    return extractDir;
+    QFile stampFile(stampPath);
+    if (stampFile.open(QIODevice::WriteOnly))
+        stampFile.write(stamp.toUtf8());
+    const QString root = findSkinRoot(cacheDir);
+    return root.isEmpty() ? cacheDir : root;
 }
 
 // Detect whether a skin directory is a modern (XML) skin vs classic (BMP) skin
