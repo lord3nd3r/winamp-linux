@@ -9,6 +9,7 @@
 #include <QFile>
 #include <QTextStream>
 #include <QFileInfo>
+#include <QDateTime>
 #include <QUrl>
 #include <QDebug>
 #include <QCryptographicHash>

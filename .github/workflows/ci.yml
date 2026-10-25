@@ -77,6 +77,7 @@ jobs:
             libprojectm-dev projectm-data libtag1-dev pkg-config python3 \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav \
+            libavutil-dev \
             libxkbcommon0 libegl1
 
       - name: Install build dependencies (rpm)
@@ -87,6 +88,7 @@ jobs:
             qt6-qtbase-devel qt6-qtmultimedia-devel mesa-libGL-devel \
             libprojectM-devel taglib-devel python3 \
             gstreamer1-devel gstreamer1-plugins-base-devel gstreamer1-plugins-good \
+            libavutil-devel \
             libxkbcommon mesa-libEGL
 
       - name: Install build dependencies (suse)
@@ -99,10 +101,13 @@ jobs:
             qt6-printsupport-devel \
             Mesa-libGL-devel projectM-devel projectM-data libtag-devel python3 \
             gstreamer-devel gstreamer-plugins-base-devel gstreamer-plugins-good \
+            libavutil-devel \
             libxkbcommon0 Mesa-libEGL1
 
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release 2>&1 | tee cmake-config.log
+          grep -F "libavutil found - HAVE_AVUTIL" cmake-config.log
 
       - name: Build
         run: cmake --build build --parallel "$(nproc)"
@@ -111,3 +116,51 @@ jobs:
         run: |
           export QT_QPA_PLATFORM=offscreen
           ctest --test-dir build --output-on-failure
+
+  # Qt 5 is the documented fallback. The matrix above always finds Qt 6, so
+  # this job is what actually configures and builds that path.
+  qt5:
+    name: ubuntu-22.04-qt5
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:22.04@sha256:0e0a0fc6d18feda9db1590da249ac93e8d5abfea8f4c3c0c849ce512b5ef8982
+    steps:
+      - name: Install bootstrap tools
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git
+
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get install -y --no-install-recommends \
+            cmake ninja-build build-essential pkg-config \
+            qtbase5-dev qtmultimedia5-dev libqt5opengl5-dev libgl1-mesa-dev \
+            libprojectm-dev projectm-data libtag1-dev python3 \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav \
+            libqt5multimedia5-plugins \
+            libavutil-dev \
+            libxkbcommon0 libegl1
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-qt5 -G Ninja \
+            -DCMAKE_DISABLE_FIND_PACKAGE_Qt6=ON \
+            -DCMAKE_BUILD_TYPE=Release 2>&1 | tee cmake-config.log
+          grep -F "Using Qt5" cmake-config.log
+          grep -F "libavutil found - HAVE_AVUTIL" cmake-config.log
+
+      - name: Build
+        run: cmake --build build-qt5 --parallel "$(nproc)"
+
+      - name: Test
+        run: |
+          export QT_QPA_PLATFORM=offscreen
+          ctest --test-dir build-qt5 --output-on-failure
