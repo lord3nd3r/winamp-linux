@@ -28,6 +28,7 @@ constexpr int kContentW = 56;
 constexpr int kSpectrumRows = 6;
 constexpr int kClockW = 20;   // width reserved for the seven-segment clock column
 
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
 // Eight vertical block glyphs (1/8 .. 8/8) for sub-cell bar heights.
 const char *kBlocks[9] = { " ", "▁", "▂", "▃", "▄",
                            "▅", "▆", "▇", "█" };
@@ -42,6 +43,7 @@ const char *kSpecColor[6] = {
     "\x1b[38;2;255;150;0m",  // orange
     "\x1b[38;2;255;60;0m",   // red
 };
+#endif
 
 // 3-row seven-segment LCD glyphs (the iconic Winamp time readout), 3 cols each.
 struct Seg { const char *r0, *r1, *r2; };
@@ -77,6 +79,7 @@ std::array<std::string, 3> buildClock(const QString &mmss) {
 WinampTui::WinampTui(WinampWindow *w) : win(w) {}
 
 WinampTui::~WinampTui() {
+    stopInput();
     restoreTerminal();
 }
 
@@ -103,14 +106,30 @@ void WinampTui::start() {
     ssize_t _w = ::write(STDOUT_FILENO, enter, std::char_traits<char>::length(enter));
     (void)_w;
 
-    stdinNotifier = new QSocketNotifier(STDIN_FILENO, QSocketNotifier::Read, win);
-    QObject::connect(stdinNotifier, &QSocketNotifier::activated, win, [this]() { onKey(); });
+    // Owned here, not by the window. Quit runs WinampWindow's teardown (and the
+    // plugin host's nested event loop) after this object is destroyed; a timer
+    // still parented to the window would call render() on the dead TUI.
+    stdinNotifier = new QSocketNotifier(STDIN_FILENO, QSocketNotifier::Read);
+    QObject::connect(stdinNotifier, &QSocketNotifier::activated, stdinNotifier, [this]() { onKey(); });
 
-    renderTimer = new QTimer(win);
-    QObject::connect(renderTimer, &QTimer::timeout, win, [this]() { render(); });
+    renderTimer = new QTimer();
+    QObject::connect(renderTimer, &QTimer::timeout, renderTimer, [this]() { render(); });
     renderTimer->start(50);  // ~20 fps
 
     render();
+}
+
+void WinampTui::stopInput() {
+    if (renderTimer) {
+        renderTimer->stop();
+        delete renderTimer;
+        renderTimer = nullptr;
+    }
+    if (stdinNotifier) {
+        stdinNotifier->setEnabled(false);
+        delete stdinNotifier;
+        stdinNotifier = nullptr;
+    }
 }
 
 void WinampTui::restoreTerminal() {

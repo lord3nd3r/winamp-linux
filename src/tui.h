@@ -34,6 +34,10 @@ public:
     void restoreTerminal();
 
 private:
+    // Stop the render timer and stdin notifier. Must run before the window
+    // (and anything it spins a nested event loop for) is destroyed.
+    void stopInput();
+
     void onKey();       // stdin readable: read into inbuf + parse
     void parseInput();  // consume complete key/mouse tokens from inbuf
     void render();      // build one ANSI frame and write it to stdout
