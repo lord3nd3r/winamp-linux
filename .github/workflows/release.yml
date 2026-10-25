@@ -104,6 +104,7 @@ jobs:
             gstreamer1.0-plugins-base \
             gstreamer1.0-plugins-good \
             gstreamer1.0-libav \
+            libavutil-dev \
             libxkbcommon0 \
             libegl1
 
@@ -125,6 +126,7 @@ jobs:
             gstreamer1-devel \
             gstreamer1-plugins-base-devel \
             gstreamer1-plugins-good \
+            libavutil-free-devel \
             libxkbcommon \
             mesa-libEGL
 
@@ -151,6 +153,7 @@ jobs:
             gstreamer-devel \
             gstreamer-plugins-base-devel \
             gstreamer-plugins-good \
+            libavutil-devel \
             libxkbcommon0 \
             Mesa-libEGL1
 
@@ -194,9 +197,63 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # Ubuntu 22.04 (glibc 2.35) so the AppImage runs on 22.04 and newer.
+  # Qt, GStreamer, TagLib, and projectM are bundled; libGL stays on the host.
+  appimage:
+    name: appimage-x86_64
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:22.04@sha256:0e0a0fc6d18feda9db1590da249ac93e8d5abfea8f4c3c0c849ce512b5ef8982
+    steps:
+      - name: Install bootstrap tools
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git curl
+
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get install -y --no-install-recommends \
+            cmake ninja-build build-essential pkg-config patchelf file \
+            qt6-base-dev qt6-base-dev-tools qt6-multimedia-dev libqt6opengl6-dev \
+            qt6-wayland qt6-image-formats-plugins \
+            libgl1-mesa-dev libprojectm-dev projectm-data libtag1-dev python3 \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-alsa gstreamer1.0-pulseaudio gstreamer1.0-libav \
+            libavutil-dev libxkbcommon0 libegl1 \
+            libfuse2 zsync desktop-file-utils appstream fonts-dejavu-core \
+            libssl3 libfribidi0
+
+      - name: Build AppImage
+        env:
+          APPIMAGE_SMOKE: "1"
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            export VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          bash packaging/appimage/build-appimage.sh
+          ls -lh build-appimage/Winamp-*.AppImage build-appimage/Winamp-*.AppImage.zsync
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: appimage-x86_64
+          path: |
+            build-appimage/Winamp-*.AppImage
+            build-appimage/Winamp-*.AppImage.zsync
+          if-no-files-found: error
+          retention-days: 14
+
   release:
     name: Publish GitHub Release
-    needs: build
+    needs: [build, appimage]
     # Publish even if some matrix cells failed; only successful artifacts upload.
     if: always() && !cancelled() && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
@@ -208,9 +265,15 @@ jobs:
           pattern: packages-*
           merge-multiple: true
 
+      - name: Download AppImage
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: appimage-x86_64
+          path: dist
+
       - name: Show release bundle
         run: |
-          mapfile -t files < <(find dist -type f \( -name 'winamp-*.deb' -o -name 'winamp-*.rpm' -o -name 'winamp-*.tar.gz' \) | sort)
+          mapfile -t files < <(find dist -type f \( -name 'winamp-*.deb' -o -name 'winamp-*.rpm' -o -name 'winamp-*.tar.gz' -o -name 'Winamp-*-x86_64.AppImage' -o -name 'Winamp-*-x86_64.AppImage.zsync' \) | sort)
           if [ "${#files[@]}" -eq 0 ]; then
             echo "No packages downloaded — all matrix builds failed?"
             exit 1
@@ -226,6 +289,8 @@ jobs:
             dist/winamp-*.deb
             dist/winamp-*.rpm
             dist/winamp-*.tar.gz
+            dist/Winamp-*-x86_64.AppImage
+            dist/Winamp-*-x86_64.AppImage.zsync
           draft: false
           # beta / rc / alpha tags are prereleases; v1.0.0 is a full release
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') || contains(github.ref_name, 'alpha') }}
@@ -241,8 +306,9 @@ jobs:
             | **.deb** | Ubuntu 22.04, 24.04, Resolute · Debian Bookworm, Trixie |
             | **.rpm** | Fedora 41, 42 · openSUSE Tumbleweed |
             | **.tar.gz** | Same matrix (portable install layout) |
+            | **AppImage** | `Winamp-<version>-x86_64.AppImage` (Ubuntu 22.04 base, Qt 6 + plugins, GStreamer, TagLib, projectM) and a `.zsync` update file |
 
-            Pick the package matching your distribution. Runtime codecs come from your system’s Qt Multimedia / GStreamer (or FFmpeg) stack.
+            Pick the package matching your distribution, or the AppImage if you want one file that bundles Qt and the codecs. The AppImage is Ubuntu 22.04's Qt 6.2, so it plays audio without the Qt 6.8 PCM tap (spectrum, EQ processing, Milkdrop samples, balance). It still uses the host's OpenGL driver, and plugins need a host `python3`. Distro packages use that system's Qt Multimedia / GStreamer (or FFmpeg) stack.
 
             Arch Linux is not packaged here (upstream projectM 4.x API mismatch); build from source if needed.
         env:

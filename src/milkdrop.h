@@ -8,9 +8,28 @@
 #include <QTimer>
 #include <QOpenGLWidget>
 #include <QOpenGLFunctions>
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
 #include <libprojectM/projectM.hpp>
 #include "constants.h"
 #include "pcm_feed.h"
+
+// Presets ship with the install prefix (and inside the AppImage). The host
+// path is only a fallback for a distro package of projectM.
+inline QString projectMPresetDir() {
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QStringList candidates = {
+        appDir + QStringLiteral("/../share/projectM/presets"),
+        QStringLiteral("/usr/local/share/projectM/presets"),
+        QStringLiteral("/usr/share/projectM/presets"),
+    };
+    for (const QString &dir : candidates) {
+        if (QDir(dir).exists())
+            return dir;
+    }
+    return QStringLiteral("/usr/share/projectM/presets");
+}
 
 class MilkdropWindow : public QOpenGLWidget, protected QOpenGLFunctions {
     Q_OBJECT
@@ -77,7 +96,7 @@ protected:
         s.textureSize = 1024;
         s.windowWidth = width();
         s.windowHeight = height();
-        s.presetURL = "/usr/share/projectM/presets";
+        s.presetURL = projectMPresetDir().toStdString();
         s.smoothPresetDuration = 5;
         s.presetDuration = 30;
         s.beatSensitivity = 1.0f;
@@ -88,10 +107,15 @@ protected:
         
         // Find fonts
         std::string fontPath;
-        for (auto &candidate : {std::string("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
-                                 std::string("/usr/share/fonts/truetype/ttf-dejavu/DejaVuSans.ttf"),
-                                 std::string("/usr/share/fonts/truetype/freefont/FreeSans.ttf")}) {
-            if (QFile::exists(QString::fromStdString(candidate))) { fontPath = candidate; break; }
+        const QString appDir = QCoreApplication::applicationDirPath();
+        const QStringList fontCandidates = {
+            appDir + QStringLiteral("/../share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+            QStringLiteral("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+            QStringLiteral("/usr/share/fonts/truetype/ttf-dejavu/DejaVuSans.ttf"),
+            QStringLiteral("/usr/share/fonts/truetype/freefont/FreeSans.ttf"),
+        };
+        for (const QString &candidate : fontCandidates) {
+            if (QFile::exists(candidate)) { fontPath = candidate.toStdString(); break; }
         }
         s.titleFontURL = fontPath;
         s.menuFontURL = fontPath;

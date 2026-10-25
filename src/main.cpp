@@ -312,6 +312,27 @@ int main(int argc, char *argv[]) {
     bool tuiMode = false;
     for (int i = 1; i < argc; i++) {
         QString a = QString::fromLocal8Bit(argv[i]);
+        if (a == "--help" || a == "-h") {
+            std::fprintf(stdout,
+                "Winamp %s for Linux\n"
+                "\n"
+                "Usage: winamp [options] [files or directories...]\n"
+                "\n"
+                "Options:\n"
+                "  -h, --help       Show this help and exit\n"
+                "  --version        Show the version and exit\n"
+                "  --cli, --tui     Terminal interface (no window)\n"
+                "  --enqueue        Add files without starting playback\n"
+                "  --play           Start playback when files are given (the default)\n"
+                "  --pause          Pause shortly after startup\n"
+                "  --stop           Stop shortly after startup\n",
+                kWinampVersion);
+            return 0;
+        }
+        if (a == "--version") {
+            std::fprintf(stdout, "Winamp %s\n", kWinampVersion);
+            return 0;
+        }
         if (a == "--tui" || a == "--cli") { tuiMode = true; break; }
     }
     if (tuiMode && qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
