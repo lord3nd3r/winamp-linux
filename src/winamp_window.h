@@ -65,7 +65,12 @@ public:
                  isDraggingVolume(false), isDraggingPos(false), isDraggingBalance(false), 
                  scrollOffset(0), balance(0),
                  doubleSize(false), shadeMode(false), alwaysOnTop(false),
-                 visMode(1) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+                 visMode(1)
+#else
+                 visMode(0)
+#endif
+                 {
         setFixedSize(275, 116);
         setWindowTitle(QString::fromUtf8(kWinampWindowTitle));
         setWindowFlags(Qt::FramelessWindowHint);
@@ -330,8 +335,13 @@ public slots:
     QString sliderReadout() const {
         if (isDraggingVolume) return QString("VOLUME: %1%").arg(volume * 100 / 255);
         if (isDraggingBalance) {
-            if (balance == 0) return "BALANCE: CENTER";
-            return QString("BALANCE: %1% %2").arg(qAbs(balance) * 100 / 127).arg(balance < 0 ? "LEFT" : "RIGHT");
+            QString text = balance == 0
+                ? QStringLiteral("BALANCE: CENTER")
+                : QString("BALANCE: %1% %2").arg(qAbs(balance) * 100 / 127).arg(balance < 0 ? "LEFT" : "RIGHT");
+#if QT_VERSION < QT_VERSION_CHECK(6, 8, 0)
+            text += QStringLiteral(" (NO TAP)");
+#endif
+            return text;
         }
         return QString();
     }
@@ -1573,6 +1583,18 @@ protected:
                     p.drawPixmap(textX, 27, bmp.text, cp.x(), cp.y(), 5, 6);
                 textX += 5;
             }
+#if QT_VERSION < QT_VERSION_CHECK(6, 8, 0)
+        } else if (!bmp.text.isNull() && visMode != 0) {
+            // Spectrum / oscilloscope / VU read the audio tap, which this Qt lacks.
+            const QString notice = QStringLiteral("NO AUDIO TAP");
+            int textX = 111;
+            for (QChar ch : notice) {
+                QPoint cp = ::getTextCharPos(ch);
+                if (cp.x() >= 0)
+                    p.drawPixmap(textX, 27, bmp.text, cp.x(), cp.y(), 5, 6);
+                textX += 5;
+            }
+#endif
         } else if (!bmp.text.isNull() && !currentFile.isEmpty()) {
             QString title;
             if (!metaTitle.isEmpty())
@@ -2553,13 +2575,23 @@ protected:
             else if (x >= 242 && x < 265) tooltip = "Toggle Playlist";
         } else if (y >= 57 && y <= 70) {
             if (x >= 107 && x <= 175) tooltip = "Volume Control";
-            else if (x >= 177 && x <= 215) tooltip = "Balance/Pan Control";
+            else if (x >= 177 && x <= 215) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+                tooltip = "Balance/Pan Control";
+#else
+                tooltip = "Balance needs Qt 6.8+ (this build has no audio tap, so pan is not applied)";
+#endif
+            }
         } else if (y >= 72 && y <= 82 && x >= 16 && x <= 264) {
             tooltip = "Seek Position";
         } else if (y >= 26 && y < 40 && x >= 36 && x < 99) {
             tooltip = "Time Display (click to toggle)";
         } else if (y >= 40 && y < 61 && x >= 27 && x < 99) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
             tooltip = "Visualization (click to cycle modes, double-click for Milkdrop)";
+#else
+            tooltip = "Visualization needs Qt 6.8+ (no audio tap in this build)";
+#endif
         } else if (y >= 22 && y < 62 && x >= 10 && x < 18) {
             tooltip = y < 33 ? "Options menu" : y < 40 ? "Toggle Always On Top"
                     : y < 47 ? "File Info" : y < 55 ? "Toggle Double Size" : "Visualization menu";
@@ -3270,6 +3302,11 @@ public:
         showPeakDots = s.value("showPeakDots", true).toBool();
         s.endGroup();
 
+#if QT_VERSION < QT_VERSION_CHECK(6, 8, 0)
+        // A saved spectrum mode would sit on screen with no samples behind it.
+        visMode = 0;
+#endif
+
         eqWindow->loadSettings(s);
         playlistWindow->loadSettings(s);
         // Select the last-played song so Play/Next continue from it.
@@ -3402,6 +3439,12 @@ private:
     bool modernDraggingVolume = false;
     
     void openMilkdrop() {
+#if QT_VERSION < QT_VERSION_CHECK(6, 8, 0)
+        QMessageBox::information(this, "Milkdrop",
+            QString("This build uses Qt %1 and cannot tap playback audio. "
+                    "Milkdrop will open, but it will not react to the music until Qt 6.8 or newer.")
+                .arg(QLatin1String(QT_VERSION_STR)));
+#endif
         if (milkdropWindow) {
             milkdropWindow->raise();
             milkdropWindow->activateWindow();

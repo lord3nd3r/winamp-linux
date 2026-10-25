@@ -57,7 +57,14 @@ private:
 
     int eqValues[10];
     int preampValue;
+    // The DSP path needs QAudioBufferOutput (Qt 6.8+). On older Qt the
+    // equalizer cannot change the sound, so it stays off.
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
     bool eqEnabled = true;
+#else
+    bool eqEnabled = false;
+#endif
+    bool tryToggleEnabled();
     bool autoEnabled = false;
     bool shadeMode = false;
     int draggingSlider = -1;
