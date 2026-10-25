@@ -27,13 +27,36 @@ void Mpris2PlayerAdaptor::Next() {
 void Mpris2PlayerAdaptor::Previous() {
     WinampWindow *w = qobject_cast<WinampWindow *>(parent());
     if (w && w->getPlaylistWindow())
-        w->getPlaylistWindow()->prevTrack();
+        w->playPrevious();
+}
+double Mpris2PlayerAdaptor::volume() const {
+    WinampWindow *w = qobject_cast<WinampWindow *>(parent());
+    if (w)
+        return w->getPluginVolume() / 255.0;
+    return m_audioOutput ? m_audioOutput->volume() : 0.0;
+}
+void Mpris2PlayerAdaptor::setVolume(double v) {
+    const double clamped = qBound(0.0, v, 1.0);
+    WinampWindow *w = qobject_cast<WinampWindow *>(parent());
+    if (w) {
+        w->setPluginVolume(qRound(clamped * 255.0));
+        return;
+    }
+    if (m_audioOutput)
+        m_audioOutput->setVolume(clamped);
 }
 void Mpris2PlayerAdaptor::OpenUri(const QString &uri) {
-    QUrl url(uri);
     WinampWindow *w = qobject_cast<WinampWindow *>(parent());
-    if (w && url.isLocalFile())
+    if (!w || uri.isEmpty())
+        return;
+    const QUrl url = QUrl::fromUserInput(uri.trimmed());
+    if (url.isLocalFile()) {
         w->playTrack(url.toLocalFile());
+        return;
+    }
+    const QString scheme = url.scheme().toLower();
+    if (scheme == QLatin1String("http") || scheme == QLatin1String("https"))
+        w->playUrl(url.toString());
 }
 #endif
 
@@ -46,6 +69,8 @@ private slots:
     void testSettingsWrite();
     void testStalePlaybackCallback();
     void testLocalPlaylistEnqueuesEveryEntry();
+    void testPreviousMatchesNextWrap();
+    void testMprisVolumeAndOpenUri();
 };
 
 void TestPlayback::testGaplessSwapFollowsActivePlayer() {
@@ -167,6 +192,67 @@ void TestPlayback::testLocalPlaylistEnqueuesEveryEntry() {
     QCOMPARE(window.playlistWindow->trackAt(2), nested.fileName());
     QCOMPARE(window.playlistWindow->currentTrackIndex(), 0);
     QVERIFY(*started);
+}
+
+void TestPlayback::testPreviousMatchesNextWrap() {
+    WinampWindow window;
+    window.shuffleOn = false;
+    window.repeatOn = false;
+    PlaylistWindow *playlist = window.playlistWindow;
+    playlist->addTrack(QStringLiteral("http://example.com/a.mp3"));
+    playlist->addTrack(QStringLiteral("http://example.com/b.mp3"));
+    playlist->addTrack(QStringLiteral("http://example.com/c.mp3"));
+    playlist->setCurrentTrackIndex(0);
+
+    window.playPrevious();
+    QCOMPARE(playlist->currentTrackIndex(), 0);
+
+    window.repeatOn = true;
+    window.playPrevious();
+    QCOMPARE(playlist->currentTrackIndex(), 2);
+
+    window.repeatOn = false;
+    playlist->setCurrentTrackIndex(2);
+    window.playNext();
+    QCOMPARE(playlist->currentTrackIndex(), 2);
+    window.repeatOn = true;
+    window.playNext();
+    QCOMPARE(playlist->currentTrackIndex(), 0);
+
+    window.shuffleOn = true;
+    window.repeatOn = false;
+    playlist->setCurrentTrackIndex(1);
+    window.playPrevious();
+    QVERIFY(playlist->currentTrackIndex() != 1);
+    QVERIFY(playlist->currentTrackIndex() >= 0);
+    QVERIFY(playlist->currentTrackIndex() < 3);
+}
+
+void TestPlayback::testMprisVolumeAndOpenUri() {
+#if defined(QT_DBUS_LIB) && QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    WinampWindow window;
+    QVERIFY(window.mprisPlayer);
+    window.volume = 40;
+    window.mprisPlayer->setVolume(1.0);
+    QCOMPARE(window.volume, 255);
+    QCOMPARE(window.getPluginVolume(), 255);
+    window.applyVolume();
+    QCOMPARE(window.volume, 255);
+    QCOMPARE(window.mprisPlayer->volume(), 1.0);
+
+    window.mprisPlayer->setVolume(0.0);
+    QCOMPARE(window.volume, 0);
+
+    const quint64 before = window.playbackGeneration;
+    window.mprisPlayer->OpenUri(QStringLiteral("https://example.com/stream.mp3"));
+    QVERIFY(window.playbackGeneration > before);
+    QCOMPARE(window.pendingStreamUrl, QUrl(QStringLiteral("https://example.com/stream.mp3")));
+
+    window.mprisPlayer->OpenUri(QStringLiteral("ftp://example.com/nope.mp3"));
+    QCOMPARE(window.pendingStreamUrl, QUrl(QStringLiteral("https://example.com/stream.mp3")));
+#else
+    QSKIP("MPRIS is built for Qt 6 with DBus");
+#endif
 }
 
 void TestPlayback::testStalePlaybackCallback() {

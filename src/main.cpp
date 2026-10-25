@@ -300,17 +300,41 @@ void Mpris2PlayerAdaptor::Next() {
 }
 void Mpris2PlayerAdaptor::Previous() {
     WinampWindow *w = qobject_cast<WinampWindow*>(parent());
+    if (w && w->getPlaylistWindow())
+        w->playPrevious();
+}
+double Mpris2PlayerAdaptor::volume() const {
+    WinampWindow *w = qobject_cast<WinampWindow*>(parent());
+    if (w)
+        return w->getPluginVolume() / 255.0;
+    return m_audioOutput ? m_audioOutput->volume() : 0.0;
+}
+void Mpris2PlayerAdaptor::setVolume(double v) {
+    const double clamped = qBound(0.0, v, 1.0);
+    WinampWindow *w = qobject_cast<WinampWindow*>(parent());
     if (w) {
-        PlaylistWindow *pl = w->getPlaylistWindow();
-        if (pl) pl->prevTrack();
+        // The 0-255 value is what the slider and the EQ/balance tap apply.
+        // Writing only QAudioOutput is overwritten on the next applyVolume(),
+        // and is ignored entirely while that tap has the device muted.
+        w->setPluginVolume(qRound(clamped * 255.0));
+        emitPropertyChanged(QStringLiteral("Volume"), volume());
+        return;
     }
+    if (m_audioOutput)
+        m_audioOutput->setVolume(clamped);
 }
 void Mpris2PlayerAdaptor::OpenUri(const QString &uri) {
-    QUrl url(uri);
+    WinampWindow *w = qobject_cast<WinampWindow*>(parent());
+    if (!w || uri.isEmpty())
+        return;
+    const QUrl url = QUrl::fromUserInput(uri.trimmed());
     if (url.isLocalFile()) {
-        WinampWindow *w = qobject_cast<WinampWindow*>(parent());
-        if (w) w->playTrack(url.toLocalFile());
+        w->playTrack(url.toLocalFile());
+        return;
     }
+    const QString scheme = url.scheme().toLower();
+    if (scheme == QLatin1String("http") || scheme == QLatin1String("https"))
+        w->playUrl(url.toString());
 }
 #endif
 

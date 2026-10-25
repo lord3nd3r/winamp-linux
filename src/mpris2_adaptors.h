@@ -131,8 +131,8 @@ public:
         return map;
     }
 
-    double volume() const { return m_audioOutput->volume(); }
-    void setVolume(double v) { m_audioOutput->setVolume(qBound(0.0, v, 1.0)); }
+    double volume() const;
+    void setVolume(double v);
 
     qlonglong position() const { return m_player->position() * 1000; } // microseconds
 

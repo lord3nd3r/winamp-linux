@@ -382,6 +382,32 @@ public slots:
         playTrack(playlistWindow->trackAt(next));
     }
 
+    // Mirror of playNext: shuffle picks another track, repeat wraps from the
+    // first track to the last. Without repeat, Previous on the first track
+    // stays put, the same way Next on the last track does.
+    void playPrevious() {
+        int count = playlistWindow->trackCount();
+        if (count == 0) return;
+        int cur = playlistWindow->currentTrackIndex();
+        int prev;
+        if (shuffleOn && count > 1) {
+            if (cur < 0 || cur >= count) {
+                prev = QRandomGenerator::global()->bounded(count);
+            } else {
+                prev = QRandomGenerator::global()->bounded(count - 1);
+                if (prev >= cur) prev++;
+            }
+        } else {
+            prev = cur - 1;
+            if (prev < 0) {
+                if (!repeatOn) return;
+                prev = count - 1;
+            }
+        }
+        playlistWindow->setCurrentTrackIndex(prev);
+        playTrack(playlistWindow->trackAt(prev));
+    }
+
     // Public accessors for Python plugin API
     void setPluginVolume(int v) { volume = qBound(0, v, 255); applyVolume(); update(); }
     int getPluginVolume() const { return volume; }
