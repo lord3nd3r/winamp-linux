@@ -167,8 +167,7 @@ void PythonPluginManager::handleRequest(const QJsonObject &req)
     } else if (method == QLatin1String("next_track")) {
         winamp->playNext();
     } else if (method == QLatin1String("prev_track")) {
-        if (PlaylistWindow *pl = winamp->getPlaylistWindow())
-            pl->prevTrack();
+        winamp->playPrevious();
     } else if (method == QLatin1String("set_volume")) {
         if (!params.isEmpty())
             winamp->setPluginVolume(qBound(0, params.at(0).toInt(), 255));
