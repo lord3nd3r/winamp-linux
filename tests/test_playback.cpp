@@ -75,15 +75,6 @@ private slots:
 };
 
 void TestPlayback::testGaplessSwapFollowsActivePlayer() {
-    // Fedora 43 (Qt 6.10.3, FFmpeg 7.1.5) still segfaults in this test after
-    // the example.com opens fail with 404, during player teardown. Other
-    // distros pass. The app waits out an in-flight open; this skip is only
-    // so that one backend does not fail CI.
-#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
-    const QByteArray waBackend = qgetenv("QT_MEDIA_BACKEND");
-    if (waBackend.isEmpty() || waBackend == "ffmpeg")
-        QSKIP("Qt 6.8+ FFmpeg still crashes in this test after a failed open");
-#endif
     WinampWindow window;
     window.shuffleOn = false;
     window.repeatOn = false;

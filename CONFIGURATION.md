@@ -226,7 +226,7 @@ Stored in `winamp.conf` under `[RecentFiles]` (see above). Updated as local file
 | `PATH` | Must include `python3` for plugins. The AppImage does not bundle the interpreter |
 | `QT_QPA_PLATFORM` | e.g. `offscreen` for headless tests. On Wayland the GUI defaults to `xcb` so window positions and docking work; set `wayland` to opt into native Wayland, where dragging still works but the equalizer and playlist are not docked |
 | `QT_LOGGING_RULES` | Qt category logging |
-| Multimedia backend | GStreamer/FFmpeg packages determine format support |
+| Multimedia backend | GStreamer/FFmpeg packages determine format support. On Qt 6.8 and newer the player does not cancel an in-flight FFmpeg open: a new track or quit waits for that open to finish or fail, and the completion is delivered before the player is destroyed |
 | Qt version | Spectrum, EQ processing, Milkdrop PCM, and balance need Qt 6.8 (`QAudioBufferOutput`). Older Qt plays through `QAudioOutput`. Dragging balance appends ` (NO TAP)` |
 | DBus session bus | Required for MPRIS2. The interface is registered only on Qt 6 with Qt DBus, as `org.mpris.MediaPlayer2.winamp` |
 | `APPIMAGE_EXTRACT_AND_RUN` | Set to `1` to run the AppImage without FUSE |
