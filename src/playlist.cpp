@@ -1153,6 +1153,8 @@ void PlaylistWindow::mousePressEvent(QMouseEvent *event) {
             toggleShadeMode();
         } else if (x >= width() - 11 && x < width() - 2) {
             hide();
+            if (mainWindow)
+                mainWindow->notePlaylistClosed();
         } else {
             isDragging = !waSystemMove(this);
             dragPosition = waMouseGlobalPos(event) - frameGeometry().topLeft();
@@ -1835,6 +1837,7 @@ void PlaylistWindow::dockRightOfMain() {
     if (!mainWindow || !waCanPositionWindows()) return;
     move(mainWindow->pos().x() + mainWindow->width(), mainWindow->pos().y());
     snapMode = 1;
+    snapOffsetY = 0;
     isSnappedToMain = true;
 }
 
@@ -1861,15 +1864,17 @@ void PlaylistWindow::checkSnap() {
         qAbs(myPos.y() - mainPos.y()) <= snapDist) {
         move(mainPos.x() + mainSize.width(), mainPos.y());
         snapMode = 1;
+        snapOffsetY = 0;
         isSnappedToMain = true;
         return;
     }
-    // Right of main with looser vertical alignment (any overlap)
+    // Beside the main window, but keep the playlist's own vertical position.
     if (qAbs(myPos.x() - (mainPos.x() + mainSize.width())) <= snapDist &&
         myPos.y() + mySize.height() > mainPos.y() - snapDist &&
         myPos.y() < mainPos.y() + mainSize.height() + snapDist) {
-        move(mainPos.x() + mainSize.width(), mainPos.y());
+        move(mainPos.x() + mainSize.width(), myPos.y());
         snapMode = 1;
+        snapOffsetY = myPos.y() - mainPos.y();
         isSnappedToMain = true;
         return;
     }
@@ -1904,6 +1909,7 @@ void PlaylistWindow::checkSnap() {
     }
 
     snapMode = 0;
+    snapOffsetY = 0;
     isSnappedToMain = false;
 }
 
@@ -1914,7 +1920,7 @@ void PlaylistWindow::followMain() {
 
     switch (snapMode) {
         case 1:  // right of main
-            move(mainPos.x() + mainWindow->width(), mainPos.y());
+            move(mainPos.x() + mainWindow->width(), mainPos.y() + snapOffsetY);
             break;
         case 2:  // below EQ
         {
