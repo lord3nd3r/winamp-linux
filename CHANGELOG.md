@@ -8,10 +8,23 @@ Release package text that only repeats the distro matrix is summarized, not copi
 
 ## [Unreleased]
 
+### Fixed
+
+- On Qt 6.8 and newer, changing tracks or quitting while a file is still opening no longer cancels FFmpeg mid-open (that cancel crashed the player).
+- Dropping a file on the window, or playing a bookmark, no longer resumes the previous playlist's preloaded next track when the new file ends.
+- Clicking a playlist row only moves the highlight. Next, Previous, and gapless follow the track that is actually playing.
+- Previous is the same action from the main window, the Z key, the tray, the terminal UI, plugins, and MPRIS (shuffle and repeat wrap).
+- A playlist snapped to the side of the main window keeps its vertical position instead of jumping to the title bar.
+- Closing the shaded playlist turns the main window's playlist button off.
+- A brief HTTP stall is not treated as a failed stream.
+- Desktop shells that watch MPRIS see a new track id when the song changes.
+- Starting the Python plugin host no longer freezes the window.
+
 ### Changed
 
-- Playback tests that open media (`testGaplessSwapFollowsActivePlayer`, `testGaplessClearsStaleSuccessor`, and `testLocalPlaylistEnqueuesEveryEntry`) skip on Qt 6.8 and newer when `QT_MEDIA_BACKEND` is unset or `ffmpeg`. That backend crashes if `setSource` or player destruction cancels an in-flight open.
+- On native Wayland (`QT_QPA_PLATFORM=wayland`), the equalizer and playlist are not docked to the main window. Docking still works on X11 and on XWayland, which is what the player uses when that variable is unset.
 - CI and the release workflow build Fedora 43 and Fedora 44 instead of Fedora 41 and Fedora 42. Ubuntu 22.04, Ubuntu 24.04, Ubuntu Resolute, Debian Bookworm, Debian Trixie, and openSUSE Tumbleweed are unchanged.
+- projectM is located with pkg-config (`libprojectM`) so a moved library is not kept as a stale CMake path.
 
 ## [1.3.0] - 2026-10-25
 

@@ -56,7 +56,7 @@ Classic Winamp defined how a generation listened to music on the desktop: skinna
 |---------|---------|
 | **Classic skin engine** | Loads classic Winamp bitmaps from a folder or from `.wsz` / `.zip` / `.wal` packs. Archives are read in-process with zlib (no `unzip` program). Nested folders are kept. `~/.cache/winamp/skins/` is rebuilt when the archive’s size, mtime, or SHA-256 changes. |
 | **Default skin** | Ships with classic assets under `assets/` and `skins/default/`. |
-| **Window snapping** | Main, equalizer, and playlist windows snap and follow each other like the original. |
+| **Window snapping** | Main, equalizer, and playlist windows snap and follow each other like the original on X11 and XWayland. Native Wayland does not dock them (the compositor ignores client `move()`). A playlist beside the main window keeps its own height. |
 | **Double size & shade** | Double-size mode and shade (title-bar compact) modes. |
 | **Always on top** | Optional stay-on-top for the main window. |
 | **System tray** | Tray icon, minimize-to-tray options, and song-change notifications. |
@@ -76,7 +76,7 @@ Classic Winamp defined how a generation listened to music on the desktop: skinna
 | **Python plugins** | Out-of-process `python3` host, JSON-RPC over stdin/stdout. A bad plugin cannot crash the player process. This is process isolation, not an OS sandbox: the plugin has the user's normal privileges. A crashed host is restarted after 500 ms, 1 s, 2 s, 4 s, then 8 s, and left stopped after five crashes. A host that stays up for 30 seconds resets that count. |
 | **Plugin manager UI** | Preferences → Plug-ins: enable/disable, add, remove, open config. |
 | **Example plugins** | `hello_winamp.py`, production-oriented `icecast_dj.py` (Icecast via `ffmpeg`). |
-| **MPRIS2** | Media keys and desktop controllers (**Qt 6 + Qt DBus**; off on Qt 5). `Volume` 0–1 maps onto the player’s 0–255 scale. `OpenUri` accepts a local file or `http`/`https`. `Previous` uses the same shuffle and repeat wrap as `Next`. |
+| **MPRIS2** | Media keys and desktop controllers (**Qt 6 + Qt DBus**; off on Qt 5). `Volume` 0–1 maps onto the player’s 0–255 scale. `OpenUri` accepts a local file or `http`/`https`. `Previous` uses the same shuffle and repeat wrap as `Next`. Each track gets its own `mpris:trackid`. |
 | **Milkdrop / projectM** | Visualization via `libprojectM` when available. PCM comes from the Qt 6.8 tap; older Qt opens the window without live samples. Presets are loaded from `../share/projectM/presets` next to the binary, then `/usr/local` and `/usr`. |
 | **Video window** | Video surface for video tracks. |
 | **Media library browser** | Filesystem-oriented media browser window. |

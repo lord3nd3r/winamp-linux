@@ -224,7 +224,7 @@ Stored in `winamp.conf` under `[RecentFiles]` (see above). Updated as local file
 | Variable / factor | Effect |
 |-------------------|--------|
 | `PATH` | Must include `python3` for plugins. The AppImage does not bundle the interpreter |
-| `QT_QPA_PLATFORM` | e.g. `offscreen` for headless tests. On Wayland the GUI defaults to `xcb` so window positions work; set `wayland` to opt into native Wayland |
+| `QT_QPA_PLATFORM` | e.g. `offscreen` for headless tests. On Wayland the GUI defaults to `xcb` so window positions and docking work; set `wayland` to opt into native Wayland, where dragging still works but the equalizer and playlist are not docked |
 | `QT_LOGGING_RULES` | Qt category logging |
 | Multimedia backend | GStreamer/FFmpeg packages determine format support |
 | Qt version | Spectrum, EQ processing, Milkdrop PCM, and balance need Qt 6.8 (`QAudioBufferOutput`). Older Qt plays through `QAudioOutput`. Dragging balance appends ` (NO TAP)` |
@@ -263,7 +263,7 @@ Opening a `.m3u`, `.m3u8`, or `.pls` file (local or remote) parses every entry a
 
 ### MPRIS
 
-On Qt 6 with DBus, `Volume` is a 0–1 double written through the player’s 0–255 control (`setPluginVolume`). `OpenUri` plays a local file path or an `http`/`https` URL. `ftp` is ignored. `Previous` calls the same shuffle and repeat logic as `Next`: shuffle picks another track, and repeat wraps from the first track to the last.
+On Qt 6 with DBus, `Volume` is a 0–1 double written through the player’s 0–255 control (`setPluginVolume`). `OpenUri` plays a local file path or an `http`/`https` URL. `ftp` is ignored. `Previous` calls the same shuffle and repeat logic as `Next`: shuffle picks another track, and repeat wraps from the first track to the last. `mpris:trackid` changes with the current URL so a shell can tell that the song changed. A single click in the playlist does not change which track Next, Previous, or gapless will use.
 
 ### ID3
 

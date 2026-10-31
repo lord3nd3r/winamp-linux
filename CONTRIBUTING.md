@@ -39,7 +39,7 @@ Thank you for helping improve a native classic Winamp experience on Linux. This 
 | CMake ≥ 3.16 | Project minimum |
 | Ninja | Recommended generator |
 | Qt 6 **or** Qt 5 | Qt 6 preferred |
-| `libprojectM` | Visualization |
+| `libprojectM` | Visualization. CMake uses pkg-config (`libprojectM`) |
 | `python3` | Plugin host at runtime (interpreter on `PATH`) |
 
 ### Debian / Ubuntu packages
@@ -311,8 +311,8 @@ flowchart TB
 
 ### Window snapping
 
-- Child windows snap within a pixel threshold of the main window edges.
-- Dragging the main window repositions snapped children (`followMain` / `checkSnap` style logic).
+- Child windows snap within a pixel threshold of the main window edges on X11 and XWayland. A playlist beside the main window keeps its vertical offset.
+- Dragging the main window repositions snapped children (`followMain` / `checkSnap`). Native Wayland (`QT_QPA_PLATFORM=wayland`) does not dock them, because `move()` is ignored there.
 - Snap state is persisted with window geometry in `winamp.conf`.
 
 ---
