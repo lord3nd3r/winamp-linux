@@ -300,6 +300,10 @@ static inline QIcon createFallbackAppIcon() {
 #include <QGuiApplication>
 #include <QWidget>
 #include <QWindow>
+static inline bool waCanPositionWindows() {
+    return QGuiApplication::platformName() != QLatin1String("wayland");
+}
+
 static inline bool waSystemMove(QWidget *w) {
 #if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
     QWindow *h = w->window()->windowHandle();

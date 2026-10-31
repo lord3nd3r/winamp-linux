@@ -1832,14 +1832,18 @@ void PlaylistWindow::showListMenu(QPoint globalPos) {
 
 
 void PlaylistWindow::dockRightOfMain() {
-    if (!mainWindow) return;
+    if (!mainWindow || !waCanPositionWindows()) return;
     move(mainWindow->pos().x() + mainWindow->width(), mainWindow->pos().y());
     snapMode = 1;
     isSnappedToMain = true;
 }
 
 void PlaylistWindow::checkSnap() {
-    if (!mainWindow) return;
+    if (!mainWindow || !waCanPositionWindows()) {
+        isSnappedToMain = false;
+        snapMode = 0;
+        return;
+    }
     if (!g_snapWindowsEnabled) {
         isSnappedToMain = false;
         snapMode = 0;
@@ -1904,7 +1908,7 @@ void PlaylistWindow::checkSnap() {
 }
 
 void PlaylistWindow::followMain() {
-    if (!mainWindow || !isVisible() || snapMode == 0)
+    if (!mainWindow || !isVisible() || snapMode == 0 || !waCanPositionWindows())
         return;
     const QPoint mainPos = mainWindow->pos();
 
