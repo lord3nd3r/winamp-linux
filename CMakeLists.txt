@@ -38,11 +38,13 @@ endif()
 
 # projectM — Milkdrop-compatible visualization engine
 # Install: sudo apt-get install libprojectm-dev projectm-data
-find_library(PROJECTM_LIB projectM REQUIRED)
+# pkg-config, not find_library: a cached PROJECTM_LIB path stays stale after
+# the library moves until the user deletes CMakeCache.txt.
 
 # TagLib — ID3v1/v2 + multi-format tag read/write (Winamp 2.x File Info)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(TAGLIB REQUIRED IMPORTED_TARGET taglib)
+pkg_check_modules(PROJECTM REQUIRED IMPORTED_TARGET libprojectM)
 
 # Skin packs (.wsz / .zip / .wal) are unzipped in-process. zlib is enough;
 # the unzip program is not a runtime dependency.
@@ -103,7 +105,7 @@ target_link_libraries(winamp
     ${QT_PACKAGE}::MultimediaWidgets
     ${QT_PACKAGE}::OpenGL
     ${QT_PACKAGE}::Network
-    ${PROJECTM_LIB}
+    PkgConfig::PROJECTM
     PkgConfig::TAGLIB
     ZLIB::ZLIB
 )
@@ -209,7 +211,7 @@ target_link_libraries(playback_tests PRIVATE
     ${QT_PACKAGE}::OpenGL
     ${QT_PACKAGE}::Network
     ${QT_PACKAGE}::Test
-    ${PROJECTM_LIB}
+    PkgConfig::PROJECTM
     PkgConfig::TAGLIB
     ZLIB::ZLIB
 )
