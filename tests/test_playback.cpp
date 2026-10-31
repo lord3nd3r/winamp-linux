@@ -225,6 +225,7 @@ void TestPlayback::testPreviousMatchesNextWrap() {
     window.shuffleOn = true;
     window.repeatOn = false;
     playlist->setCurrentTrackIndex(1);
+    playlist->notePlayingTrack(QStringLiteral("http://example.com/b.mp3"));
     window.playPrevious();
     QVERIFY(playlist->currentTrackIndex() != 1);
     QVERIFY(playlist->currentTrackIndex() >= 0);
