@@ -41,6 +41,10 @@ PythonPluginManager::PythonPluginManager(WinampWindow *w)
     });
     connect(process, &QProcess::errorOccurred,
             this, &PythonPluginManager::handleProcessError);
+    connect(process, &QProcess::started, this, [this]() {
+        hostRunningTimer.start();
+        sendEvent(QStringLiteral("start"));
+    });
     connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             this, &PythonPluginManager::handleProcessFinished);
 
@@ -54,15 +58,6 @@ void PythonPluginManager::startHostProcess()
     qDebug() << "[Python Plugins] Starting plugin host process...";
     hostRunningTimer.invalidate();
     process->start(QStringLiteral("python3"), QStringList() << hostScriptPath);
-    if (process->waitForStarted(2000)) {
-        hostRunningTimer.start();
-        qDebug() << "[Python Plugins] Host process started successfully (PID:"
-                 << process->processId() << ")";
-        sendEvent(QStringLiteral("start"));
-    } else {
-        qWarning() << "[Python Plugins] Failed to start plugin host process:"
-                   << process->errorString();
-    }
 }
 
 PythonPluginManager::~PythonPluginManager()
