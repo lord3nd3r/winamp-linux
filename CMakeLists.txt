@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
 # Numeric version for CMake/CPack; full label lives in src/constants.h
-# and must match the release tag being cut (v1.3.0 → 1.3.0).
+# and must match the release tag being cut (v1.3.1 → 1.3.1).
 # C is required so Qt6's FindThreads dependency works on older CMake (e.g. Ubuntu 22.04 / Debian bookworm).
-project(Winamp VERSION 1.3.0 LANGUAGES C CXX)
-set(WINAMP_VERSION_FULL "1.3.0")
+project(Winamp VERSION 1.3.1 LANGUAGES C CXX)
+set(WINAMP_VERSION_FULL "1.3.1")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
