@@ -296,7 +296,7 @@ void WinampTui::startOrResume() {
 
 void WinampTui::doStop() { win->getPlayer()->stop(); }
 void WinampTui::doNext() { win->playNext(); }
-void WinampTui::doPrev() { win->getPlaylistWindow()->prevTrack(); }
+void WinampTui::doPrev() { win->playPrevious(); }
 
 void WinampTui::nudgeVolume(int delta) {
     win->setPluginVolume(win->getPluginVolume() + delta);

@@ -2068,16 +2068,9 @@ protected:
             case Qt::Key_C:
                 player->pause();
                 break;
-            case Qt::Key_Z: {
-                int curIdx = playlistWindow->currentTrackIndex();
-                if (curIdx > 0) {
-                    playlistWindow->setCurrentTrackIndex(curIdx - 1);
-                    playTrack(playlistWindow->trackAt(curIdx - 1));
-                } else {
-                    player->setPosition(0);
-                }
+            case Qt::Key_Z:
+                playPrevious();
                 break;
-            }
             case Qt::Key_B: {
                 playNext();
                 break;
@@ -2802,16 +2795,9 @@ protected:
                 if (btn == modernPressed) {
                     // Execute action based on button index
                     switch (btn) {
-                        case MB_PREV: {
-                            int curIdx = playlistWindow->currentTrackIndex();
-                            if (curIdx > 0) {
-                                playlistWindow->setCurrentTrackIndex(curIdx - 1);
-                                playTrack(playlistWindow->trackAt(curIdx - 1));
-                            } else {
-                                player->setPosition(0);
-                            }
+                        case MB_PREV:
+                            playPrevious();
                             break;
-                        }
                         case MB_PLAY:
                             playOrResume();
                             break;
@@ -2870,16 +2856,9 @@ protected:
             
             if (btnId == pressedButton) {
                 switch (btnId) {
-                    case 0: {                                       // Previous
-                        int curIdx = playlistWindow->currentTrackIndex();
-                        if (curIdx > 0) {
-                            playlistWindow->setCurrentTrackIndex(curIdx - 1);
-                            playTrack(playlistWindow->trackAt(curIdx - 1));
-                        } else {
-                            player->setPosition(0);
-                        }
+                    case 0:                                       // Previous
+                        playPrevious();
                         break;
-                    }
                     case 1:                                          // Play
                         playOrResume();
                         break;
@@ -3668,9 +3647,7 @@ private:
             activateWindow();
         });
         trayMenu->addSeparator();
-        trayMenu->addAction("Previous Track", this, [this]() {
-            if (playlistWindow) playlistWindow->prevTrack();
-        });
+        trayMenu->addAction("Previous Track", this, [this]() { playPrevious(); });
         QAction *playPauseAction = trayMenu->addAction("Play", this, [this]() {
             if (player->playbackState() == QMediaPlayer::PlayingState) {
                 player->pause();
