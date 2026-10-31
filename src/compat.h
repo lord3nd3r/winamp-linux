@@ -10,6 +10,172 @@
 #include <QIcon>
 #include <QIODevice>
 #include <QUrl>
+#include <QEventLoop>
+#include <QTimer>
+#include <QPointer>
+#include <QHash>
+#include <QSet>
+
+// Qt 6.8's FFmpeg backend cancels an in-flight avformat_open_input, then frees
+// the format context while the demuxer thread is still inside it. That
+// segfaults. Remember a replacement source and apply it only after the open
+// finishes or fails on its own. Teardown seals the player so the wait cannot
+// start another open.
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+struct WaSourceRequest {
+    int epoch = 0;
+    bool draining = false;
+    bool sealed = false;
+    bool pending = false;
+    bool useDevice = false;
+    QUrl url;
+    QIODevice *device = nullptr;
+};
+
+struct WaSourceGate {
+    QHash<QMediaPlayer *, WaSourceRequest> requests;
+    QSet<QMediaPlayer *> hooked;
+    QObject *context = new QObject();
+};
+
+inline WaSourceGate &waSourceGate() {
+    static WaSourceGate gate;
+    return gate;
+}
+
+inline void waApplySourceRequest(QMediaPlayer *player, const WaSourceRequest &req) {
+    if (req.useDevice)
+        player->setSourceDevice(req.device, req.url);
+    else
+        player->setSource(req.url);
+}
+
+inline bool waDrainMediaLoad(QMediaPlayer *player) {
+    if (!player || player->mediaStatus() != QMediaPlayer::LoadingMedia)
+        return true;
+    if (waSourceGate().requests.value(player).draining)
+        return false;
+    waSourceGate().requests[player].draining = true;
+    QEventLoop loop;
+    QPointer<QMediaPlayer> alive(player);
+    const QMetaObject::Connection statusConn = QObject::connect(
+        player, &QMediaPlayer::mediaStatusChanged, &loop,
+        [&loop](QMediaPlayer::MediaStatus status) {
+            if (status != QMediaPlayer::LoadingMedia)
+                loop.quit();
+        });
+    QObject::connect(player, &QObject::destroyed, &loop, &QEventLoop::quit);
+    QTimer timeout;
+    timeout.setSingleShot(true);
+    QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+    timeout.start(8000);
+    loop.exec();
+    QObject::disconnect(statusConn);
+    if (!alive)
+        return false;
+    waSourceGate().requests[alive.data()].draining = false;
+    return alive->mediaStatus() != QMediaPlayer::LoadingMedia;
+}
+
+inline void waPumpSource(QMediaPlayer *player);
+
+inline void waEnsureSourcePump(QMediaPlayer *player) {
+    WaSourceGate &gate = waSourceGate();
+    if (!player || gate.hooked.contains(player))
+        return;
+    gate.hooked.insert(player);
+    const QPointer<QMediaPlayer> alive(player);
+    QObject::connect(player, &QMediaPlayer::mediaStatusChanged, gate.context,
+                     [alive](QMediaPlayer::MediaStatus status) {
+                         if (!alive || status == QMediaPlayer::LoadingMedia)
+                             return;
+                         waPumpSource(alive.data());
+                     },
+                     Qt::QueuedConnection);
+    QObject::connect(player, &QObject::destroyed, gate.context, [player]() {
+        WaSourceGate &g = waSourceGate();
+        g.requests.remove(player);
+        g.hooked.remove(player);
+    });
+}
+
+inline void waPumpSource(QMediaPlayer *player) {
+    if (!player)
+        return;
+    WaSourceGate &gate = waSourceGate();
+    const WaSourceRequest state = gate.requests.value(player);
+    if (state.sealed || state.draining)
+        return;
+    if (player->mediaStatus() == QMediaPlayer::LoadingMedia) {
+        if (!waDrainMediaLoad(player))
+            return;
+        if (!gate.requests.contains(player) || gate.requests.value(player).sealed)
+            return;
+    }
+    if (player->mediaStatus() == QMediaPlayer::LoadingMedia)
+        return;
+    WaSourceRequest req = gate.requests.value(player);
+    if (!req.pending)
+        return;
+    gate.requests[player].pending = false;
+    gate.requests[player].useDevice = false;
+    const int epoch = req.epoch;
+    waApplySourceRequest(player, req);
+    const WaSourceRequest now = gate.requests.value(player);
+    if (now.pending && now.epoch != epoch &&
+        player->mediaStatus() != QMediaPlayer::LoadingMedia)
+        waPumpSource(player);
+}
+
+inline void waQueueSource(QMediaPlayer *player, const QUrl &url, QIODevice *device, bool useDevice) {
+    if (!player)
+        return;
+    waEnsureSourcePump(player);
+    WaSourceRequest &slot = waSourceGate().requests[player];
+    if (slot.sealed)
+        return;
+    ++slot.epoch;
+    slot.pending = true;
+    slot.useDevice = useDevice;
+    slot.url = url;
+    slot.device = device;
+    if (slot.draining)
+        return;
+    waPumpSource(player);
+}
+
+inline void waReleaseMediaPlayerImpl(QMediaPlayer *player) {
+    if (!player)
+        return;
+    QPointer<QMediaPlayer> alive(player);
+    {
+        WaSourceRequest &slot = waSourceGate().requests[player];
+        slot.sealed = true;
+        slot.pending = false;
+    }
+    waDrainMediaLoad(player);
+    if (!alive)
+        return;
+    if (waSourceGate().requests.contains(alive.data()))
+        waSourceGate().requests[alive.data()].pending = false;
+    if (alive->mediaStatus() != QMediaPlayer::LoadingMedia)
+        return;
+    alive->setParent(nullptr);
+    QObject::connect(alive.data(), &QMediaPlayer::mediaStatusChanged, waSourceGate().context,
+                     [alive](QMediaPlayer::MediaStatus status) {
+                         if (alive && status != QMediaPlayer::LoadingMedia)
+                             alive->deleteLater();
+                     });
+}
+#endif
+
+static inline void waReleaseMediaPlayer(QMediaPlayer *player) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+    waReleaseMediaPlayerImpl(player);
+#else
+    Q_UNUSED(player);
+#endif
+}
 
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
 #define playbackState state
@@ -78,7 +244,11 @@ static inline QPointF waMousePos(const QMouseEvent *event) {
     return event->position();
 }
 static inline void waSetSource(QMediaPlayer *player, const QUrl &url) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+    waQueueSource(player, url, nullptr, false);
+#else
     player->setSource(url);
+#endif
 }
 static inline QUrl waSource(const QMediaPlayer *player) {
     return player->source();
@@ -99,7 +269,11 @@ static inline float waOutputVolume(const QMediaPlayer *player, const WAudioOutpu
 }
 
 static inline void waSetNetworkStream(QMediaPlayer *player, QIODevice *device, const QUrl &sourceUrl) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+    waQueueSource(player, sourceUrl, device, true);
+#else
     player->setSourceDevice(device, sourceUrl);
+#endif
 }
 
 static inline QIcon createFallbackAppIcon() {

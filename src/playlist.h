@@ -272,6 +272,7 @@ private:
     QString durationProbePath;
     quint64 durationProbeSerial = 0;
     bool durationProbeActive = false;
+    bool closing = false;
     void startNextDurationProbe();
     void cancelDurationProbes();
     void onDurationProbeStatus(QMediaPlayer::MediaStatus status);
