@@ -275,6 +275,20 @@ public:
         currentFile = file;
         waSetSource(player, QUrl::fromLocalFile(file));
         player->play();
+        // A drop or bookmark must not keep the previous track's preloaded
+        // successor. If this file is already in the playlist, follow that
+        // row; otherwise drop the idle player.
+        if (playlistWindow) {
+            const int idx = playlistWindow->allTracks().indexOf(file);
+            if (idx >= 0) {
+                playlistWindow->setCurrentTrackIndex(idx);
+                preloadNextTrack();
+            } else if (nextPlayer) {
+                waSetSource(nextPlayer, QUrl());
+            }
+        } else if (nextPlayer) {
+            waSetSource(nextPlayer, QUrl());
+        }
     }
 
     void playUrl(const QString &url) {
