@@ -110,7 +110,12 @@ public:
 
     QVariantMap metadata() const {
         QVariantMap map;
-        map["mpris:trackid"] = QVariant::fromValue(QDBusObjectPath("/org/mpris/MediaPlayer2/CurrentTrack"));
+        QUrl source = waSource(m_player);
+        const QString trackToken = source.isValid()
+            ? QString::fromLatin1(source.toString().toUtf8().toHex())
+            : QStringLiteral("none");
+        map["mpris:trackid"] = QVariant::fromValue(
+            QDBusObjectPath(QStringLiteral("/org/mpris/MediaPlayer2/Track/") + trackToken));
         if (m_player->duration() > 0)
             map["mpris:length"] = m_player->duration() * 1000; // microseconds
         
@@ -124,8 +129,7 @@ public:
         
         QString album = meta.stringValue(QMediaMetaData::AlbumTitle);
         if (!album.isEmpty()) map["xesam:album"] = album;
-        
-        QUrl source = waSource(m_player);
+
         if (source.isValid()) map["xesam:url"] = source.toString();
         
         return map;
