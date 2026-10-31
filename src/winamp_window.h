@@ -282,9 +282,11 @@ public:
             const int idx = playlistWindow->allTracks().indexOf(file);
             if (idx >= 0) {
                 playlistWindow->setCurrentTrackIndex(idx);
+                playlistWindow->notePlayingTrack(file);
                 preloadNextTrack();
             } else if (nextPlayer) {
                 waSetSource(nextPlayer, QUrl());
+                playlistWindow->notePlayingTrack(QString());
             }
         } else if (nextPlayer) {
             waSetSource(nextPlayer, QUrl());
@@ -415,7 +417,9 @@ public slots:
         if (retiring || !playlistWindow) return;
         int count = playlistWindow->trackCount();
         if (count == 0) return;
-        int cur = playlistWindow->currentTrackIndex();
+        int cur = playlistWindow->playingTrackIndex();
+        if (cur < 0)
+            cur = playlistWindow->currentTrackIndex();
         int next = cur + 1;
         if (shuffleOn && count > 1) {
             next = QRandomGenerator::global()->bounded(count - 1);  // any track but the current one
@@ -436,7 +440,9 @@ public slots:
         if (retiring || !playlistWindow) return;
         int count = playlistWindow->trackCount();
         if (count == 0) return;
-        int cur = playlistWindow->currentTrackIndex();
+        int cur = playlistWindow->playingTrackIndex();
+        if (cur < 0)
+            cur = playlistWindow->currentTrackIndex();
         int prev;
         if (shuffleOn && count > 1) {
             if (cur < 0 || cur >= count) {
@@ -3118,7 +3124,9 @@ protected:
             const QString loc = locationFromMediaUrl(waSource(player));
             int nextIdx = -1;
             if (playlistWindow) {
-                const int curIdx = playlistWindow->currentTrackIndex();
+                int curIdx = playlistWindow->playingTrackIndex();
+                if (curIdx < 0)
+                    curIdx = playlistWindow->currentTrackIndex();
                 const int count = playlistWindow->trackCount();
                 if (curIdx + 1 < count)
                     nextIdx = curIdx + 1;
@@ -3130,6 +3138,7 @@ protected:
             if (nextIdx >= 0 && playlistWindow) {
                 const QString fromList = playlistWindow->trackAt(nextIdx);
                 currentFile = !fromList.isEmpty() ? fromList : loc;
+                playlistWindow->notePlayingTrack(currentFile);
             } else if (!loc.isEmpty()) {
                 currentFile = loc;
             }
@@ -3173,7 +3182,10 @@ protected:
             clearNext();
             return;
         }
-        int nextIdx = playlistWindow->currentTrackIndex() + 1;
+        int nextIdx = playlistWindow->playingTrackIndex();
+        if (nextIdx < 0)
+            nextIdx = playlistWindow->currentTrackIndex();
+        nextIdx += 1;
         if (nextIdx >= count) {
             if (repeatOn)
                 nextIdx = 0;
@@ -3198,10 +3210,14 @@ public:
         // playUrl / playFile bump the generation again for their own callbacks.
         ++playbackGeneration;
         if (isRemoteMediaLocation(fileName)) {
+            if (playlistWindow)
+                playlistWindow->notePlayingTrack(fileName);
             playUrl(fileName);
             return;
         }
         if (QFile::exists(fileName)) {
+            if (playlistWindow)
+                playlistWindow->notePlayingTrack(fileName);
             currentFile = fileName;
             // Reset media info — will be refreshed by metaDataChanged and processAudioBuffer
             mediaBitrate = 0;

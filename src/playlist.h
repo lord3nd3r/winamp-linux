@@ -98,6 +98,23 @@ public:
     QString trackAt(int index) const { return (index >= 0 && index < tracks.size()) ? tracks[index] : QString(); }
     int currentTrackIndex() const { return listWidget->currentRow(); }
     void setCurrentTrackIndex(int index) { if (index >= 0 && index < tracks.size()) listWidget->setCurrentRow(index); }
+    // Selection (current row) and the track that is actually playing are
+    // separate. A single click must not retarget Next or gapless.
+    int playingTrackIndex() const {
+        if (playingIndex >= 0 && playingIndex < tracks.size() && tracks[playingIndex] == playingPath)
+            return playingIndex;
+        if (!playingPath.isEmpty())
+            return tracks.indexOf(playingPath);
+        return -1;
+    }
+    void notePlayingTrack(const QString &file) {
+        playingPath = file;
+        const int selected = currentTrackIndex();
+        if (selected >= 0 && trackAt(selected) == file)
+            playingIndex = selected;
+        else
+            playingIndex = tracks.indexOf(file);
+    }
     QStringList allTracks() const { return tracks; }
     
     // Track navigation convenience methods (called by MPRIS2, tray menu, etc.)
@@ -270,6 +287,8 @@ private:
     QTimer *durationProbeTimer = nullptr;
     QStringList durationProbeQueue;
     QString durationProbePath;
+    QString playingPath;
+    int playingIndex = -1;
     quint64 durationProbeSerial = 0;
     bool durationProbeActive = false;
     bool closing = false;
