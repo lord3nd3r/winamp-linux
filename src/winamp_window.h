@@ -411,6 +411,8 @@ public slots:
         }
     }
 
+    void notePlaylistClosed() { plBtnOn = false; update(); }
+
     // Advance to the next track, honouring shuffle and repeat-all. Shared by the
     // Next button, B key, tray, MPRIS, plugins, TUI and end-of-track.
     void playNext() {
@@ -3071,8 +3073,7 @@ protected:
                 status == QMediaPlayer::LoadedMedia) {
                 streamViaReplyActive = false;
             } else if (status == QMediaPlayer::InvalidMedia ||
-                       status == QMediaPlayer::NoMedia ||
-                       status == QMediaPlayer::StalledMedia) {
+                       status == QMediaPlayer::NoMedia) {
                 fallbackToDirectStream();
                 return;
             }

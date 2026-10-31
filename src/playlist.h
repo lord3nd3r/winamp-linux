@@ -255,6 +255,7 @@ private:
     bool isSnappedToMain = false;
     WinampWindow *mainWindow = nullptr;
     int snapMode = 0;  // 0=none, 1=right of main, 2=below EQ, 3=below main
+    int snapOffsetY = 0; // vertical offset from the main window when snapped to its side
     
     // Shade mode
     bool shadeMode = false;
