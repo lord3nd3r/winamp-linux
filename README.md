@@ -197,7 +197,7 @@ QT_QPA_PLATFORM=offscreen ctest --test-dir build-qt6 --output-on-failure
 |-------------|----------|
 | `eq_dsp_test` | EQ helpers, balance gain, plugin-host restart limit, Milkdrop sample counts, short sink writes (`tests/test_eq_dsp.cpp`) |
 | `playlist_test` | Playlist ops, selection, async folder add, M3U/PLS text, duration probes, skin archives (`tests/test_playlist.cpp`) |
-| `playback_test` | Gapless swap, saved settings, stale playback callbacks, local playlist enqueue, previous-track wrap, repeat cycle, MPRIS volume and OpenUri (`tests/test_playback.cpp`) |
+| `playback_test` | Gapless swap on every Qt, including the Qt 6.8+ FFmpeg backend (that case is not skipped), saved settings, stale playback callbacks, local playlist enqueue, previous-track wrap, repeat cycle, MPRIS volume and OpenUri (`tests/test_playback.cpp`) |
 | `tag_metadata_test` | Tag round trip, ID3v2.3 write, ID3v1 truncation (`tests/test_tag_metadata.cpp`) |
 
 ### Install / package
@@ -420,6 +420,7 @@ These are intentional or inherited constraints, not silent omissions:
 
 - **Classic skins first** — modern Winamp 5 skin support is limited; classic is the primary path.
 - **Qt 6.8 PCM tap** — spectrum, EQ processing, Milkdrop samples, and balance need `QAudioBufferOutput`. Qt 5 and Qt 6 before 6.8 (Ubuntu 22.04’s 6.2, Ubuntu 24.04’s 6.4, Debian Bookworm, and the AppImage) compile that path out. Playback continues through `QAudioOutput`. Fedora 43, Fedora 44, and openSUSE Tumbleweed in CI are new enough to build the tap.
+- **Qt 6.8+ FFmpeg opens** — replacing a track or quitting while a file is still opening waits until that open finishes or fails, then delivers the completion, before the player is destroyed. The gapless playback test covers this on the FFmpeg backend and is not skipped.
 - **MPRIS2 on Qt 6 only** — Qt 5 builds skip the DBus media player interface.
 - **Plugin process isolation** — a separate `python3` process, not an OS sandbox (no seccomp, cgroup, or filesystem jail). Restart backoff is 500 ms, 1 s, 2 s, 4 s, 8 s, then stop (five tries). Thirty seconds up resets the count.
 - **Tests** — `eq_dsp_test`, `playlist_test`, `playback_test`, and `tag_metadata_test`. Full UI automation is not in-tree.

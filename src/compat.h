@@ -15,6 +15,7 @@
 #include <QPointer>
 #include <QHash>
 #include <QSet>
+#include <QCoreApplication>
 
 // Qt 6.8's FFmpeg backend cancels an in-flight avformat_open_input, then frees
 // the format context while the demuxer thread is still inside it. That
@@ -153,7 +154,20 @@ inline void waReleaseMediaPlayerImpl(QMediaPlayer *player) {
         slot.sealed = true;
         slot.pending = false;
     }
-    waDrainMediaLoad(player);
+    // A failed open posts its completion back to this thread after FFmpeg has
+    // already logged the error. Destroying the player before that callback runs
+    // cancels avformat while it is still closing the context (SIGSEGV after a
+    // 404 on Qt 6.10 / FFmpeg 7.1). Deliver the callback first, then wait out
+    // any load that is still in progress.
+    for (int pass = 0; alive && pass < 3; ++pass) {
+        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+        if (!alive)
+            return;
+        if (alive->mediaStatus() != QMediaPlayer::LoadingMedia)
+            break;
+        if (!waDrainMediaLoad(alive.data()))
+            break;
+    }
     if (!alive)
         return;
     if (waSourceGate().requests.contains(alive.data()))

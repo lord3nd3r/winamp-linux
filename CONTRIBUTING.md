@@ -161,7 +161,7 @@ QT_QPA_PLATFORM=offscreen ctest --test-dir build-qt6 --output-on-failure
 |--------|---------|-----------------|
 | `winamp_tests` / `eq_dsp_test` | `tests/test_eq_dsp.cpp` | dB conversion, setup, gains, process path, balance gain, plugin-host restart limit, Milkdrop channel counts, short sink writes |
 | `playlist_tests` / `playlist_test` | `tests/test_playlist.cpp` + playlist/eq/prefs/video objs | Add/clear, navigation, sort, selection, dead file removal, async folder add, M3U/PLS text, duration probes, nested skin archives |
-| `playback_tests` / `playback_test` | `tests/test_playback.cpp` | Gapless player swap, settings write, stale playback callbacks, local playlist enqueue, previous-track wrap, repeat cycle (off → all → one), MPRIS volume and OpenUri |
+| `playback_tests` / `playback_test` | `tests/test_playback.cpp` | Gapless player swap on every Qt, including the default Qt 6.8+ FFmpeg backend (not skipped), settings write, stale playback callbacks, local playlist enqueue, previous-track wrap, repeat cycle (off → all → one), MPRIS volume and OpenUri |
 | `tag_metadata_tests` / `tag_metadata_test` | `tests/test_tag_metadata.cpp` | Tag round trip, ID3v2.3 on write, ID3v1 Latin-1 truncation |
 
 ### Adding tests

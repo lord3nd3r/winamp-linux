@@ -10,7 +10,7 @@ Release package text that only repeats the distro matrix is summarized, not copi
 
 ### Fixed
 
-- On Qt 6.8 and newer, changing tracks or quitting while a file is still opening no longer cancels FFmpeg mid-open (that cancel crashed the player). One gapless test is still skipped on that FFmpeg backend: Fedora 43 crashes after those opens fail, during teardown.
+- On Qt 6.8 and newer, changing tracks or quitting while a file is still opening no longer cancels FFmpeg mid-open (that cancel crashed the player). The open's completion is delivered before the player is destroyed. The gapless playback tests run on that FFmpeg backend; they are not skipped.
 - Dropping a file on the window, or playing a bookmark, no longer resumes the previous playlist's preloaded next track when the new file ends.
 - Clicking a playlist row only moves the highlight. Next, Previous, and gapless follow the track that is actually playing.
 - Previous is the same action from the main window, the Z key, the tray, the terminal UI, plugins, and MPRIS (shuffle and repeat wrap).
