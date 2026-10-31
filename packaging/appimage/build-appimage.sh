@@ -54,7 +54,7 @@ if [[ -n "$font_src" ]]; then
 fi
 
 # Filename version wins over the string baked in at configure time, so a
-# v1.3.0 tag still produces AppStream metadata that says 1.3.0.
+# v* tag still produces AppStream metadata for that version.
 metainfo="$APPDIR/usr/share/metainfo/io.github.lord3nd3r.winamp.metainfo.xml"
 if [[ -f "$metainfo" ]]; then
     sed -i "s/<release version=\"[^\"]*\"/<release version=\"${VERSION}\"/" "$metainfo"

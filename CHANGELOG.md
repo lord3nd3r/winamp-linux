@@ -8,6 +8,8 @@ Release package text that only repeats the distro matrix is summarized, not copi
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-10-30
+
 ### Fixed
 
 - On Qt 6.8 and newer, changing tracks or quitting while a file is still opening no longer cancels FFmpeg mid-open (that cancel crashed the player). The open's completion is delivered before the player is destroyed. The gapless playback tests run on that FFmpeg backend; they are not skipped.
@@ -177,7 +179,8 @@ First beta. Pre-release. Packages: `.deb` (Debian / Ubuntu / Mint), `.rpm` (Fedo
 - Some plugins are not ported.
 - A Windows build was planned via CI and is not part of this release.
 
-[Unreleased]: https://github.com/lord3nd3r/winamp-linux/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/lord3nd3r/winamp-linux/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/lord3nd3r/winamp-linux/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/lord3nd3r/winamp-linux/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/lord3nd3r/winamp-linux/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/lord3nd3r/winamp-linux/compare/v1.2.0...v1.2.1

@@ -4,7 +4,7 @@
 
 **A native classic Winamp 2.x–style media player for modern Linux desktops.**
 
-**Current release: [v1.3.0](https://github.com/lord3nd3r/winamp-linux/releases/tag/v1.3.0).** Changes by version are in [CHANGELOG.md](CHANGELOG.md).
+**Current release: [v1.3.1](https://github.com/lord3nd3r/winamp-linux/releases/tag/v1.3.1).** Changes by version are in [CHANGELOG.md](CHANGELOG.md).
 
 Built in **C++17** with **Qt 6** (Qt 5 fallback), faithful classic skins, a real 10-band EQ, gapless dual-player audio, out-of-process Python plugins, and desktop integration via MPRIS2.
 
@@ -17,7 +17,7 @@ Built in **C++17** with **Qt 6** (Qt 5 fallback), faithful classic skins, a real
   <img src="https://img.shields.io/badge/C%2B%2B-17-00599C?style=flat-square&logo=cplusplus&logoColor=white" alt="C++17">
   <img src="https://img.shields.io/badge/Qt-6%20%2F%205-41CD52?style=flat-square&logo=qt&logoColor=white" alt="Qt 6/5">
   <img src="https://img.shields.io/badge/platform-Linux-FCC624?style=flat-square&logo=linux&logoColor=black" alt="Linux">
-  <img src="https://img.shields.io/badge/version-1.3.0-00FF00?style=flat-square" alt="Version 1.3.0">
+  <img src="https://img.shields.io/badge/version-1.3.1-00FF00?style=flat-square" alt="Version 1.3.1">
 </p>
 
 <p align="center">
@@ -101,17 +101,17 @@ Classic Winamp defined how a generation listened to music on the desktop: skinna
 
 ### AppImage
 
-The v1.3.0 release attaches `Winamp-1.3.0-x86_64.AppImage` and `Winamp-1.3.0-x86_64.AppImage.zsync`. The release workflow builds it on Ubuntu 22.04 (glibc 2.35) with `packaging/appimage/build-appimage.sh`: linuxdeploy, the Qt plugin, and the GStreamer plugin. The file bundles that image’s Qt 6.2 (xcb, Wayland, and offscreen platform plugins), image formats, the OpenSSL TLS plugin, GStreamer (including libav, plus HarfBuzz and FriBidi so the decoder loads), TagLib, projectM presets, and a desktop file plus icon and AppStream metadata (`io.github.lord3nd3r.winamp`).
+The v1.3.1 release attaches `Winamp-1.3.1-x86_64.AppImage` and `Winamp-1.3.1-x86_64.AppImage.zsync`. The release workflow builds it on Ubuntu 22.04 (glibc 2.35) with `packaging/appimage/build-appimage.sh`: linuxdeploy, the Qt plugin, and the GStreamer plugin. The file bundles that image’s Qt 6.2 (xcb, Wayland, and offscreen platform plugins), image formats, the OpenSSL TLS plugin, GStreamer (including libav, plus HarfBuzz and FriBidi so the decoder loads), TagLib, projectM presets, and a desktop file plus icon and AppStream metadata (`io.github.lord3nd3r.winamp`).
 
 Ubuntu 22.04’s Qt is 6.2, which is older than 6.8, so this build has no PCM tap: audio plays, and spectrum, EQ processing, Milkdrop samples, and balance stay inactive (` (NO TAP)` on the balance readout). OpenGL stays on the host (`libOpenGL.so.0`, packages such as `libopengl0` / `libgl1`). Plugins need a host `python3`; the interpreter is not inside the AppImage.
 
 ```bash
-chmod +x Winamp-1.3.0-x86_64.AppImage
-./Winamp-1.3.0-x86_64.AppImage
-./Winamp-1.3.0-x86_64.AppImage --version
+chmod +x Winamp-1.3.1-x86_64.AppImage
+./Winamp-1.3.1-x86_64.AppImage
+./Winamp-1.3.1-x86_64.AppImage --version
 ```
 
-If FUSE is missing, `APPIMAGE_EXTRACT_AND_RUN=1 ./Winamp-1.3.0-x86_64.AppImage`.
+If FUSE is missing, `APPIMAGE_EXTRACT_AND_RUN=1 ./Winamp-1.3.1-x86_64.AppImage`.
 
 ### Runtime dependencies (playback)
 
@@ -237,10 +237,10 @@ Default install layout (CMake `install` rules):
 
 Release assets are named per distro, for example:
 
-- `winamp-1.3.0-ubuntu-24.04.deb`
-- `winamp-1.3.0-fedora-43.rpm`
+- `winamp-1.3.1-ubuntu-24.04.deb`
+- `winamp-1.3.1-fedora-43.rpm`
 - matching `.tar.gz` for each matrix entry
-- `Winamp-1.3.0-x86_64.AppImage` and `Winamp-1.3.0-x86_64.AppImage.zsync` (Ubuntu 22.04 / Qt 6.2; see [AppImage](#appimage))
+- `Winamp-1.3.1-x86_64.AppImage` and `Winamp-1.3.1-x86_64.AppImage.zsync` (Ubuntu 22.04 / Qt 6.2; see [AppImage](#appimage))
 
 **Not packaged in CI:** Arch Linux (repo only ships **projectM 4.x**; this tree still uses the classic 3.x `libprojectM` C++ API). Build from source on Arch once a compatible `libprojectM` is available, or vendor the 3.x library.
 
@@ -271,7 +271,7 @@ winamp [options] [files-or-directories...]
 | Argument | Behavior |
 |----------|----------|
 | `-h` / `--help` | Print usage and exit |
-| `--version` | Print `Winamp 1.3.0` and exit |
+| `--version` | Print `Winamp 1.3.1` and exit |
 | *file* | Add to playlist; plays the first file unless `-enqueue` |
 | *directory* | Scan/add folder asynchronously |
 | `-enqueue` / `--enqueue` | Add only; do not auto-start playback |
