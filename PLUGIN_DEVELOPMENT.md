@@ -137,7 +137,7 @@ The object passed to `on_winamp_start` exposes the following methods. Names matc
 | `pause` | `() -> None` | Toggle pause (pause if playing, play if paused) |
 | `stop` | `() -> None` | Stop |
 | `next_track` | `() -> None` | Next playlist item |
-| `prev_track` | `() -> None` | Previous playlist item |
+| `prev_track` | `() -> None` | Previous track, same shuffle and repeat wrap as the player. A playlist highlight that was only clicked is ignored |
 | `seek` | `(seconds: float) -> None` | Seek to position |
 
 ### Volume
