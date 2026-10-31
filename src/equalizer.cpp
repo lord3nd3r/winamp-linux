@@ -22,14 +22,18 @@ EqualizerWindow::EqualizerWindow(WinampWindow *parent) : QWidget(nullptr), mainW
 }
 
 void EqualizerWindow::dockBelowMain() {
-    if (!mainWindow) return;
+    if (!mainWindow || !waCanPositionWindows()) return;
     move(mainWindow->pos().x(), mainWindow->pos().y() + mainWindow->height());
     isSnappedToMain = true;
     snapEdge = 1;
 }
 
 void EqualizerWindow::checkSnap() {
-    if (!mainWindow) return;
+    if (!mainWindow || !waCanPositionWindows()) {
+        isSnappedToMain = false;
+        snapEdge = 0;
+        return;
+    }
     if (!g_snapWindowsEnabled) {
         isSnappedToMain = false;
         snapEdge = 0;
@@ -82,7 +86,7 @@ void EqualizerWindow::checkSnap() {
 }
 
 void EqualizerWindow::followMain() {
-    if (!isSnappedToMain || !mainWindow || !isVisible())
+    if (!isSnappedToMain || !mainWindow || !isVisible() || !waCanPositionWindows())
         return;
     const QPoint mainPos = mainWindow->pos();
     const QSize mainSize = mainWindow->size();
