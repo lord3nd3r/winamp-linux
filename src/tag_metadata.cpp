@@ -4,6 +4,7 @@
 #include <QFileInfo>
 #include <QFile>
 #include <QUrl>
+#include <QtGlobal>
 
 #include <taglib.h>
 #include <fileref.h>
@@ -366,6 +367,28 @@ MediaAudioInfo readAudioInfo(const QString &filePath) {
         info.channels = props->channels();
     }
     return info;
+}
+
+qint64 mediaLengthMs(const QString &filePath) {
+    if (!canTagFile(filePath))
+        return 0;
+
+    const QByteArray pathUtf8 = QFile::encodeName(filePath);
+    TagLib::FileName fn(pathUtf8.constData());
+    // Fast: playlist totals only need a header estimate, not a full VBR scan.
+    TagLib::FileRef ref(fn, true, TagLib::AudioProperties::Fast);
+    if (ref.isNull() || !ref.audioProperties())
+        return 0;
+
+    TagLib::AudioProperties *props = ref.audioProperties();
+#if TAGLIB_MAJOR_VERSION >= 2
+    const int ms = props->lengthInMilliseconds();
+#elif (TAGLIB_MAJOR_VERSION == 1 && TAGLIB_MINOR_VERSION >= 10)
+    const int ms = props->lengthInMilliseconds();
+#else
+    const int ms = props->length() * 1000;
+#endif
+    return ms > 0 ? static_cast<qint64>(ms) : 0;
 }
 
 QStringList id3v1Genres() {

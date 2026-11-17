@@ -17,8 +17,6 @@
 #include <QMessageBox>
 #include <QInputDialog>
 #include <QTimer>
-#include <QMediaMetaData>
-#include <QMediaPlayer>
 #include <QVector>
 #include <QPair>
 #include "constants.h"
@@ -280,11 +278,9 @@ private:
     bool showTrackNumbersInPlaylist = true;
     QVector<QPair<int, QString>> removedTracksStack; // capped in removeSelected()
 
-    // Async duration probe queue (replaces blocking QEventLoop per-track).
-    // One probe is in flight. A status is applied only when the player source
-    // is still the path that probe asked for, and the timeout is cancelled
-    // when that probe finishes.
-    QMediaPlayer *durationProbePlayer = nullptr;
+    // Async duration probe queue. One TagLib length read runs per event-loop
+    // tick so adding/restoring many tracks does not freeze the UI. A serial
+    // guards against applying a result after cancel/clear/reorder.
     QTimer *durationProbeTimer = nullptr;
     QStringList durationProbeQueue;
     QString durationProbePath;
@@ -295,7 +291,6 @@ private:
     bool closing = false;
     void startNextDurationProbe();
     void cancelDurationProbes();
-    void onDurationProbeStatus(QMediaPlayer::MediaStatus status);
     void onDurationProbeTimeout();
 
     // Folder scans run off the GUI thread. The flag is cleared and the threads

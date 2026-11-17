@@ -1,6 +1,7 @@
 #pragma once
 #include <QWidget>
 #include <QMediaPlayer>
+#include <QMediaMetaData>
 #include <QAudioOutput>
 #include <QVideoWidget>
 #include <QTimer>
