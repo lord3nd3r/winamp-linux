@@ -11,12 +11,7 @@
 
 PlaylistWindow::~PlaylistWindow() {
     closing = true;
-    if (durationProbeTimer)
-        durationProbeTimer->stop();
-    if (durationProbePlayer)
-        QObject::disconnect(durationProbePlayer, nullptr, this, nullptr);
-    waReleaseMediaPlayer(durationProbePlayer);
-    durationProbePlayer = nullptr;
+    cancelDurationProbes();
     if (folderScanAlive)
         folderScanAlive->store(false);
     const QList<QThread *> threads = folderScanThreads;
@@ -775,19 +770,14 @@ void PlaylistWindow::startNextDurationProbe() {
     durationProbePath = durationProbeQueue.takeFirst();
     ++durationProbeSerial;
 
-    if (!durationProbePlayer) {
-        durationProbePlayer = new QMediaPlayer(this);
-        connect(durationProbePlayer, &QMediaPlayer::mediaStatusChanged,
-                this, &PlaylistWindow::onDurationProbeStatus);
-    }
     if (!durationProbeTimer) {
         durationProbeTimer = new QTimer(this);
         durationProbeTimer->setSingleShot(true);
         connect(durationProbeTimer, &QTimer::timeout, this, &PlaylistWindow::onDurationProbeTimeout);
     }
-    durationProbeTimer->stop();
-    waSetSource(durationProbePlayer, QUrl::fromLocalFile(durationProbePath));
-    durationProbeTimer->start(5000);
+    // Defer TagLib to the next event-loop tick so addTrack/loadSettings stay
+    // responsive, and so only one file is measured at a time.
+    durationProbeTimer->start(0);
 }
 
 void PlaylistWindow::cancelDurationProbes() {
@@ -797,41 +787,27 @@ void PlaylistWindow::cancelDurationProbes() {
     durationProbeActive = false;
     if (durationProbeTimer)
         durationProbeTimer->stop();
-    if (durationProbePlayer) {
-        durationProbePlayer->stop();
-        waSetSource(durationProbePlayer, QUrl());
-    }
-}
-
-void PlaylistWindow::onDurationProbeStatus(QMediaPlayer::MediaStatus status) {
-    if (closing || !durationProbePlayer)
-        return;
-    if (status != QMediaPlayer::LoadedMedia && status != QMediaPlayer::InvalidMedia)
-        return;
-    const quint64 serial = durationProbeSerial;
-    const QString expected = durationProbePath;
-    const QString path = waSource(durationProbePlayer).toLocalFile();
-    if (expected.isEmpty() || path != expected)
-        return;
-    if (status == QMediaPlayer::LoadedMedia) {
-        const int idx = tracks.lastIndexOf(path);
-        if (idx >= 0 && idx < trackDurations.size()) {
-            trackDurations[idx] = durationProbePlayer->duration();
-            updateTotalTimeDisplay();
-        }
-    }
-    if (serial != durationProbeSerial || durationProbePath != expected)
-        return;
-    if (durationProbeTimer)
-        durationProbeTimer->stop();
-    durationProbePath.clear();
-    startNextDurationProbe();
 }
 
 void PlaylistWindow::onDurationProbeTimeout() {
     if (closing || durationProbePath.isEmpty())
         return;
-    ++durationProbeSerial;
+    const quint64 serial = durationProbeSerial;
+    const QString path = durationProbePath;
+    // TagLib Fast — independent of Qt Multimedia / FFmpeg, which often still
+    // reports duration 0 at LoadedMedia and left playlist totals at 0M 00S.
+    const qint64 ms = TagMetadata::mediaLengthMs(path);
+    if (closing || serial != durationProbeSerial || durationProbePath != path)
+        return;
+    if (ms > 0) {
+        const int idx = tracks.lastIndexOf(path);
+        if (idx >= 0 && idx < trackDurations.size()) {
+            trackDurations[idx] = ms;
+            updateTotalTimeDisplay();
+        }
+    }
+    if (serial != durationProbeSerial || durationProbePath != path)
+        return;
     durationProbePath.clear();
     startNextDurationProbe();
 }

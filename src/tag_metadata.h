@@ -46,6 +46,9 @@ bool stripTags(const QString &filePath, QString *errorOut = nullptr);
 // Audio properties for the Technical pane.
 MediaAudioInfo readAudioInfo(const QString &filePath);
 
+// Fast header-based length for playlist totals (milliseconds). 0 if unknown.
+qint64 mediaLengthMs(const QString &filePath);
+
 // Canonical ID3v1 genre list (Winamp genre dropdown order).
 QStringList id3v1Genres();
 
