@@ -591,26 +591,39 @@ void TestPlaylist::testOpenPlaylistText() {
     QCOMPARE(playlist.trackAt(2), nested.fileName());
 }
 
+static QString makeTinyMp3(const QString &path) {
+    // MPEG-1 Layer III, 32 kbps, 44.1 kHz, mono — frame size is 104 bytes.
+    // ~100 frames (~2.6s) so TagLib Fast reports a non-zero length.
+    QByteArray frame(104, '\0');
+    frame[0] = char(0xFF);
+    frame[1] = char(0xFB);
+    frame[2] = char(0x10);
+    frame[3] = char(0xC4);
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly))
+        return QString();
+    for (int i = 0; i < 100; ++i)
+        f.write(frame);
+    f.close();
+    return path;
+}
+
 void TestPlaylist::testDurationProbeOneAtATime() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
-    QFile first(dir.filePath(QStringLiteral("a.mp3")));
-    QVERIFY(first.open(QIODevice::WriteOnly));
-    first.write("a");
-    first.close();
-    QFile second(dir.filePath(QStringLiteral("b.mp3")));
-    QVERIFY(second.open(QIODevice::WriteOnly));
-    second.write("b");
-    second.close();
+    const QString firstPath = makeTinyMp3(dir.filePath(QStringLiteral("a.mp3")));
+    const QString secondPath = makeTinyMp3(dir.filePath(QStringLiteral("b.mp3")));
+    QVERIFY(!firstPath.isEmpty());
+    QVERIFY(!secondPath.isEmpty());
 
     const QString ini = dir.filePath(QStringLiteral("playlist.ini"));
     {
         QSettings saved(ini, QSettings::IniFormat);
         saved.beginGroup(QStringLiteral("Playlist"));
         saved.setValue(QStringLiteral("trackList"),
-                       QStringList() << first.fileName()
+                       QStringList() << firstPath
                                      << QStringLiteral("http://example.com/stream.mp3")
-                                     << second.fileName());
+                                     << secondPath);
         saved.endGroup();
     }
 
@@ -619,25 +632,34 @@ void TestPlaylist::testDurationProbeOneAtATime() {
     playlist.loadSettings(loaded);
     QCOMPARE(playlist.trackCount(), 3);
     QVERIFY(playlist.durationProbeActive);
-    QCOMPARE(playlist.durationProbePath, first.fileName());
-    QCOMPARE(playlist.durationProbeQueue, QStringList() << second.fileName());
+    QCOMPARE(playlist.durationProbePath, firstPath);
+    QCOMPARE(playlist.durationProbeQueue, QStringList() << secondPath);
     QVERIFY(playlist.durationProbeTimer);
     QVERIFY(playlist.durationProbeTimer->isActive());
 
     const quint64 serial = playlist.durationProbeSerial;
     playlist.onDurationProbeTimeout();
     QVERIFY(playlist.durationProbeTimer->isActive());
-    QCOMPARE(playlist.durationProbePath, second.fileName());
+    QCOMPARE(playlist.durationProbePath, secondPath);
     QVERIFY(playlist.durationProbeQueue.isEmpty());
     QVERIFY(playlist.durationProbeSerial != serial);
+    QVERIFY(playlist.trackDurations.at(0) > 0);
 
-    // The player source is the second file. A LoadedMedia signal that does not
-    // belong to the probe path must not record a duration or start another probe.
-    playlist.durationProbePath = first.fileName();
-    playlist.onDurationProbeStatus(QMediaPlayer::LoadedMedia);
-    QCOMPARE(playlist.trackDurations.at(0), static_cast<qint64>(0));
-    QCOMPARE(playlist.durationProbePath, first.fileName());
+    // cancelDurationProbes must drop the in-flight path; a late timeout is a no-op.
+    playlist.cancelDurationProbes();
+    QVERIFY(playlist.durationProbePath.isEmpty());
+    QVERIFY(!playlist.durationProbeActive);
+    playlist.onDurationProbeTimeout();
+    QVERIFY(playlist.durationProbePath.isEmpty());
     QVERIFY(playlist.durationProbeQueue.isEmpty());
+
+    // Re-queue both locals and let the event loop finish TagLib probes.
+    playlist.durationProbeQueue << firstPath << secondPath;
+    playlist.startNextDurationProbe();
+    QTRY_VERIFY(!playlist.durationProbeActive);
+    QVERIFY(playlist.trackDurations.at(0) > 0);
+    QVERIFY(playlist.trackDurations.at(2) > 0);
+    QVERIFY(!playlist.totalTimeStr.contains(QStringLiteral("0m 00s")));
 }
 
 void TestPlaylist::testSkinArchiveNestedAndRefresh() {
