@@ -16,6 +16,7 @@ Thank you for helping improve a native classic Winamp experience on Linux. This 
 8. [Where to put changes](#8-where-to-put-changes)
 9. [Pull request checklist](#9-pull-request-checklist)
 10. [Debugging tips](#10-debugging-tips)
+11. [Reference moved from the README](#11-reference-moved-from-the-readme)
 
 ---
 
@@ -389,6 +390,194 @@ mv ~/.config/winamp ~/.config/winamp.bak.$(date +%s)
 | MPRIS / media keys dead | Qt 6 build? `Qt6DBus` found at configure time? |
 | Visualization blank | `libprojectM` + `projectm-data` installed |
 | Skin looks wrong | Classic vs modern path; bitmap load paths in `WinampBitmaps::loadAll` |
+
+---
+
+## 11. Reference moved from the README
+
+The front page stays short. The notes below used to live in `README.md`.
+
+### AppImage
+
+The v1.4.0 release attaches `Winamp-1.4.0-x86_64.AppImage` and `Winamp-1.4.0-x86_64.AppImage.zsync`. The release workflow builds it on Ubuntu 22.04 (glibc 2.35) with `packaging/appimage/build-appimage.sh`: linuxdeploy, the Qt plugin, and the GStreamer plugin. The file bundles that image’s Qt 6.2 (xcb, Wayland, and offscreen platform plugins), image formats, the OpenSSL TLS plugin, GStreamer (including libav, plus HarfBuzz and FriBidi so the decoder loads), TagLib, projectM presets, and a desktop file plus icon and AppStream metadata (`io.github.lord3nd3r.winamp`).
+
+Ubuntu 22.04’s Qt is 6.2, which is older than 6.8, so this build has no PCM tap: audio plays, and spectrum, EQ processing, Milkdrop samples, and balance stay inactive (` (NO TAP)` on the balance readout). OpenGL stays on the host (`libOpenGL.so.0`, packages such as `libopengl0` / `libgl1`). Plugins need a host `python3`; the interpreter is not inside the AppImage.
+
+```bash
+chmod +x Winamp-1.4.0-x86_64.AppImage
+./Winamp-1.4.0-x86_64.AppImage
+./Winamp-1.4.0-x86_64.AppImage --version
+```
+
+If FUSE is missing, `APPIMAGE_EXTRACT_AND_RUN=1 ./Winamp-1.4.0-x86_64.AppImage`.
+
+### Runtime packages
+
+Decoding is provided by the Qt Multimedia backend. On Debian and Ubuntu that is usually GStreamer:
+
+```bash
+sudo apt-get install -y \
+  gstreamer1.0-plugins-good \
+  gstreamer1.0-plugins-bad \
+  gstreamer1.0-plugins-ugly \
+  gstreamer1.0-libav
+```
+
+A distro package also needs the system copies of the libraries it links. The AppImage already carries Qt, TagLib, projectM, and GStreamer.
+
+```bash
+sudo apt-get install -y libprojectm3 libqt6multimediawidgets6 libqt6openglwidgets6 libtag2
+```
+
+Ubuntu 26.10 (stonking) ships `libprojectm3` 3.1.12 (`libprojectm-dev`). That `.deb` depends on `libprojectm3`, not the older `libprojectm2v5`. Fedora 45’s RPM is built on `fedora:45` and links FFmpeg 9 `libavutil.so.61`. The Fedora 44 RPM still needs `libavutil.so.60`.
+
+| Package | Role |
+|---------|------|
+| `qt6-base-dev`, `libqt6opengl6-dev`, multimedia | UI + OpenGL + playback. Qt 6.8+ enables the PCM tap (spectrum, EQ, Milkdrop, balance) |
+| `libprojectm-dev`, `projectm-data` | Milkdrop-compatible visualizations |
+| `libtag1-dev` | ID3v1/v2 + multi-format tag read and write (File Info / Alt+3). MP3 writes ID3v2.3 |
+| `libavutil-dev` | Optional. When `pkg-config` finds it, CMake defines `HAVE_AVUTIL` and the player sets FFmpeg’s log level to error. Fedora’s package is `libavutil-free-devel`; openSUSE’s is `libavutil-devel` |
+| `python3` | Out-of-process plugin host (not linked into the binary) |
+| `file`, `dpkg-dev` | CPack `.deb` packaging helpers |
+
+Qt 5 fallback packages on Debian/Ubuntu: `qtbase5-dev`, `qtmultimedia5-dev`, `libqt5opengl5-dev`, `libqt5multimedia5-plugins`. Configure with `-DCMAKE_DISABLE_FIND_PACKAGE_Qt6=ON`. Qt 5 builds disable MPRIS2. Qt 5 also has no `QAudioBufferOutput`, so spectrum, EQ processing, Milkdrop samples, and balance follow the older-Qt path.
+
+### Install layout
+
+```bash
+cmake --install build-qt6 --prefix /usr/local
+```
+
+| Path | Content |
+|------|---------|
+| `bin/winamp` | Executable |
+| `share/applications/winamp.desktop` | Desktop entry |
+| `share/icons/hicolor/*/apps/winamp.png` | Themed app icon (16-256px) |
+| `share/winamp/skins/` | Skins |
+| `share/winamp/resource/` | Classic resource bitmaps |
+| `share/winamp/lang/` | Language packs |
+| `share/metainfo/io.github.lord3nd3r.winamp.metainfo.xml` | AppStream metadata |
+
+### Containerized package build
+
+```bash
+docker run --rm -it -v "$(pwd)":/workspace -w /workspace ubuntu:24.04 bash
+# inside:
+apt-get update && apt-get install -y \
+  cmake ninja-build build-essential \
+  qt6-base-dev qt6-multimedia-dev \
+  libprojectm-dev projectm-data libtag1-dev libavutil-dev python3 \
+  libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+  libgl1-mesa-dev file dpkg-dev git
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DWINAMP_DISTRO_ID=ubuntu-24.04
+ninja -C build package
+```
+
+### Arch
+
+Playback, the spectrum and EQ (the PCM tap), and Milkdrop were tested on real Arch hardware with Qt 6 and projectM 3.1.12.
+
+Extra has two different libraries. Install **`projectm` 3.1.12** (`libprojectM` 3.x). Do not use **`libprojectm` 4.1.8**, and do not use the AUR package `projectm-git` (that tree is projectM 4). There is no separate AUR package that still builds 3.1.12; `projectm` in Extra is the 3.x package.
+
+```bash
+sudo pacman -S --needed base-devel cmake ninja \
+  qt6-base qt6-multimedia qt6-svg qt6-tools \
+  taglib ffmpeg python pkgconf projectm
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+ninja -C build
+```
+
+Or install the release package: `sudo pacman -U winamp-1.4.0-arch.pkg.tar.zst`. The PKGBUILD is `packaging/arch/PKGBUILD` and lists `projectm` in `depends`.
+
+### Command line
+
+```text
+winamp [options] [files-or-directories...]
+```
+
+| Argument | Behavior |
+|----------|----------|
+| `-h` / `--help` | Print usage and exit |
+| `--version` | Print `Winamp 1.4.0` and exit |
+| *file* | Add to playlist; plays the first file unless `-enqueue` |
+| *directory* | Scan/add folder asynchronously |
+| `-enqueue` / `--enqueue` | Add only; do not auto-start playback |
+| `-play` / `--play` | Prefer play after enqueue (default for files) |
+| `-pause` / `--pause` | Pause if currently playing |
+| `-stop` / `--stop` | Stop playback |
+| `--tui` / `--cli` | Run in the terminal instead of the GUI |
+
+```bash
+./build-qt6/winamp ~/Music/album/*.flac
+./build-qt6/winamp -enqueue ~/Music/incoming/
+./build-qt6/winamp "https://example.com/stream.mp3"
+```
+
+### Terminal mode (`--tui`)
+
+A terminal front-end renders a classic-styled UI in the console: seven-segment time, a color spectrum, kbps/kHz/stereo, and transport/volume/seek bars. It drives the same playback engine as the GUI (gapless, streaming, EQ). No X/Wayland display is required.
+
+```bash
+winamp --tui ~/Music/album/*.flac
+winamp --cli ~/Music/
+winamp --tui "https://example.com/stream.mp3"
+```
+
+| Key | Action | Key | Action |
+|-----|--------|-----|--------|
+| `z` | previous track | `space` | play / pause toggle |
+| `x` | play / resume | `c` | pause toggle |
+| `v` | stop | `b` | next track |
+| `←` / `→` | seek −5s / +5s | `+` / `−` | volume down / up |
+| `↑` / `↓` | volume up / down | `q` (or `Ctrl-C`) | quit |
+
+Mouse (xterm mouse tracking): click the transport glyphs, drag the position bar to seek, drag the volume bar or use the scroll wheel. Backend diagnostics go to `~/.cache/winamp/winamp-tui.log`.
+
+### Paths
+
+| Path | Purpose |
+|------|---------|
+| `~/.config/winamp/winamp.conf` | Main INI settings (geometry, playback, EQ, playlist) |
+| `~/.config/winamp/plugins/` | User Python plugins (`*.py`) |
+| `~/.config/winamp/bookmarks.txt` | Bookmarks |
+| `~/.cache/winamp/` | Plugin host script, extracted skins, `--tui` log |
+| `/usr/share/winamp/` | System skins, resources, languages when installed |
+
+Plugins run in a separate `python3` process (JSON-RPC on stdin/stdout). That is process isolation, not an OS sandbox. Full API: [PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md). Settings keys: [CONFIGURATION.md](CONFIGURATION.md).
+
+### Repository layout
+
+```text
+winamp-linux/
+├── src/                  # main, window, playlist, EQ, tags, plugins, MPRIS
+├── tests/                # Qt Test suites
+├── plugins/examples/     # Example Python plugins
+├── skins/default/        # Default classic skin
+├── assets/               # Classic resource bitmaps
+├── icons/hicolor/        # Themed app icon
+├── lang/                 # Translation packs
+├── docs/images/          # Banner and illustrations
+├── packaging/appimage/   # AppImage script (Ubuntu 22.04)
+├── packaging/arch/       # PKGBUILD (depends on projectm 3.1.12)
+├── packaging/linux/      # AppStream metainfo
+└── CMakeLists.txt
+```
+
+### Hardening
+
+- Compiler flags: `-Wall -Wextra -Wpedantic`, `-fstack-protector-strong`, `_FORTIFY_SOURCE=2` (skipped when the toolchain already defines `_FORTIFY_SOURCE`, as Arch `makepkg` does).
+- HTTP streams: redirect policy, max 5 redirects, 15s transfer timeout.
+- Modern skin XML: include recursion depth limit and circular-include detection.
+- Python plugins are not sandboxed (no seccomp, filesystem jail, or network policy).
+
+### Known limits
+
+- Classic skins are the primary path. Modern/XML skins are limited.
+- Spectrum, EQ processing, Milkdrop samples, and balance need Qt 6.8 `QAudioBufferOutput`. Qt 5 and Qt 6 before 6.8 (Ubuntu 22.04’s 6.2, Ubuntu 24.04’s 6.4, Debian Bookworm, and the AppImage) compile that path out. Playback continues through `QAudioOutput`. Fedora 43, Fedora 44, Fedora 45, openSUSE Tumbleweed, Ubuntu 26.10, and Arch in CI are new enough to build the tap.
+- On Qt 6.8+, changing tracks or quitting while a file is still opening waits until that open finishes or fails before the player is destroyed.
+- MPRIS2 is Qt 6 + DBus only.
+- Plugin restart backoff is 500 ms, 1 s, 2 s, 4 s, 8 s, then stop (five tries). Thirty seconds up resets the count.
 
 ---
 

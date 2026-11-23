@@ -8,6 +8,10 @@ Release package text that only repeats the distro matrix is summarized, not copi
 
 ## [Unreleased]
 
+### Changed
+
+- README is a short classic-Winamp front page. Build, CI, and packaging notes moved to CONTRIBUTING.md.
+
 ## [1.4.0] - 2026-11-23
 
 ### Added
