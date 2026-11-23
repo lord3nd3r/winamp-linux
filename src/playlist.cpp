@@ -510,13 +510,11 @@ void PlaylistWindow::cropSelected() {
 }
 
 void PlaylistWindow::removeDeadFiles() {
-    int removed = 0;
     for (int i = tracks.size() - 1; i >= 0; i--) {
         if (!isRemoteMediaLocation(tracks[i]) && !QFile::exists(tracks[i])) {
             tracks.removeAt(i);
             if (i < trackDurations.size())
                 trackDurations.removeAt(i);
-            removed++;
         }
     }
     rebuildListDisplay();

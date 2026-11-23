@@ -13,7 +13,7 @@ Release package text that only repeats the distro matrix is summarized, not copi
 ### Added
 
 - Ubuntu 26.10 (stonking) is in CI and the release matrix. Packages are `winamp-<version>-ubuntu-stonking.deb` and `.tar.gz`. That release ships libprojectm3 3.1.12, so the .deb depends on `libprojectm3` rather than `libprojectm2v5`.
-- Fedora 45 is in CI and the release matrix, with the same package set as Fedora 44. Packages are `winamp-<version>-fedora45.rpm` and `.tar.gz`.
+- Fedora 45 is in CI and the release matrix. Packages are `winamp-<version>-fedora45.rpm` and `.tar.gz`, built in `fedora:45` against FFmpeg 9 (`libavutil.so.61`). The Fedora 44 package still needs `libavutil.so.60` and is not a substitute.
 
 ### Fixed
 

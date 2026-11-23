@@ -242,7 +242,7 @@ Release assets are named per distro, for example:
 - `winamp-1.4.0-ubuntu-24.04.deb`
 - `winamp-1.4.0-ubuntu-stonking.deb` (Ubuntu 26.10; Depends includes `libprojectm3`)
 - `winamp-1.4.0-fedora-43.rpm`
-- `winamp-1.4.0-fedora45.rpm`
+- `winamp-1.4.0-fedora45.rpm` (built on Fedora 45; links FFmpeg 9 `libavutil.so.61`, not the Fedora 44 `libavutil.so.60`)
 - matching `.tar.gz` for each matrix entry
 - `Winamp-1.4.0-x86_64.AppImage` and `Winamp-1.4.0-x86_64.AppImage.zsync` (Ubuntu 22.04 / Qt 6.2; see [AppImage](#appimage))
 
