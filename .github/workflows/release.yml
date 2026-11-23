@@ -39,6 +39,9 @@ jobs:
           - distro: ubuntu-resolute
             image: ubuntu:resolute@sha256:3131b4cc82a783df6c9df078f86e01819a13594b865c2cad47bd1bca2b7063bb
             family: deb
+          - distro: ubuntu-stonking
+            image: ubuntu:26.10@sha256:1c2a84ae3f2a24aeb97cded5b41f0211b441662f1a188cbd2e139e7625f6f1d6
+            family: deb
           - distro: debian-bookworm
             image: debian:bookworm@sha256:9344f8b8992482f80cba753f323adeaf17690076c095ccff6cc9536be98185dc
             family: deb
@@ -303,7 +306,7 @@ jobs:
 
             | Family | Distros |
             |--------|---------|
-            | **.deb** | Ubuntu 22.04, 24.04, Resolute · Debian Bookworm, Trixie |
+            | **.deb** | Ubuntu 22.04, 24.04, Resolute, 26.10 (stonking) · Debian Bookworm, Trixie |
             | **.rpm** | Fedora 43, 44 · openSUSE Tumbleweed |
             | **.tar.gz** | Same matrix (portable install layout) |
             | **AppImage** | `Winamp-<version>-x86_64.AppImage` (Ubuntu 22.04 base, Qt 6 + plugins, GStreamer, TagLib, projectM) and a `.zsync` update file |

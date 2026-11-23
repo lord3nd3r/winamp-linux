@@ -10,6 +10,10 @@ Release package text that only repeats the distro matrix is summarized, not copi
 
 ## [1.4.0] - 2026-11-23
 
+### Added
+
+- Ubuntu 26.10 (stonking) is in CI and the release matrix. Packages are `winamp-<version>-ubuntu-stonking.deb` and `.tar.gz`. That release ships libprojectm3 3.1.12, so the .deb depends on `libprojectm3` rather than `libprojectm2v5`.
+
 ### Fixed
 
 - Quitting after a gapless track change no longer crashes on Qt 6.8+ when the PCM tap is enabled. The audio buffer output was destroyed after the player it still pointed at.
