@@ -6,6 +6,7 @@ set -euo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
 pkgver=$(sed -n 's/^pkgver=//p' "$root/packaging/arch/PKGBUILD")
+git config --global --add safe.directory "$root"
 work=$(mktemp -d)
 cp "$root/packaging/arch/PKGBUILD" "$work/"
 git -C "$root" archive --format=tar.gz --prefix="winamp-linux-${pkgver}/" \
