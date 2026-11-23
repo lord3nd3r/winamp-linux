@@ -234,8 +234,8 @@ Default install layout (CMake `install` rules):
 
 | Workflow | When | Distros |
 |----------|------|---------|
-| **CI** (`.github/workflows/ci.yml`) | Push / PR to `master` | Ubuntu 22.04, 24.04, and 26.10 (stonking), Debian Bookworm, Fedora 43, 44, and 45, openSUSE Tumbleweed — Qt 6 build + test. A separate `ubuntu-22.04-qt5` job configures with `-DCMAKE_DISABLE_FIND_PACKAGE_Qt6=ON`. Every job installs libavutil (`libavutil-dev`, Fedora `libavutil-free-devel`, openSUSE `libavutil-devel`) and requires the `libavutil found - HAVE_AVUTIL` configure line |
-| **Release** (`.github/workflows/release.yml`) | Tags `v*` or manual dispatch | Ubuntu 22.04 / 24.04 / Resolute / 26.10 (stonking), Debian Bookworm / Trixie, Fedora 43 / 44 / 45, openSUSE Tumbleweed — packages. The `appimage` job (Ubuntu 22.04) builds `Winamp-<version>-x86_64.AppImage` and its `.zsync`. A `v*` tag publishes both with the distro packages |
+| **CI** (`.github/workflows/ci.yml`) | Push / PR to `master` | Ubuntu 22.04, 24.04, and 26.10 (stonking), Debian Bookworm, Fedora 43, 44, and 45, openSUSE Tumbleweed, and Arch Linux — Qt 6 build + test. A separate `ubuntu-22.04-qt5` job configures with `-DCMAKE_DISABLE_FIND_PACKAGE_Qt6=ON`. Every job installs libavutil and requires the `libavutil found - HAVE_AVUTIL` configure line |
+| **Release** (`.github/workflows/release.yml`) | Tags `v*` or manual dispatch | Ubuntu 22.04 / 24.04 / Resolute / 26.10 (stonking), Debian Bookworm / Trixie, Fedora 43 / 44 / 45, openSUSE Tumbleweed, and Arch Linux — packages. The `appimage` job (Ubuntu 22.04) builds `Winamp-<version>-x86_64.AppImage` and its `.zsync`. A `v*` tag publishes both with the distro packages |
 
 Release assets are named per distro, for example:
 
@@ -243,10 +243,25 @@ Release assets are named per distro, for example:
 - `winamp-1.4.0-ubuntu-stonking.deb` (Ubuntu 26.10; Depends includes `libprojectm3`)
 - `winamp-1.4.0-fedora-43.rpm`
 - `winamp-1.4.0-fedora45.rpm` (built on Fedora 45; links FFmpeg 9 `libavutil.so.61`, not the Fedora 44 `libavutil.so.60`)
+- `winamp-1.4.0-arch.pkg.tar.zst` and `winamp-1.4.0-arch.tar.gz`
 - matching `.tar.gz` for each matrix entry
 - `Winamp-1.4.0-x86_64.AppImage` and `Winamp-1.4.0-x86_64.AppImage.zsync` (Ubuntu 22.04 / Qt 6.2; see [AppImage](#appimage))
 
-**Not packaged in CI:** Arch Linux (repo only ships **projectM 4.x**; this tree still uses the classic 3.x `libprojectM` C++ API). Build from source on Arch once a compatible `libprojectM` is available, or vendor the 3.x library.
+### Arch Linux
+
+Playback, the spectrum and EQ (the PCM tap), and Milkdrop were tested on real Arch hardware with Qt 6 and projectM 3.1.12.
+
+Extra has two different libraries. Install **`projectm` 3.1.12** (`libprojectM` 3.x). Do not use **`libprojectm` 4.1.8**, and do not use the AUR package `projectm-git` (that tree is projectM 4). There is no separate AUR package that still builds 3.1.12; `projectm` in Extra is the 3.x package.
+
+```bash
+sudo pacman -S --needed base-devel cmake ninja \
+  qt6-base qt6-multimedia qt6-svg qt6-tools \
+  taglib ffmpeg python pkgconf projectm
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+ninja -C build
+```
+
+Or install the release package: `sudo pacman -U winamp-1.4.0-arch.pkg.tar.zst`. The PKGBUILD is `packaging/arch/PKGBUILD` and lists `projectm` in `depends`.
 
 ### Containerized package build
 
@@ -423,7 +438,7 @@ Architecture diagram and contribution workflow: **[CONTRIBUTING.md](CONTRIBUTING
 These are intentional or inherited constraints, not silent omissions:
 
 - **Classic skins first** — modern Winamp 5 skin support is limited; classic is the primary path.
-- **Qt 6.8 PCM tap** — spectrum, EQ processing, Milkdrop samples, and balance need `QAudioBufferOutput`. Qt 5 and Qt 6 before 6.8 (Ubuntu 22.04’s 6.2, Ubuntu 24.04’s 6.4, Debian Bookworm, and the AppImage) compile that path out. Playback continues through `QAudioOutput`. Fedora 43, Fedora 44, Fedora 45, openSUSE Tumbleweed, and Ubuntu 26.10 (stonking) in CI are new enough to build the tap.
+- **Qt 6.8 PCM tap** — spectrum, EQ processing, Milkdrop samples, and balance need `QAudioBufferOutput`. Qt 5 and Qt 6 before 6.8 (Ubuntu 22.04’s 6.2, Ubuntu 24.04’s 6.4, Debian Bookworm, and the AppImage) compile that path out. Playback continues through `QAudioOutput`. Fedora 43, Fedora 44, Fedora 45, openSUSE Tumbleweed, Ubuntu 26.10 (stonking), and Arch Linux in CI are new enough to build the tap. On Arch that tap, plus Milkdrop, was confirmed on real hardware.
 - **Qt 6.8+ FFmpeg opens** — replacing a track or quitting while a file is still opening waits until that open finishes or fails, then delivers the completion, before the player is destroyed. The gapless playback test covers this on the FFmpeg backend and is not skipped.
 - **MPRIS2 on Qt 6 only** — Qt 5 builds skip the DBus media player interface.
 - **Plugin process isolation** — a separate `python3` process, not an OS sandbox (no seccomp, cgroup, or filesystem jail). Restart backoff is 500 ms, 1 s, 2 s, 4 s, 8 s, then stop (five tries). Thirty seconds up resets the count.

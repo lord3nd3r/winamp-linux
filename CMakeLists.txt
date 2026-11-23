@@ -91,7 +91,11 @@ target_compile_options(winamp PRIVATE
 target_compile_options(winamp PRIVATE
     -fstack-protector-strong
 )
-target_compile_definitions(winamp PRIVATE _FORTIFY_SOURCE=2)
+# Arch makepkg already passes -D_FORTIFY_SOURCE=3. Defining 2 as well
+# makes GCC 16 warn that the macro is redefined.
+if(NOT CMAKE_CXX_FLAGS MATCHES "_FORTIFY_SOURCE")
+    target_compile_definitions(winamp PRIVATE _FORTIFY_SOURCE=2)
+endif()
 
 # Python plugins run in an out-of-process host (python3 + JSON-RPC).
 # No embedded interpreter / pybind11 link required.

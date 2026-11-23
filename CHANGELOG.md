@@ -14,6 +14,7 @@ Release package text that only repeats the distro matrix is summarized, not copi
 
 - Ubuntu 26.10 (stonking) is in CI and the release matrix. Packages are `winamp-<version>-ubuntu-stonking.deb` and `.tar.gz`. That release ships libprojectm3 3.1.12, so the .deb depends on `libprojectm3` rather than `libprojectm2v5`.
 - Fedora 45 is in CI and the release matrix. Packages are `winamp-<version>-fedora45.rpm` and `.tar.gz`, built in `fedora:45` against FFmpeg 9 (`libavutil.so.61`). The Fedora 44 package still needs `libavutil.so.60` and is not a substitute.
+- Arch Linux is in CI and the release matrix. Packages are `winamp-<version>-arch.pkg.tar.zst` and `.tar.gz`. The dependency is Extra's `projectm` 3.1.12, not `libprojectm` 4.x. Playback, the PCM tap, and Milkdrop were tested on real Arch hardware.
 
 ### Fixed
 

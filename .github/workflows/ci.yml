@@ -126,6 +126,28 @@ jobs:
           export QT_QPA_PLATFORM=offscreen
           ctest --test-dir build --output-on-failure
 
+  # Extra still ships projectm 3.1.12. libprojectm is 4.x and is not usable here.
+  arch:
+    name: arch
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest@sha256:d4594bb2300cba11f41c2f27923eb56f63d9988909c402f9c95517d1e362c899
+    steps:
+      - name: Install build dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed \
+            base-devel git cmake ninja \
+            qt6-base qt6-multimedia qt6-svg qt6-tools \
+            taglib ffmpeg python pkgconf projectm
+          pkg-config --modversion libprojectM | grep -q '^3\.'
+
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Build, test, and package
+        run: packaging/arch/build-package.sh
+
   # Qt 5 is the documented fallback. The matrix above always finds Qt 6, so
   # this job is what actually configures and builds that path.
   qt5:

@@ -1,0 +1,44 @@
+# Maintainer: Kristopher Craig <lord3nd3r@users.noreply.github.com>
+pkgname=winamp
+pkgver=1.4.0
+pkgrel=1
+pkgdesc='Classic Winamp media player for Linux'
+arch=('x86_64')
+url='https://github.com/lord3nd3r/winamp-linux'
+license=('GPL-2.0-or-later')
+# Extra package projectm is 3.1.12 (libprojectM.so.3). libprojectm is 4.x
+# and does not provide this API. AUR projectm-git tracks 4.x as well.
+depends=(
+  'qt6-base'
+  'qt6-multimedia'
+  'taglib'
+  'ffmpeg'
+  'projectm'
+  'python'
+  'zlib'
+  'hicolor-icon-theme'
+)
+makedepends=('cmake' 'ninja' 'pkgconf' 'qt6-tools' 'qt6-svg')
+options=('!debug')
+source=("winamp-${pkgver}.tar.gz::https://github.com/lord3nd3r/winamp-linux/archive/refs/tags/v${pkgver}.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cmake -S "winamp-linux-${pkgver}" -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DWINAMP_DISTRO_ID=arch \
+    -DCPACK_GENERATOR=TGZ
+  cmake --build build
+  cmake --build build --target package
+}
+
+check() {
+  QT_QPA_PLATFORM=offscreen ctest --test-dir build --output-on-failure
+}
+
+package() {
+  DESTDIR="${pkgdir}" cmake --install build
+  install -Dm644 "winamp-linux-${pkgver}/LICENSE.md" \
+    "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE.md"
+}
