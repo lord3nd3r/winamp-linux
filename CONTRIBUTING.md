@@ -224,13 +224,13 @@ CI uses a smaller matrix (Ubuntu 22.04/24.04, Debian Bookworm, Fedora 43 and 44,
 
 ### AppImage
 
-`packaging/appimage/build-appimage.sh` produces `Winamp-<version>-x86_64.AppImage`. The release workflow runs it on Ubuntu 22.04 (glibc 2.35, Qt 6.2.4) with `APPIMAGE_SMOKE=1`. A tag named `v1.3.1` sets `VERSION=1.3.1`, so the artifact is `Winamp-1.3.1-x86_64.AppImage` plus a `.zsync` file (`gh-releases-zsync`). linuxdeploy plus the Qt and GStreamer plugins bundle platforms (xcb, Wayland, offscreen), image formats, OpenSSL, GStreamer, TagLib, projectM presets, HarfBuzz, and FriBidi. OpenGL and `python3` stay on the host. Because that Qt is 6.2, the AppImage is a no-tap build: spectrum, EQ processing, Milkdrop samples, and balance are compiled out.
+`packaging/appimage/build-appimage.sh` produces `Winamp-<version>-x86_64.AppImage`. The release workflow runs it on Ubuntu 22.04 (glibc 2.35, Qt 6.2.4) with `APPIMAGE_SMOKE=1`. A tag named `v1.4.0` sets `VERSION=1.4.0`, so the artifact is `Winamp-1.4.0-x86_64.AppImage` plus a `.zsync` file (`gh-releases-zsync`). linuxdeploy plus the Qt and GStreamer plugins bundle platforms (xcb, Wayland, offscreen), image formats, OpenSSL, GStreamer, TagLib, projectM presets, HarfBuzz, and FriBidi. OpenGL and `python3` stay on the host. Because that Qt is 6.2, the AppImage is a no-tap build: spectrum, EQ processing, Milkdrop samples, and balance are compiled out.
 
 Smoke coverage in the script: `--help`, `--version`, an offscreen launch, and `--cli` against a generated WAV. A `v*` tag attaches the AppImage to the GitHub release; `workflow_dispatch` uploads it as an artifact only.
 
 ### Version
 
-`project(Winamp VERSION 1.3.1 ...)` in `CMakeLists.txt` plus `WINAMP_VERSION_FULL` (`1.3.1`) and `kWinampVersion` in `src/constants.h` must stay aligned with **GitHub release tags**. Bump all three when cutting a release, and record the user-visible changes in [CHANGELOG.md](CHANGELOG.md). The AppImage filename uses that same version (`Winamp-1.3.1-x86_64.AppImage`).
+`project(Winamp VERSION 1.4.0 ...)` in `CMakeLists.txt` plus `WINAMP_VERSION_FULL` (`1.4.0`) and `kWinampVersion` in `src/constants.h` must stay aligned with **GitHub release tags**. Bump all three when cutting a release, and record the user-visible changes in [CHANGELOG.md](CHANGELOG.md). The AppImage filename uses that same version (`Winamp-1.4.0-x86_64.AppImage`).
 
 ---
 
@@ -276,8 +276,8 @@ flowchart TB
 | Component | Location | Responsibility |
 |-----------|----------|----------------|
 | Entry / CLI | `src/main.cpp` | `QApplication`, splash, skin bootstrap, CLI args, owns `PythonPluginManager` |
-| Main chrome | `src/winamp_window.h` | Player(s), volume/balance, skin painting, tray, HTTP streams, settings save/load |
-| Playlist | `src/playlist.{h,cpp}` | Track list, sort, drop, async folder + duration probe |
+| Playlist | `src/playlist.{h,cpp}` | Track list, sort, drop, async folder add. Local durations come from TagLib, one file per event-loop tick |
+| Main chrome | `src/winamp_window.h` | Player(s), volume/balance, skin painting, song ticker (bitmap font, system font when a glyph is missing), tray, HTTP streams, settings save/load |
 | Equalizer UI | `src/equalizer.{h,cpp}` | 10 bands + preamp UI, snap-to-main |
 | EQ DSP | `src/eq_dsp.h` | EQ10 processing |
 | Plugins | `src/python_plugin.{h,cpp}` | Spawn host, dispatch RPC methods, restart backoff |

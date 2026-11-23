@@ -66,7 +66,7 @@ Written/read outside the grouped window sections:
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `skin` | string | Path to active skin directory or package |
+| `skin` | string | Last selected skin: a directory, or a `.wsz` / `.zip` / `.wal` file. Restored at startup. If the path is missing, the default skin is used |
 | `language` | string | Language code (default `en`); UI language packs under `lang/` |
 
 ---
@@ -152,6 +152,8 @@ Classic skins are directories or archives of bitmap resources: `MAIN.BMP`, `CBUT
 `.wsz`, `.zip`, and `.wal` packs are ordinary zip files. `extractSkinArchive()` in `constants.h` reads them with zlib. The `unzip` program is not used. Nested directories inside the archive are kept, and the loader then looks for the bitmap root (or `skin.xml`) inside that tree. Archives larger than 128 MB, or with more than 512 entries, are rejected.
 
 Extracts land in `~/.cache/winamp/skins/<archive base name>/`. A `.source-stamp` file records size, mtime, and SHA-256. A later launch reuses the cache only when all three still match; otherwise the directory is deleted and extracted again.
+
+The `skin` key stores the path you selected (the archive or the folder), not only the cache directory. Startup extracts an archive again from that path. A missing file falls back to the built-in default skin.
 
 **Search order (typical):**
 

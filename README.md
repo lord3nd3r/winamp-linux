@@ -4,7 +4,7 @@
 
 **A native classic Winamp 2.x–style media player for modern Linux desktops.**
 
-**Current release: [v1.3.1](https://github.com/lord3nd3r/winamp-linux/releases/tag/v1.3.1).** Changes by version are in [CHANGELOG.md](CHANGELOG.md).
+**Current release: [v1.4.0](https://github.com/lord3nd3r/winamp-linux/releases/tag/v1.4.0).** Changes by version are in [CHANGELOG.md](CHANGELOG.md).
 
 Built in **C++17** with **Qt 6** (Qt 5 fallback), faithful classic skins, a real 10-band EQ, gapless dual-player audio, out-of-process Python plugins, and desktop integration via MPRIS2.
 
@@ -17,7 +17,7 @@ Built in **C++17** with **Qt 6** (Qt 5 fallback), faithful classic skins, a real
   <img src="https://img.shields.io/badge/C%2B%2B-17-00599C?style=flat-square&logo=cplusplus&logoColor=white" alt="C++17">
   <img src="https://img.shields.io/badge/Qt-6%20%2F%205-41CD52?style=flat-square&logo=qt&logoColor=white" alt="Qt 6/5">
   <img src="https://img.shields.io/badge/platform-Linux-FCC624?style=flat-square&logo=linux&logoColor=black" alt="Linux">
-  <img src="https://img.shields.io/badge/version-1.3.1-00FF00?style=flat-square" alt="Version 1.3.1">
+  <img src="https://img.shields.io/badge/version-1.4.0-00FF00?style=flat-square" alt="Version 1.4.0">
 </p>
 
 <p align="center">
@@ -46,7 +46,7 @@ Classic Winamp defined how a generation listened to music on the desktop: skinna
 | **ID3 tags (Winamp 2.x)** | Read/write via TagLib: File Info (Alt+3), playlist “Artist - Title”, sort by title. MP3 saves **ID3v2.3** and an ID3v1 tag. v1 is Latin-1, truncated to 30 bytes (title, artist, album) or 28 (comment). A year outside 1–9999 is left unset. A track outside 1–255 is stored as 0 on v1. |
 | **Gapless dual-player** | Next track is preloaded on a second `QMediaPlayer` and swapped at end-of-track to reduce silence between songs. |
 | **URL / radio streams** | HTTP(S) and related schemes via `QNetworkAccessManager`, with redirect limits and request timeouts. |
-| **Playlists** | `.m3u`, `.m3u8`, and `.pls`. Every M3U line and every PLS `FileN=` entry is enqueued. Relative paths resolve against the playlist. A remote playlist is fetched and every entry is added (nested playlists, up to 3 hops). Only an explicit `http`, `https`, `icy`, or `ftp` scheme counts as remote. |
+| **Playlists** | `.m3u`, `.m3u8`, and `.pls`. Every M3U line and every PLS `FileN=` entry is enqueued. Relative paths resolve against the playlist. A remote playlist is fetched and every entry is added (nested playlists, up to 3 hops). Only an explicit `http`, `https`, `icy`, or `ftp` scheme counts as remote. The footer total is the sum of local track lengths read with TagLib (a fast header read), not `QMediaPlayer`. |
 | **Volume & balance** | Classic 0–255 volume, persisted. Stereo balance is applied on the Qt 6.8 PCM tap. On older Qt the slider still moves and the readout gains ` (NO TAP)`; the pan is left at center in the audio. |
 | **Shuffle / repeat** | Playlist shuffle. The classic repeat button, the `R` key, and the modern repeat control share one cycle: off → repeat all → repeat one → off. |
 | **Stop after current** | Optional stop when the playing track ends. |
@@ -54,12 +54,12 @@ Classic Winamp defined how a generation listened to music on the desktop: skinna
 ### Classic UI & skins
 | Feature | Details |
 |---------|---------|
-| **Classic skin engine** | Loads classic Winamp bitmaps from a folder or from `.wsz` / `.zip` / `.wal` packs. Archives are read in-process with zlib (no `unzip` program). Nested folders are kept. `~/.cache/winamp/skins/` is rebuilt when the archive’s size, mtime, or SHA-256 changes. |
+| **Classic skin engine** | Loads classic Winamp bitmaps from a folder or from `.wsz` / `.zip` / `.wal` packs. Archives are read in-process with zlib (no `unzip` program). Nested folders are kept. `~/.cache/winamp/skins/` is rebuilt when the archive’s size, mtime, or SHA-256 changes. The path you pick in Preferences is saved and restored on the next launch. If that file or folder is gone, the built-in default skin is used. |
 | **Default skin** | Ships with classic assets under `assets/` and `skins/default/`. |
 | **Window snapping** | Main, equalizer, and playlist windows snap and follow each other like the original on X11 and XWayland. Native Wayland does not dock them (the compositor ignores client `move()`). A playlist beside the main window keeps its own height. |
 | **Double size & shade** | Double-size mode and shade (title-bar compact) modes. |
 | **Always on top** | Optional stay-on-top for the main window. |
-| **System tray** | Tray icon, minimize-to-tray options, and song-change notifications. |
+| **Song ticker** | The scrolling title on the main window uses the skin’s `text.bmp` for titles that font can draw. If the title contains a character with no bitmap glyph (for example Cyrillic), the whole ticker is drawn with a small system font instead. ASCII titles stay on the bitmap font. |
 | **Spectrum analyzer** | Logarithmic spectrum matching classic Winamp band mapping (`sa_tab[]`-style distribution). Live bars need the Qt 6.8 PCM tap; older Qt draws the chrome with no samples. |
 
 ### Equalizer
@@ -101,17 +101,17 @@ Classic Winamp defined how a generation listened to music on the desktop: skinna
 
 ### AppImage
 
-The v1.3.1 release attaches `Winamp-1.3.1-x86_64.AppImage` and `Winamp-1.3.1-x86_64.AppImage.zsync`. The release workflow builds it on Ubuntu 22.04 (glibc 2.35) with `packaging/appimage/build-appimage.sh`: linuxdeploy, the Qt plugin, and the GStreamer plugin. The file bundles that image’s Qt 6.2 (xcb, Wayland, and offscreen platform plugins), image formats, the OpenSSL TLS plugin, GStreamer (including libav, plus HarfBuzz and FriBidi so the decoder loads), TagLib, projectM presets, and a desktop file plus icon and AppStream metadata (`io.github.lord3nd3r.winamp`).
+The v1.4.0 release attaches `Winamp-1.4.0-x86_64.AppImage` and `Winamp-1.4.0-x86_64.AppImage.zsync`. The release workflow builds it on Ubuntu 22.04 (glibc 2.35) with `packaging/appimage/build-appimage.sh`: linuxdeploy, the Qt plugin, and the GStreamer plugin. The file bundles that image’s Qt 6.2 (xcb, Wayland, and offscreen platform plugins), image formats, the OpenSSL TLS plugin, GStreamer (including libav, plus HarfBuzz and FriBidi so the decoder loads), TagLib, projectM presets, and a desktop file plus icon and AppStream metadata (`io.github.lord3nd3r.winamp`).
 
 Ubuntu 22.04’s Qt is 6.2, which is older than 6.8, so this build has no PCM tap: audio plays, and spectrum, EQ processing, Milkdrop samples, and balance stay inactive (` (NO TAP)` on the balance readout). OpenGL stays on the host (`libOpenGL.so.0`, packages such as `libopengl0` / `libgl1`). Plugins need a host `python3`; the interpreter is not inside the AppImage.
 
 ```bash
-chmod +x Winamp-1.3.1-x86_64.AppImage
-./Winamp-1.3.1-x86_64.AppImage
-./Winamp-1.3.1-x86_64.AppImage --version
+chmod +x Winamp-1.4.0-x86_64.AppImage
+./Winamp-1.4.0-x86_64.AppImage
+./Winamp-1.4.0-x86_64.AppImage --version
 ```
 
-If FUSE is missing, `APPIMAGE_EXTRACT_AND_RUN=1 ./Winamp-1.3.1-x86_64.AppImage`.
+If FUSE is missing, `APPIMAGE_EXTRACT_AND_RUN=1 ./Winamp-1.4.0-x86_64.AppImage`.
 
 ### Runtime dependencies (playback)
 
@@ -237,10 +237,10 @@ Default install layout (CMake `install` rules):
 
 Release assets are named per distro, for example:
 
-- `winamp-1.3.1-ubuntu-24.04.deb`
-- `winamp-1.3.1-fedora-43.rpm`
+- `winamp-1.4.0-ubuntu-24.04.deb`
+- `winamp-1.4.0-fedora-43.rpm`
 - matching `.tar.gz` for each matrix entry
-- `Winamp-1.3.1-x86_64.AppImage` and `Winamp-1.3.1-x86_64.AppImage.zsync` (Ubuntu 22.04 / Qt 6.2; see [AppImage](#appimage))
+- `Winamp-1.4.0-x86_64.AppImage` and `Winamp-1.4.0-x86_64.AppImage.zsync` (Ubuntu 22.04 / Qt 6.2; see [AppImage](#appimage))
 
 **Not packaged in CI:** Arch Linux (repo only ships **projectM 4.x**; this tree still uses the classic 3.x `libprojectM` C++ API). Build from source on Arch once a compatible `libprojectM` is available, or vendor the 3.x library.
 
@@ -271,7 +271,7 @@ winamp [options] [files-or-directories...]
 | Argument | Behavior |
 |----------|----------|
 | `-h` / `--help` | Print usage and exit |
-| `--version` | Print `Winamp 1.3.1` and exit |
+| `--version` | Print `Winamp 1.4.0` and exit |
 | *file* | Add to playlist; plays the first file unless `-enqueue` |
 | *directory* | Scan/add folder asynchronously |
 | `-enqueue` / `--enqueue` | Add only; do not auto-start playback |
