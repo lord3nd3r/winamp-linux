@@ -12,6 +12,7 @@ Release package text that only repeats the distro matrix is summarized, not copi
 
 ### Fixed
 
+- Quitting after a gapless track change no longer crashes on Qt 6.8+ when the PCM tap is enabled. The audio buffer output was destroyed after the player it still pointed at.
 - Playlist total time is read with TagLib instead of QMediaPlayer, so the footer no longer stays at 0m 00s (alexeevdv).
 - The last selected skin is saved and restored. A missing skin file falls back to the default skin. Fixes #12.
 - The main-window title ticker draws characters the classic bitmap font cannot show (including Cyrillic) with a system font. ASCII titles stay on the bitmap font. Fixes #10.

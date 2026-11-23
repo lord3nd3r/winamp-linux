@@ -253,6 +253,20 @@ public:
             QObject::disconnect(player, nullptr, this, nullptr);
         if (nextPlayer)
             QObject::disconnect(nextPlayer, nullptr, this, nullptr);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+        // QAudioBufferOutput keeps a raw QMediaPlayer*, and ~QMediaPlayer
+        // does not clear it. After a gapless swap the buffer points at a
+        // player that deleteChildren destroys first, so the buffer's
+        // destructor calls setAudioBufferOutput on freed memory (SIGSEGV
+        // once both HTTP opens have already failed). Detach and delete the
+        // buffer while both players are still alive.
+        if (player)
+            player->setAudioBufferOutput(nullptr);
+        if (nextPlayer)
+            nextPlayer->setAudioBufferOutput(nullptr);
+        delete audioBufferOutput;
+        audioBufferOutput = nullptr;
+#endif
         waReleaseMediaPlayer(player);
         waReleaseMediaPlayer(nextPlayer);
         player = nullptr;
