@@ -10,7 +10,7 @@ Release package text that only repeats the distro matrix is summarized, not copi
 
 ### Changed
 
-- README is a short classic-Winamp front page. Build, CI, and packaging notes moved to CONTRIBUTING.md.
+- README is a short classic-Winamp front page. Build steps are in docs/BUILDING.md, the distro matrix is in docs/CI.md, and component notes are in docs/ARCHITECTURE.md. CONTRIBUTING.md stays the contribution guide.
 
 ## [1.4.0] - 2026-11-23
 

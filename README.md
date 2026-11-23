@@ -86,7 +86,7 @@ ninja -C build
 ./build/winamp
 ```
 
-Qt 6 is preferred. Qt 5: `-DCMAKE_DISABLE_FIND_PACKAGE_Qt6=ON`. Packages, CI, tests, and the distro matrix are in [CONTRIBUTING.md](CONTRIBUTING.md).
+Qt 6 is preferred. Qt 5: `-DCMAKE_DISABLE_FIND_PACKAGE_Qt6=ON`. Packages, tests, and the distro matrix are in [docs/BUILDING.md](docs/BUILDING.md) and [docs/CI.md](docs/CI.md).
 
 ## ⌨ Keyboard
 
@@ -105,7 +105,7 @@ Qt 6 is preferred. Qt 5: `-DCMAKE_DISABLE_FIND_PACKAGE_Qt6=ON`. Packages, CI, te
 | `Ctrl+Del` | Crop to selection |
 | `Ctrl+Shift+1/2/3` | Sort by title, filename, path |
 
-Terminal UI: `winamp --tui`. Keys for that mode are in [CONTRIBUTING.md](CONTRIBUTING.md#terminal-mode---tui).
+Terminal UI: `winamp --tui`. Keys for that mode are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#terminal-mode---tui).
 
 ## 📚 More
 
@@ -113,7 +113,10 @@ Terminal UI: `winamp --tui`. Keys for that mode are in [CONTRIBUTING.md](CONTRIB
 |--|--|
 | [CHANGELOG.md](CHANGELOG.md) | What changed |
 | [CONFIGURATION.md](CONFIGURATION.md) | `winamp.conf` and paths |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | Build, CI, packaging, architecture |
+| [docs/BUILDING.md](docs/BUILDING.md) | Dependencies, Qt 5 / Qt 6, packages, tests |
+| [docs/CI.md](docs/CI.md) | CI and the release distro matrix |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Components, CLI, terminal UI, limits |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to send a change |
 | [PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md) | Python plugin API |
 
 Plugins live in `~/.config/winamp/plugins/*.py`. Settings live in `~/.config/winamp/winamp.conf`.
