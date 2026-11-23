@@ -46,6 +46,9 @@ jobs:
           - distro: fedora-44
             image: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
             family: rpm
+          - distro: fedora45
+            image: fedora:45@sha256:53d138f25f6738257c78553d51369b662efc0e0eb1cd1556a2fe0ad5a115be88
+            family: rpm
           - distro: opensuse-tumbleweed
             image: opensuse/tumbleweed@sha256:18a8c2a41252a0100ae4a7dae0a0e925fb522971645b97b05c57f9b6e73c3b4f
             family: suse

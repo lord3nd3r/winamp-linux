@@ -217,9 +217,10 @@ CPack metadata lives in `CMakeLists.txt` (DEB shlibdeps, RPM autoreq, license, c
 | `debian-trixie` | `debian:trixie` | `.deb` + `.tar.gz` |
 | `fedora-43` | `fedora:43` | `.rpm` + `.tar.gz` |
 | `fedora-44` | `fedora:44` | `.rpm` + `.tar.gz` |
+| `fedora45` | `fedora:45` | `.rpm` + `.tar.gz` (`winamp-<version>-fedora45`) |
 | `opensuse-tumbleweed` | `opensuse/tumbleweed` | `.rpm` + `.tar.gz` |
 
-CI uses a smaller matrix (Ubuntu 22.04/24.04/26.10 stonking, Debian Bookworm, Fedora 43 and 44, openSUSE Tumbleweed) plus a dedicated **`ubuntu-22.04-qt5`** job (`CMAKE_DISABLE_FIND_PACKAGE_Qt6=ON`, build directory `build-qt5`). Each job installs libavutil and fails the configure step unless the log contains `libavutil found - HAVE_AVUTIL`. The Qt 5 job also requires `Using Qt5`. Ubuntu 26.10 installs `libprojectm-dev`, which depends on `libprojectm3` (= 3.1.12). `dpkg-shlibdeps` records that shared library as `libprojectm3` in the `.deb` Depends line.
+CI uses a smaller matrix (Ubuntu 22.04/24.04/26.10 stonking, Debian Bookworm, Fedora 43, 44, and 45, openSUSE Tumbleweed) plus a dedicated **`ubuntu-22.04-qt5`** job (`CMAKE_DISABLE_FIND_PACKAGE_Qt6=ON`, build directory `build-qt5`). Each job installs libavutil and fails the configure step unless the log contains `libavutil found - HAVE_AVUTIL`. The Qt 5 job also requires `Using Qt5`. Ubuntu 26.10 installs `libprojectm-dev`, which depends on `libprojectm3` (= 3.1.12). `dpkg-shlibdeps` records that shared library as `libprojectm3` in the `.deb` Depends line.
 
 **Arch Linux** is intentionally not in the matrix: distro packages only ship **projectM 4.x**, while Milkdrop support uses the classic 3.x API (`libprojectM/projectM.hpp`).
 
