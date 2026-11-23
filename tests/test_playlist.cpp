@@ -123,6 +123,7 @@ private slots:
     void testPlaylistEntries();
     void testOpenPlaylistText();
     void testDurationProbeOneAtATime();
+    void testSkinResolveAndBitmapFont();
     void testSkinArchiveNestedAndRefresh();
 
 private:
@@ -660,6 +661,19 @@ void TestPlaylist::testDurationProbeOneAtATime() {
     QVERIFY(playlist.trackDurations.at(0) > 0);
     QVERIFY(playlist.trackDurations.at(2) > 0);
     QVERIFY(!playlist.totalTimeStr.contains(QStringLiteral("0m 00s")));
+}
+
+void TestPlaylist::testSkinResolveAndBitmapFont() {
+    QVERIFY(bitmapFontCanRender(QStringLiteral("HELLO 123")));
+    QVERIFY(!bitmapFontCanRender(QStringLiteral("ПРИВЕТ")));
+    QVERIFY(!bitmapFontCanRender(QStringLiteral("HI ПРИВЕТ")));
+
+    QCOMPARE(resolveSkinForLoad(QString()), QString());
+    QCOMPARE(resolveSkinForLoad(QStringLiteral("/no/such/winamp-skin.wsz")), QString());
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QCOMPARE(resolveSkinForLoad(dir.path()), dir.path());
 }
 
 void TestPlaylist::testSkinArchiveNestedAndRefresh() {

@@ -5,6 +5,8 @@
 #include <QAudioOutput>
 #include <QVideoWidget>
 #include <QTimer>
+#include <QFont>
+#include <QFontMetrics>
 #include <QSystemTrayIcon>
 #include <QSettings>
 #include <QRandomGenerator>
@@ -548,8 +550,20 @@ public slots:
     }
 
     void onSkinChanged(const QString &skinPath) {
+        QString source = skinPath;
+        QString loadPath = skinPath;
+        if (isSkinArchivePath(skinPath)) {
+            if (!QFile::exists(skinPath))
+                return;
+            loadPath = extractSkinArchive(skinPath);
+            if (loadPath.isEmpty())
+                return;
+        } else if (skinPath.isEmpty() || !QDir(skinPath).exists()) {
+            return;
+        }
+
         // Check if this is a modern (XML-based) skin
-        if (isModernSkinDir(skinPath)) {
+        if (isModernSkinDir(loadPath)) {
             qWarning() << "Modern skin support is disabled because it can break the UI. Falling back to classic skin.";
             isModernSkin = false;
             g_isModernSkin = false;
@@ -572,8 +586,8 @@ public slots:
             isModernSkin = false;
             g_isModernSkin = false;
             g_modernSkin = nullptr;
-            WinampBitmaps::instance().loadAll(skinPath);
-            g_plColors = parsePleditTxt(skinPath);
+            WinampBitmaps::instance().loadAll(loadPath);
+            g_plColors = parsePleditTxt(loadPath);
             
             QString appDir = QCoreApplication::applicationDirPath();
             QStringList fallbacks = winampSkinAndResourcePaths(appDir);
@@ -605,8 +619,11 @@ public slots:
         eqWindow->update();
 
         QSettings s(configPath(), QSettings::IniFormat);
-        s.setValue("skin", skinPath);
+        activeSkinPath = source;
+        s.setValue("skin", source);
     }
+
+    void setActiveSkinPath(const QString &path) { activeSkinPath = path; }
 
 public:
     // ================================================================
@@ -1748,24 +1765,39 @@ protected:
             }
 #endif
         } else if (!bmp.text.isNull() && !currentFile.isEmpty()) {
-            QString title;
-            if (!metaTitle.isEmpty())
-                title = metaTitle.toUpper();
-            else
-                title = QFileInfo(currentFile).baseName().toUpper();
-            QString scrollText = title + "  ***  " + title;
-            int charW = 5;
-            int totalW = (title.length() + 7) * charW;
-            if (totalW < 1) totalW = 1;
+            const QString rawTitle = metaTitle.isEmpty()
+                ? QFileInfo(currentFile).completeBaseName()
+                : metaTitle;
+            // text.bmp is a Latin bitmap font. ASCII titles stay on that font.
+            // A title with any missing glyph is drawn with a system font instead
+            // so Cyrillic and other letters are not dropped.
+            const bool useBitmap = bitmapFontCanRender(rawTitle.toUpper());
+            const QString title = useBitmap ? rawTitle.toUpper() : rawTitle;
+            const QString gap = QStringLiteral("  ***  ");
+            const QString scrollText = title + gap + title;
 
             p.save();
             p.setClipRect(111, 27, 154, 6);
-            int textX = 111 - (scrollOffset % totalW);
-            for (QChar ch : scrollText) {
-                QPoint cp = ::getTextCharPos(ch);
-                if (cp.x() >= 0)
-                    p.drawPixmap(textX, 27, bmp.text, cp.x(), cp.y(), 5, 6);
-                textX += charW;
+            if (useBitmap) {
+                const int charW = 5;
+                int totalW = (title.length() + gap.length()) * charW;
+                if (totalW < 1) totalW = 1;
+                int textX = 111 - (scrollOffset % totalW);
+                for (const QChar &ch : scrollText) {
+                    const QPoint cp = ::getTextCharPos(ch);
+                    if (cp.x() >= 0)
+                        p.drawPixmap(textX, 27, bmp.text, cp.x(), cp.y(), 5, 6);
+                    textX += charW;
+                }
+            } else {
+                QFont font(QStringLiteral("DejaVu Sans"));
+                font.setPixelSize(6);
+                font.setStyleStrategy(QFont::NoAntialias);
+                p.setFont(font);
+                p.setPen(QColor(0, 255, 0));
+                const int totalW = qMax(1, QFontMetrics(font).horizontalAdvance(title + gap));
+                const int textX = 111 - (scrollOffset % totalW);
+                p.drawText(textX, 32, scrollText);
             }
             p.restore();
         }
@@ -3341,6 +3373,10 @@ public:
     }
 
     void writeSettings(QSettings &s) {
+        if (!activeSkinPath.isEmpty())
+            s.setValue("skin", activeSkinPath);
+        else
+            s.remove("skin");
         s.beginGroup("MainWindow");
         s.setValue("x", x());
         s.setValue("y", y());
@@ -3503,6 +3539,7 @@ private:
     QTimer *timer = nullptr;
     QTimer *scrollTimer = nullptr;
     QString currentFile;
+    QString activeSkinPath;
     QNetworkAccessManager *networkManager = nullptr;
     QNetworkReply *streamReply = nullptr;
     QUrl pendingStreamUrl;

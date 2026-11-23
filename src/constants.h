@@ -626,6 +626,28 @@ static inline bool isModernSkinDir(const QString &path) {
     return QFile::exists(path + "/skin.xml");
 }
 
+static inline bool isSkinArchivePath(const QString &path) {
+    return path.endsWith(QLatin1String(".wsz"), Qt::CaseInsensitive)
+        || path.endsWith(QLatin1String(".zip"), Qt::CaseInsensitive)
+        || path.endsWith(QLatin1String(".wal"), Qt::CaseInsensitive);
+}
+
+// Directory whose bitmaps should be loaded for a saved skin selection.
+// Archives are extracted again. A missing file or directory yields empty,
+// and the caller falls back to the built-in default skin.
+static inline QString resolveSkinForLoad(const QString &savedPath) {
+    if (savedPath.isEmpty())
+        return QString();
+    if (isSkinArchivePath(savedPath)) {
+        if (!QFile::exists(savedPath))
+            return QString();
+        return extractSkinArchive(savedPath);
+    }
+    if (QDir(savedPath).exists())
+        return savedPath;
+    return QString();
+}
+
 #include <QPoint>
 
 // Shared text.bmp character lookup (5x6 per char)
@@ -661,6 +683,14 @@ static inline QPoint getTextCharPos(QChar ch) {
         case '*': return QPoint(20, 12);
     }
     return QPoint(-1, -1);
+}
+
+static inline bool bitmapFontCanRender(const QString &text) {
+    for (const QChar &ch : text) {
+        if (getTextCharPos(ch).x() < 0)
+            return false;
+    }
+    return true;
 }
 
 // Shared visualization colors array

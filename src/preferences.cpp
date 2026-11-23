@@ -893,10 +893,7 @@ void PreferencesDialog::onSkinSelected(QListWidgetItem *item) {
         // Check if it's an archive (.wsz or .zip)
         if (skinName.endsWith(".wsz", Qt::CaseInsensitive) ||
             skinName.endsWith(".zip", Qt::CaseInsensitive)) {
-            QString extracted = extractSkinArchive(fullPath);
-            if (!extracted.isEmpty()) {
-                emit skinChanged(extracted);
-            }
+            emit skinChanged(fullPath);
         } else {
             emit skinChanged(fullPath);
         }

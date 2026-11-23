@@ -400,18 +400,21 @@ int main(int argc, char *argv[]) {
     // Load bitmaps — try saved skin, then project skins/default, then resource dir
     QSettings settings(configPath(), QSettings::IniFormat);
     QString skinPath = settings.value("skin").toString();
-    
+    const QString loadPath = resolveSkinForLoad(skinPath);
+    if (loadPath.isEmpty())
+        skinPath.clear();
+
     // Load language pack
     QString langCode = settings.value("language", "en").toString();
     Translator::instance().loadLanguage(langCode);
 
     // Build a list of candidate paths
     QStringList candidates;
-    if (!skinPath.isEmpty()) candidates << skinPath;
+    if (!loadPath.isEmpty()) candidates << loadPath;
     candidates << winampSkinAndResourcePaths(appDir);
 
     // Check if saved skin is a modern (XML) skin — still load classic as fallback
-    bool savedIsModern = !skinPath.isEmpty() && isModernSkinDir(skinPath);
+    bool savedIsModern = !loadPath.isEmpty() && isModernSkinDir(loadPath);
 
     bool loaded = false;
     for (const QString &path : candidates) {
@@ -495,6 +498,8 @@ int main(int argc, char *argv[]) {
     // If saved skin is modern, trigger modern skin loading
     if (savedIsModern) {
         w.onSkinChanged(skinPath);
+    } else {
+        w.setActiveSkinPath(skinPath);
     }
     
     // Process command-line arguments (matches Windows cmdline.cpp)

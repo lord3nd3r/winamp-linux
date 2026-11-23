@@ -8,6 +8,12 @@ Release package text that only repeats the distro matrix is summarized, not copi
 
 ## [Unreleased]
 
+### Fixed
+
+- Playlist total time is read with TagLib instead of QMediaPlayer, so the footer no longer stays at 0m 00s (alexeevdv).
+- The last selected skin is saved and restored. A missing skin file falls back to the default skin. Fixes #12.
+- The main-window title ticker draws characters the classic bitmap font cannot show (including Cyrillic) with a system font. ASCII titles stay on the bitmap font. Fixes #10.
+
 ## [1.3.1] - 2026-10-30
 
 ### Fixed
